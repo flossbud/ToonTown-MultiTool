@@ -513,6 +513,7 @@ class _Emblem(QWidget):
         self._wheel_accum = 0
 
         self._broadcasting = False
+        self._pulse_active = False   # the endless pulse anim (gated separately)
         self._bg_app = QColor("#1a1a1a")
         self._ring = QColor("#0077ff")
         self._pulse = 1.0
@@ -622,12 +623,24 @@ class _Emblem(QWidget):
         self._press_anim.setEndValue(target)
         self._press_anim.start()
 
-    def configure(self, broadcasting: bool, bg_app: str, ring: str) -> None:
+    def configure(self, broadcasting: bool, bg_app: str, ring: str,
+                  pulse_active: bool | None = None) -> None:
+        """*broadcasting* drives the ARMED visuals (colored icon + ring/glow);
+        *pulse_active* drives ONLY the endless pulse animation and defaults to
+        following *broadcasting*. The split exists because the animation is
+        expensive in float mode (CP21: each tick = a full-window repaint), so
+        callers gate it on game-window occupancy - but a running service must
+        still LOOK armed (the first gate greyed the emblem: "darker and less
+        saturated", 2026-07-05). With the pulse off, _pulse holds 1.0 so the
+        ring/glow paint fully lit, statically."""
         self._bg_app = QColor(bg_app)
         self._ring = QColor(ring)
-        if broadcasting != self._broadcasting:
-            self._broadcasting = broadcasting
-            if broadcasting:
+        self._broadcasting = broadcasting
+        if pulse_active is None:
+            pulse_active = broadcasting
+        if pulse_active != self._pulse_active:
+            self._pulse_active = pulse_active
+            if pulse_active:
                 # DIAGNOSTIC kill switch (idle-CPU storm bisect): suppress the
                 # endless pulse animation to isolate its share of the repaints.
                 import os as _os
@@ -1679,7 +1692,9 @@ class _CompactLayout(QWidget):
     def apply_theme(self, c: dict) -> None:
         if self._emblem is not None:
             self._emblem.configure(
-                self._emblem_broadcasting(), c["bg_app"], c["accent_blue_btn"])
+                bool(getattr(self._tab, "service_running", False)),
+                c["bg_app"], c["accent_blue_btn"],
+                pulse_active=self._emblem_pulse_active())
         self._apply_initial_brands()
 
     def _apply_initial_brands(self) -> None:
@@ -1693,14 +1708,16 @@ class _CompactLayout(QWidget):
             self.set_card_brand(i, game, enabled=enabled)
         self._refresh_emblem()
 
-    def _emblem_broadcasting(self) -> bool:
-        """Whether the emblem should show the broadcast pulse: service running
+    def _emblem_pulse_active(self) -> bool:
+        """Whether the emblem's PULSE ANIMATION should run: service running
         AND at least one game window bound to a card. With no game windows
         there is nothing to broadcast to - and the endless pulse animation is
         expensive in float mode (each ~60Hz tick dirties the whole proxied
         host and FullViewportUpdate escalates it to a full-window ARGB repaint:
         ~38% idle CPU measured, 2026-07-05). Gating on occupancy makes the
-        idle cost zero by construction."""
+        idle cost zero by construction. Gates ONLY the animation - the ARMED
+        color state follows service_running alone (configure's broadcasting
+        arg), else the emblem greys out while the service is on."""
         return (bool(getattr(self._tab, "service_running", False))
                 and bool(self.occupied_cells()))
 
@@ -1710,7 +1727,9 @@ class _CompactLayout(QWidget):
         from utils.theme_manager import get_theme_colors, resolve_theme
         c = get_theme_colors(resolve_theme(self._tab.settings_manager) == "dark")
         self._emblem.configure(
-            self._emblem_broadcasting(), c["bg_app"], c["accent_blue_btn"])
+            bool(getattr(self._tab, "service_running", False)),
+            c["bg_app"], c["accent_blue_btn"],
+            pulse_active=self._emblem_pulse_active())
 
     # ── Keep-alive collapse (master switch) ──────────────────────────────────
     def _collapsed_ka_group_width(self, i: int) -> int:

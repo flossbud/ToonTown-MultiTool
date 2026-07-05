@@ -98,3 +98,28 @@ def test_status_complete_on_cache_hit(monkeypatch):
     r = render_account_portrait(game="ttr", toon_name="Sir Hopper",
                                 dna="dna-xyz", customizations=None, diameter=80)
     assert r.status == "complete"
+
+
+def test_circular_normalizes_dpr_backed_sources(qapp):
+    """QWidget.grab() returns a dpr-BACKED pixmap on HiDPI screens; the
+    portrait pipeline is LOGICAL-ONLY (consumers compare/blit by pm.width()
+    == diameter). Unnormalized, scaled() works in physical px and the result
+    inherits the dpr - the accounts ring painted portraits at HALF the disc
+    size on the Retina laptop (2026-07-05). _circular must return a plain
+    dpr-1.0 pixmap whose content FILLS the disc."""
+    from PySide6.QtGui import QColor, QPixmap
+    from utils.overlay.radial_portrait import _circular
+
+    src = QPixmap(128, 128)
+    src.fill(QColor(255, 0, 0))
+    src.setDevicePixelRatio(2.0)          # what grab() returns on Retina
+
+    out = _circular(src, 90)
+
+    assert out.width() == 90 and out.height() == 90
+    assert out.devicePixelRatio() == 1.0
+    img = out.toImage()
+    # With the dpr bug the content covered only the top-left quadrant,
+    # leaving the disc's right half transparent.
+    probe = img.pixelColor(80, 45)
+    assert probe.alpha() > 0 and probe.red() > 200

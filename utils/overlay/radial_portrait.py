@@ -26,10 +26,21 @@ class PortraitRender:
 
 
 def _circular(src: QPixmap, diameter: int) -> QPixmap:
+    # The portrait pipeline is LOGICAL-ONLY (every consumer compares and
+    # blits by pm.width() == diameter). QWidget.grab() returns a dpr-BACKED
+    # pixmap on HiDPI screens; left as-is, scaled() works in PHYSICAL px and
+    # the result inherits the dpr, so the ring painted the portrait at HALF
+    # the disc size on the Retina laptop (2026-07-05). Normalize to dpr 1.0
+    # here, the shared chokepoint - the extra physical pixels just become a
+    # higher-detail source for the downscale.
+    if src.devicePixelRatio() != 1.0:
+        src = src.copy()
+        src.setDevicePixelRatio(1.0)
     out = QPixmap(diameter, diameter)
     out.fill(Qt.transparent)
     p = QPainter(out)
     p.setRenderHint(QPainter.Antialiasing, True)
+    p.setRenderHint(QPainter.SmoothPixmapTransform, True)
     clip = QPainterPath()
     clip.addEllipse(QRectF(0, 0, diameter, diameter))
     p.setClipPath(clip)

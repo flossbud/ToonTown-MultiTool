@@ -87,8 +87,13 @@ def test_no_pulse_while_idle_even_with_service_running(qapp, tmp_path, monkeypat
         c = tab._compact
         tab.service_running = True
         c._refresh_emblem()
-        assert not c._emblem_broadcasting()
+        assert not c._emblem_pulse_active()
         assert not _pulse_running(c._emblem)
+        # The gate stops ONLY the animation: a running service must still
+        # LOOK armed (colored icon + lit ring at pulse 1.0) - the first gate
+        # greyed the emblem ("darker and less saturated", 2026-07-05).
+        assert c._emblem._broadcasting is True
+        assert c._emblem._pulse == 1.0
     finally:
         tab.input_service.shutdown()
 
@@ -101,6 +106,7 @@ def test_no_pulse_with_occupancy_but_service_off(qapp, tmp_path, monkeypatch):
         monkeypatch.setattr(c, "occupied_cells", lambda: frozenset({0}))
         c._refresh_emblem()
         assert not _pulse_running(c._emblem)
+        assert c._emblem._broadcasting is False   # service off -> grey is right
     finally:
         tab.input_service.shutdown()
 
