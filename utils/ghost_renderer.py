@@ -40,7 +40,12 @@ import time
 from utils.ghost_feed_protocol import decode_line
 
 IDLE_HIDE_S = 1.5      # match the in-process renderer's fade timing
-FRAME_INTERVAL_MS = 4  # ~250fps ceiling; this loop is otherwise idle
+# 8ms ~ 125fps: matches the panel. 4ms ticks + interpolation drove 312-490
+# window moves/s and the WINDOW SERVER punished the flood with blocking
+# backpressure - the renderer's own loop stalled up to 489ms (measured) and
+# gloves froze outright. Cross-process NSWindow moves are not a 240Hz
+# animation primitive; cap the churn at display rate.
+FRAME_INTERVAL_MS = 8
 SWEEP_INTERVAL_S = 0.10
 
 # Display smoothing: render the stream this far behind real time and
