@@ -48,7 +48,9 @@ def core(qapp):
     yield c
     c._hide_all()
     for ov in c._overlays.values():
-        ov.deleteLater()
+        getattr(ov, "label", ov).deleteLater()
+    for canvas in c._canvases:
+        canvas.widget.deleteLater()
 
 
 def _hotpos(core, slot):
@@ -475,3 +477,52 @@ def test_stale_event_stamp_falls_back_to_arrival(core):
     buf = core._samples[0]
     import time as _time
     assert abs(buf[-1][0] - _time.monotonic()) < 1.0   # arrival-stamped
+
+
+# ── sprite-canvas display mode (the freeze fix) ─────────────────────────────
+
+def test_canvas_mode_is_default_and_creates_one_canvas_per_screen(core):
+    from utils import ghost_renderer as gr
+    assert gr.CANVAS_MODE is True
+    core.feed_line(proto.encode_position(0, 100, 100, None))
+    core.tick()
+    from PySide6.QtGui import QGuiApplication
+    assert len(core._canvases) == len(QGuiApplication.screens())
+    # The glove is a child sprite INSIDE the canvas - not a toplevel.
+    sprite = core._overlays[0]
+    assert sprite.label.parent() is core._canvases[0].widget
+
+
+def test_canvas_window_is_never_moved_by_glove_motion(core):
+    core.feed_line(proto.encode_position(0, 100, 100, None))
+    core.tick()
+    canvas = core._canvases[0]
+    geo_before = canvas.widget.geometry()
+    for i in range(5):
+        core.feed_line(proto.encode_position(0, 200 + i * 50, 300, None))
+        core.tick()
+    assert canvas.widget.geometry() == geo_before   # static, always
+    assert core._overlays[0].isVisible()
+
+
+def test_sprite_reports_global_position(core):
+    core.feed_line(proto.encode_position(0, 150, 250, None))
+    core.tick()
+    assert _hotpos(core, 0) == (150, 250)
+
+
+def test_legacy_window_mode_kill_switch(qapp, monkeypatch):
+    from utils import ghost_renderer as gr
+    from tabs.multitoon._ghost_cursors import GhostCursorOverlay
+    monkeypatch.setattr(gr, "CANVAS_MODE", False)
+    c = GhostRendererCore()
+    try:
+        c.feed_line(proto.encode_position(0, 100, 100, None))
+        c.tick()
+        assert isinstance(c._overlays[0], GhostCursorOverlay)
+        assert c._overlays[0].isVisible()
+        assert c._canvases == []           # no canvas in legacy mode
+    finally:
+        c._hide_all()
+        for ov in c._overlays.values():
+            ov.deleteLater()

@@ -59,6 +59,112 @@ SWEEP_INTERVAL_S = 0.10
 DISPLAY_SMOOTH_S = max(0, int(os.environ.get("TTMT_GHOST_SMOOTH_MS", "40"))) / 1000.0
 _SAMPLE_KEEP_S = 0.5   # buffer horizon (>> smoothing window)
 
+# Sprite-canvas display mode (default): ONE static full-screen click-through
+# window per display, gloves as child sprites INSIDE it. A sprite move is
+# in-window painting - ZERO window-server geometry transactions per frame.
+# The per-glove-window mode did a synchronous CGS setFrameOrigin per glove
+# per frame from a background process while the games hammered the same
+# compositor; the server blocked those calls for up to 489ms (measured -
+# the outright glove freezes; the primary cursor is a hardware sprite and
+# never contends). The float cards animate exactly this way and are smooth.
+# TTMT_GHOST_CANVAS=0 falls back to per-glove windows.
+CANVAS_MODE = os.environ.get("TTMT_GHOST_CANVAS") != "0"
+
+
+class _GloveCanvas:
+    """One static hardened overlay window covering one screen. Created
+    once, shown once, ordered front once - never moved, never masked,
+    never reordered again."""
+
+    def __init__(self, screen):
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QWidget
+
+        self.widget = QWidget(
+            None,
+            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
+            | Qt.WindowTransparentForInput | Qt.WindowDoesNotAcceptFocus)
+        self.widget.setAttribute(Qt.WA_TranslucentBackground)
+        self.widget.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.geometry = screen.geometry()
+        self.widget.setGeometry(self.geometry)
+        self.widget.show()
+        self._harden()
+        _order_front(self.widget)   # CP8: never-active app must order once
+
+    def _harden(self) -> None:
+        try:
+            from PySide6.QtGui import QGuiApplication
+            if QGuiApplication.platformName() != "cocoa":
+                return
+            from utils.macos_overlay import harden_overlay_window
+            from utils.overlay.macos_backend import GHOST_WINDOW_LEVEL
+            harden_overlay_window(self.widget, level=GHOST_WINDOW_LEVEL)
+        except Exception:                              # noqa: BLE001
+            pass
+
+
+class _GloveSprite:
+    """A glove inside a canvas: a plain child label. Moves are in-window
+    compositing; the occlusion mask is a CHILD widget mask (pure Qt
+    clipping, no CGS shape op)."""
+
+    def __init__(self, pixmap):
+        from PySide6.QtWidgets import QLabel
+
+        self.label = QLabel()
+        self.label.setPixmap(pixmap)
+        self.label.setFixedSize(pixmap.deviceIndependentSize().toSize())
+        self.label.hide()
+        self._mask = None
+        self._canvas = None
+
+    def place(self, canvas, local_x: int, local_y: int) -> None:
+        if self._canvas is not canvas:
+            self._canvas = canvas
+            self.label.setParent(canvas.widget)
+        self.label.move(local_x, local_y)
+        if not self.label.isVisible():
+            self.label.show()
+
+    def set_visible_region(self, region) -> None:
+        from PySide6.QtGui import QRegion
+        if region is None or region == QRegion(self.label.rect()):
+            if self._mask is not None:
+                self._mask = None
+                self.label.clearMask()
+            return
+        if region.isEmpty():
+            # Explicit-hide rule (CP8 discipline kept for child masks too).
+            self._mask = None
+            self.label.clearMask()
+            self.hide_now()
+            return
+        if region == self._mask:
+            return
+        self._mask = QRegion(region)
+        self.label.setMask(region)
+
+    def isVisible(self) -> bool:
+        return self.label.isVisible()
+
+    def x(self) -> int:
+        """GLOBAL x (test/diagnostic parity with the per-window mode)."""
+        off = self._canvas.geometry.x() if self._canvas is not None else 0
+        return self.label.x() + off
+
+    def y(self) -> int:
+        off = self._canvas.geometry.y() if self._canvas is not None else 0
+        return self.label.y() + off
+
+    def hide_now(self) -> None:
+        self.label.hide()
+
+    def fade_out(self) -> None:
+        # Child widgets have no windowOpacity; idle-hide is a plain hide
+        # (the fade nicety belongs to the legacy per-window mode).
+        self.label.hide()
+
 
 def _sample_at(samples, target_t):
     """Interpolated (x, y) at time target_t from [(t, x, y), ...] (ascending).
@@ -122,6 +228,9 @@ class GhostRendererCore:
         # {target: (snapshot, inputs)} - multiple gloves alternate targets
         # every tick, so a single-entry cache would thrash.
         self._inputs_cache: dict[int, tuple] = {}
+        # Sprite-canvas mode: one static window per screen (lazy-built at
+        # first render so tests without renders create no windows).
+        self._canvases: list = []
         # Opt-in arrival diagnostics (TTMT_CLICK_DIAG, inherited from the
         # app): the renderer draws within one 4ms tick of what it RECEIVES,
         # so residual jank means the FEED is bursty - inter-arrival gaps of
@@ -278,14 +387,33 @@ class GhostRendererCore:
         if region is not None and region.isEmpty():
             ov.hide_now()
             return
-        was_visible = ov.isVisible()
-        ov.show_at(x, y)
-        if not was_visible:
-            # CP8: never-active app - plain show() may not map. Ordering is
-            # a window-server op, so ONLY on the hidden->shown transition
-            # (calling it per frame was ~390 ordering ops/sec).
-            _order_front(ov)
+        if CANVAS_MODE:
+            from tabs.multitoon._ghost_cursors import HOTSPOT
+            canvas = self._canvas_for(x, y)
+            if canvas is None:
+                return
+            ov.place(canvas,
+                     int(x) - HOTSPOT[0] - canvas.geometry.x(),
+                     int(y) - HOTSPOT[1] - canvas.geometry.y())
+        else:
+            was_visible = ov.isVisible()
+            ov.show_at(x, y)
+            if not was_visible:
+                # CP8: never-active app - plain show() may not map. Ordering
+                # is a window-server op, so ONLY on the hidden->shown
+                # transition (per frame it was ~390 ordering ops/sec).
+                _order_front(ov)
         ov.set_visible_region(region)
+
+    def _canvas_for(self, x, y):
+        if not self._canvases:
+            from PySide6.QtGui import QGuiApplication
+            self._canvases = [
+                _GloveCanvas(s) for s in QGuiApplication.screens()]
+        for c in self._canvases:
+            if c.geometry.contains(int(x), int(y)):
+                return c
+        return self._canvases[0] if self._canvases else None
 
     def _compute_region(self, slot: int, x: int, y: int, wid: str | None):
         """Occlusion mask, same shared machinery as in-process. None = fail
@@ -354,7 +482,10 @@ class GhostRendererCore:
         scaled = pm.scaled(round(CURSOR_SIZE * dpr), round(CURSOR_SIZE * dpr),
                            Qt.KeepAspectRatio, Qt.SmoothTransformation)
         scaled.setDevicePixelRatio(dpr)
-        ov = GhostCursorOverlay(scaled, confined=False)
+        if CANVAS_MODE:
+            ov = _GloveSprite(scaled)
+        else:
+            ov = GhostCursorOverlay(scaled, confined=False)
         self._overlays[slot] = ov
         return ov
 
@@ -422,6 +553,8 @@ def run_ghost_renderer() -> int:
                      daemon=True).start()
     core.start()
     print(f"[GhostRenderer] ready pid={os.getpid()} "
-          f"frame={FRAME_INTERVAL_MS}ms", flush=True)
+          f"frame={FRAME_INTERVAL_MS}ms "
+          f"display={'sprite-canvas' if CANVAS_MODE else 'per-glove windows'}",
+          flush=True)
     app.exec()
     return 0
