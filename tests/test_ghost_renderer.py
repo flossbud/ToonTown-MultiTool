@@ -364,3 +364,81 @@ def test_core_inputs_cache_is_per_target(core, monkeypatch):
     core.feed_line(proto.encode_position(1, 910, 100, "555"))
     core.tick()
     assert len(scans) == 2      # one scan per target, reused across ticks
+
+
+# ── display smoothing: delivery jitter absorbed by construction ─────────────
+
+def test_sample_at_interpolates_between_straddling_samples():
+    from utils.ghost_renderer import _sample_at
+    samples = [(10.0, 100, 100), (10.08, 300, 500)]
+    x, y = _sample_at(samples, 10.04)
+    assert (round(x), round(y)) == (200, 300)
+
+
+def test_sample_at_holds_newest_when_stream_idle():
+    from utils.ghost_renderer import _sample_at
+    assert _sample_at([(10.0, 100, 100)], 11.0) == (100, 100)
+
+
+def test_sample_at_renders_newest_on_stream_start():
+    # Every sample newer than the display time (stream just began): instant
+    # appearance beats delayed fidelity for the first frames.
+    from utils.ghost_renderer import _sample_at
+    assert _sample_at([(10.0, 100, 100), (10.01, 120, 120)], 9.9) == (120, 120)
+
+
+def test_sample_at_empty_is_none():
+    from utils.ghost_renderer import _sample_at
+    assert _sample_at([], 1.0) is None
+
+
+def test_tick_renders_interpolated_position(core, monkeypatch):
+    import time as _time
+    from utils import ghost_renderer as gr
+    monkeypatch.setattr(gr, "DISPLAY_SMOOTH_S", 0.04)
+    now = _time.monotonic()
+    core._samples[0] = [(now - 0.08, 100, 100), (now, 300, 300)]
+    core._latest[0] = (300, 300, None)
+    core._last_sample_t[0] = now
+    core.tick()
+    x, y = _hotpos(core, 0)
+    # display time = now-0.04 -> halfway between the two samples (tick's
+    # own monotonic() is microseconds after ours: allow 1px of drift).
+    assert abs(x - 200) <= 1 and abs(y - 200) <= 1
+
+
+def test_smoothing_disabled_renders_newest(core, monkeypatch):
+    import time as _time
+    from utils import ghost_renderer as gr
+    monkeypatch.setattr(gr, "DISPLAY_SMOOTH_S", 0)
+    now = _time.monotonic()
+    core._samples[0] = [(now - 0.08, 100, 100), (now, 300, 300)]
+    core._latest[0] = (300, 300, None)
+    core._last_sample_t[0] = now
+    core.tick()
+    assert _hotpos(core, 0) == (300, 300)
+
+
+def test_sample_buffer_is_pruned(core):
+    import time as _time
+    now = _time.monotonic()
+    core._samples[0] = [(now - 5.0 + i * 0.001, i, i) for i in range(200)]
+    core._samples[0].append((now, 300, 300))
+    core._latest[0] = (300, 300, None)
+    core._last_sample_t[0] = now
+    core.tick()
+    assert len(core._samples[0]) < 10      # ancient samples dropped
+
+
+def test_order_front_only_on_show_transition(core, monkeypatch):
+    from utils import ghost_renderer as gr
+    fronts = []
+    monkeypatch.setattr(gr, "_order_front", lambda ov: fronts.append(1))
+    core.feed_line(proto.encode_position(0, 100, 100, None))
+    core.tick()
+    assert fronts == [1]                   # shown: ordered front once
+    core.feed_line(proto.encode_position(0, 200, 200, None))
+    core.tick()
+    core.feed_line(proto.encode_position(0, 250, 250, None))
+    core.tick()
+    assert fronts == [1]                   # moves while visible: no ordering

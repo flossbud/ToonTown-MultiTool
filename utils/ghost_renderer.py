@@ -43,6 +43,45 @@ IDLE_HIDE_S = 1.5      # match the in-process renderer's fade timing
 FRAME_INTERVAL_MS = 4  # ~250fps ceiling; this loop is otherwise idle
 SWEEP_INTERVAL_S = 0.10
 
+# Display smoothing: render the stream this far behind real time and
+# INTERPOLATE between samples. The feed is produced inside the app process,
+# whose GIL/lock bursts bunch deliveries by 20-40ms once or twice a second
+# (measured, TTMT_CLICK_DIAG) - at 120Hz that is a visible 3-5-frame hiccup
+# no app-side tuning can remove. Replaying the stream on a fixed delay
+# absorbs any bunch up to the window by construction; for a mirror glove on
+# ANOTHER window, constant display latency is imperceptible (aim/clicks ride
+# the injection path, untouched). 0 disables smoothing (render newest).
+DISPLAY_SMOOTH_S = max(0, int(os.environ.get("TTMT_GHOST_SMOOTH_MS", "40"))) / 1000.0
+_SAMPLE_KEEP_S = 0.5   # buffer horizon (>> smoothing window)
+
+
+def _sample_at(samples, target_t):
+    """Interpolated (x, y) at time target_t from [(t, x, y), ...] (ascending).
+    Newest sample older than target_t -> hold newest (stream idle). Oldest
+    sample newer than target_t -> newest too (stream just started: instant
+    appearance beats delayed fidelity for the first frames). Pure."""
+    if not samples:
+        return None
+    if samples[-1][0] <= target_t:
+        t, x, y = samples[-1]
+        return (x, y)
+    prev = None
+    nxt = None
+    for t, x, y in reversed(samples):
+        if t <= target_t:
+            prev = (t, x, y)
+            break
+        nxt = (t, x, y)
+    if prev is None:
+        t, x, y = samples[-1]
+        return (x, y)
+    span = nxt[0] - prev[0]
+    if span <= 0:
+        return (nxt[1], nxt[2])
+    alpha = (target_t - prev[0]) / span
+    return (prev[1] + (nxt[1] - prev[1]) * alpha,
+            prev[2] + (nxt[2] - prev[2]) * alpha)
+
 
 class GhostRendererCore:
     """The renderer's testable core: message application + frame rendering.
@@ -55,6 +94,11 @@ class GhostRendererCore:
         self._latest: dict[int, tuple[int, int, str | None]] = {}
         self._rendered_seq: dict[int, int] = {}
         self._seq: dict[int, int] = {}
+        # Smoothing buffers: slot -> list of (t, x, y), appended on the
+        # reader thread, consumed by the tick (GIL-atomic list ops; the
+        # tick swaps/prunes). The newest wid rides _latest.
+        self._samples: dict[int, list] = {}
+        self._last_drawn: dict[int, tuple] = {}
         self._controls: collections.deque = collections.deque()
         self._overlays: dict[int, object] = {}
         self._focused_wid: str | None = None
@@ -97,8 +141,14 @@ class GhostRendererCore:
             return
         if msg[0] == "position":
             _kind, slot, x, y, wid = msg
+            now = time.monotonic()
             self._latest[slot] = (x, y, wid)
             self._seq[slot] = self._seq.get(slot, 0) + 1
+            self._last_sample_t[slot] = now
+            buf = self._samples.get(slot)
+            if buf is None:
+                buf = self._samples[slot] = []
+            buf.append((now, x, y))
             d = self._rdiag
             if d is not None:
                 now = time.monotonic()
@@ -146,14 +196,29 @@ class GhostRendererCore:
                         if ov is not None:
                             ov.hide_now()
         rendered = 0
-        for slot, seq in list(self._seq.items()):
-            if self._rendered_seq.get(slot) == seq:
+        target_t = now - DISPLAY_SMOOTH_S
+        for slot, buf in list(self._samples.items()):
+            if not buf:
                 continue
-            self._rendered_seq[slot] = seq
-            x, y, wid = self._latest[slot]
-            self._last_sample_t[slot] = now
-            self._render(slot, x, y, wid)
-            rendered += 1
+            if DISPLAY_SMOOTH_S > 0:
+                pos = _sample_at(buf, target_t)
+            else:
+                pos = (buf[-1][1], buf[-1][2])
+            if pos is None:
+                continue
+            x, y = int(round(pos[0])), int(round(pos[1]))
+            latest = self._latest.get(slot)
+            wid = latest[2] if latest is not None else None
+            # Draw only on change; the focused wid is part of the key so a
+            # focus flip re-evaluates suppression for a stationary glove.
+            key = (x, y, wid, self._focused_wid)
+            if self._last_drawn.get(slot) != key:
+                self._last_drawn[slot] = key
+                self._render(slot, x, y, wid)
+                rendered += 1
+            cutoff = target_t - _SAMPLE_KEEP_S
+            while len(buf) > 2 and buf[0][0] < cutoff:
+                buf.pop(0)
         d = self._rdiag
         if d is not None:
             if rendered:
@@ -194,8 +259,13 @@ class GhostRendererCore:
         if region is not None and region.isEmpty():
             ov.hide_now()
             return
+        was_visible = ov.isVisible()
         ov.show_at(x, y)
-        _order_front(ov)   # CP8: never-active app - plain show() may not map
+        if not was_visible:
+            # CP8: never-active app - plain show() may not map. Ordering is
+            # a window-server op, so ONLY on the hidden->shown transition
+            # (calling it per frame was ~390 ordering ops/sec).
+            _order_front(ov)
         ov.set_visible_region(region)
 
     def _compute_region(self, slot: int, x: int, y: int, wid: str | None):
@@ -275,6 +345,8 @@ class GhostRendererCore:
         self._latest.clear()
         self._seq.clear()
         self._rendered_seq.clear()
+        self._samples.clear()
+        self._last_drawn.clear()
         self._last_sample_t.clear()
 
 
