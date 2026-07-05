@@ -24,9 +24,11 @@ FOREIGN = 333
 
 def test_protocol_roundtrips():
     assert proto.decode_line(proto.encode_position(2, 10, -5, "123")) == \
-        ("position", 2, 10, -5, "123")
+        ("position", 2, 10, -5, "123", None)
     assert proto.decode_line(proto.encode_position(0, 1, 2, None)) == \
-        ("position", 0, 1, 2, None)
+        ("position", 0, 1, 2, None, None)
+    assert proto.decode_line(proto.encode_position(1, 5, 6, "9", 12345)) == \
+        ("position", 1, 5, 6, "9", 12345)
     assert proto.decode_line(proto.encode_focus("77")) == ("focus", "77")
     assert proto.decode_line(proto.encode_focus(None)) == ("focus", None)
     assert proto.decode_line(proto.encode_clear()) == ("clear",)
@@ -213,8 +215,9 @@ class _FakeClient:
         self.ok = True
         self.pid = 999
 
-    def send_positions(self, pts):
+    def send_positions(self, pts, t_ms=None):
         self.batches.append(list(pts))
+        self.t_ms = t_ms
         return self.ok
 
     def send_focus(self, wid):
@@ -442,3 +445,33 @@ def test_order_front_only_on_show_transition(core, monkeypatch):
     core.feed_line(proto.encode_position(0, 250, 250, None))
     core.tick()
     assert fronts == [1]                   # moves while visible: no ordering
+
+
+def test_bunched_delivery_replays_on_event_timeline(core, monkeypatch):
+    """THE dejitter contract: five samples generated 8ms apart but DELIVERED
+    in one burst (the app-side GIL/lock bunching) must render as even
+    motion, because the buffer keys on the EVENT stamps riding the wire -
+    arrival-time stamping replayed the bunching verbatim (live regression:
+    'absolutely zero difference')."""
+    import time as _time
+    from utils import ghost_renderer as gr
+    monkeypatch.setattr(gr, "DISPLAY_SMOOTH_S", 0.04)
+    now = _time.monotonic()
+    # Even event times 8ms apart, all fed NOW in one burst.
+    for i in range(6):
+        t_ms = int((now - 0.048 + i * 0.008) * 1000)
+        core.feed_line(proto.encode_position(0, i * 100, 0, "-", t_ms))
+    core.tick()
+    x, _y = _hotpos(core, 0)
+    # Display time = now - 40ms -> between sample 1 (t=-40ms, x=100) and
+    # sample 2 (t=-32ms, x=200), NOT snapped to the newest (x=500).
+    # ms-integer stamps + the tick's own clock allow ~2 samples of slack;
+    # the essential assertion is "mid-path, far from the newest".
+    assert 50 <= x <= 350
+
+
+def test_stale_event_stamp_falls_back_to_arrival(core):
+    core.feed_line(proto.encode_position(0, 100, 100, "-", 1234))  # ancient
+    buf = core._samples[0]
+    import time as _time
+    assert abs(buf[-1][0] - _time.monotonic()) < 1.0   # arrival-stamped

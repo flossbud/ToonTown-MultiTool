@@ -79,9 +79,10 @@ class GhostRendererClient:
 
     # -- feed (any thread; never blocks) --------------------------------
 
-    def send_positions(self, points) -> bool:
-        """points: iterable of (slot, x, y, wid). One write per batch."""
-        data = "".join(proto.encode_position(s, x, y, w)
+    def send_positions(self, points, t_ms=None) -> bool:
+        """points: iterable of (slot, x, y, wid); t_ms = the batch's EVENT
+        time (capture stamp, monotonic-basis ms). One write per batch."""
+        data = "".join(proto.encode_position(s, x, y, w, t_ms)
                        for s, x, y, w in points)
         return self._write(data)
 

@@ -654,6 +654,7 @@ class GhostCursorController(QObject):
         # Falls back to in-process rendering if the spawn fails or the
         # renderer dies mid-run. Kill switch: TTMT_GHOST_RENDERER=0.
         self._renderer = None
+        self._service = service
         if (self._disabled_reason is None and not self._confined
                 and sys.platform == "darwin" and service is not None
                 and os.environ.get("TTMT_GHOST_RENDERER") != "0"
@@ -781,7 +782,12 @@ class GhostCursorController(QObject):
             batch.append((slot, int(x), int(y), wid))
         if not batch:
             return
-        if not client.send_positions(batch) or not client.alive():
+        # The service stashes the batch's EVENT time right before the emit
+        # on THIS thread (DirectConnection runs inline during the emit), so
+        # the read is race-free. It rides every P line for the renderer's
+        # dejitter timeline.
+        t_ms = getattr(self._service, "ghost_event_ms", None)
+        if not client.send_positions(batch, t_ms) or not client.alive():
             self._renderer = None
             print("[GhostCursors] renderer died - in-process rendering "
                   "resumes")

@@ -176,6 +176,14 @@ class ClickSyncService(QObject):
         # Bumped on every _states mutation; slow-path emitters snapshot it
         # and drop superseded emissions (_emit_if_current).
         self._states_gen = 0
+        # Event time (ms, the capture's monotonic-basis stamp - on darwin
+        # the kernel's CGEvent generation time) of the last ghost emit.
+        # Written immediately before each ghost_pointer_event.emit on the
+        # SAME thread; DirectConnection subscribers (the renderer feed)
+        # read it synchronously during the emit, so it is race-free for
+        # them. The ghost payload tuple shape stays untouched (many
+        # consumers unpack (kind, points)).
+        self.ghost_event_ms = None
         # darwin motion injector (see _send_motion_timed): created lazily
         # on the first motion so test-constructed services spawn no thread.
         self._motion_injector = None
@@ -700,6 +708,7 @@ class ClickSyncService(QObject):
         self._pending_motion = None
         self._hover_source = None    # re-latch via normal motion post-gesture
         self._hover_rejected = None  # the press just confirmed this point
+        self.ghost_event_ms = time
         self.ghost_pointer_event.emit(
             ("press", [(slot, g0[0] + tx, g0[1] + ty)
                        for slot, (_wid, g0, (tx, ty)) in delivered.items()]))
@@ -734,6 +743,7 @@ class ClickSyncService(QObject):
                     wid, tx, ty, geom[0] + tx, geom[1] + ty, state=state, time=time)
             ghosts.append((slot, geom[0] + tx, geom[1] + ty))
         if ghosts:
+            self.ghost_event_ms = time
             self.ghost_pointer_event.emit(("motion", ghosts))
 
     # ── hover forwarding (no gesture; lock held) ───────────────────────
@@ -800,6 +810,7 @@ class ClickSyncService(QObject):
                     wid, tx, ty, g[0] + tx, g[1] + ty, state=state, time=time)
             ghosts.append((s, g[0] + tx, g[1] + ty))
         if ghosts:
+            self.ghost_event_ms = time
             self.ghost_pointer_event.emit(("motion", ghosts))
 
     def _resolve_hover_source_locked(self, wids_by_slot, geoms,

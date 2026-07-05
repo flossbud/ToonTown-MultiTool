@@ -257,7 +257,8 @@ class MacOSMouseCapture:
             except Exception:
                 pass
 
-    def _on_tap_event(self, cg_type, root_x, root_y, marker, src_pid):
+    def _on_tap_event(self, cg_type, root_x, root_y, marker, src_pid,
+                      evt_ns: int = 0):
         """Runs on the runloop thread - MUST stay fast: filter, classify, enqueue."""
         try:
             if self._guard.is_synthetic(cg_type, root_x, root_y, marker, src_pid):
@@ -268,6 +269,15 @@ class MacOSMouseCapture:
             if action is None:
                 return
             t = self._now_ms()
+            if evt_ns:
+                # Prefer the kernel generation stamp (same since-boot basis
+                # as monotonic on macOS). Defensive basis check: a unit
+                # surprise (raw mach ticks on some chips) diverges from the
+                # callback stamp immediately - beyond 5s, keep the callback
+                # stamp (auto-degrade to pre-dejitter behavior).
+                evt_ms = evt_ns // 1_000_000
+                if abs(evt_ms - t) <= 5000:
+                    t = int(evt_ms)
             overflowed = False
             if action == "down":
                 state = self._state.on_down(button)
@@ -392,8 +402,15 @@ class _QuartzTapNative:
                 marker = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGEventSourceUserData)
                 pid = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGEventSourceUnixProcessID)
                 self._reenable_count = 0   # a good event resets the disable streak
+                # Kernel-stamped GENERATION time (ns, since-boot - the same
+                # basis as time.monotonic() on macOS). The callback itself
+                # needs the GIL, so stamping "now" here bunches timestamps
+                # whenever the process stalls; the event's own stamp is
+                # immune and lets the ghost renderer replay the true motion
+                # timeline (dejitter).
+                evt_ns = Quartz.CGEventGetTimestamp(event)
                 self._on_tap_event(int(etype), float(loc.x), float(loc.y),
-                                   int(marker), int(pid) or None)
+                                   int(marker), int(pid) or None, int(evt_ns))
             except Exception:
                 pass
             return event

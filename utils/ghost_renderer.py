@@ -140,15 +140,29 @@ class GhostRendererCore:
         if msg is None:
             return
         if msg[0] == "position":
-            _kind, slot, x, y, wid = msg
+            _kind, slot, x, y, wid, t_ms = msg
             now = time.monotonic()
+            # Replay timeline: the capture's EVENT stamp (kernel CGEvent
+            # time - same since-boot basis as monotonic, in BOTH processes)
+            # keeps sample spacing true even when DELIVERY bunches (the
+            # whole point of the jitter buffer; arrival stamps replayed the
+            # bunching verbatim). Fallback to arrival on old feeds or a
+            # basis surprise (>5s divergence).
+            if t_ms is not None and abs(now - t_ms / 1000.0) < 5.0:
+                t_evt = t_ms / 1000.0
+            else:
+                t_evt = now
             self._latest[slot] = (x, y, wid)
             self._seq[slot] = self._seq.get(slot, 0) + 1
             self._last_sample_t[slot] = now
             buf = self._samples.get(slot)
             if buf is None:
                 buf = self._samples[slot] = []
-            buf.append((now, x, y))
+            if buf and t_evt <= buf[-1][0]:
+                # Coalesced/equal stamps must stay strictly ascending for
+                # the interpolator.
+                t_evt = buf[-1][0] + 0.0001
+            buf.append((t_evt, x, y))
             d = self._rdiag
             if d is not None:
                 now = time.monotonic()
