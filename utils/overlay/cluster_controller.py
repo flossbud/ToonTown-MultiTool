@@ -656,6 +656,7 @@ class ClusterOverlayController:
         from PySide6.QtCore import QTimer as _QT_diag
         _QT_diag.singleShot(
             1000, self._surface, lambda: self._trace_geometry_chain("enter+1s"))
+        self._connect_scene_change_diag()
         self._emit_active_changed()   # self._active is True here
         return True
 
@@ -699,6 +700,43 @@ class ClusterOverlayController:
         except Exception:
             import traceback
             _t("geom-chain[%s] FAILED:\n%s" % (tag, traceback.format_exc()))
+
+    def _connect_scene_change_diag(self) -> None:
+        """DIAGNOSTIC (trace-gated, ~1 line/s): count QGraphicsScene ``changed``
+        emissions and sample the dirty rects - localizes WHAT keeps dirtying
+        the scene during the idle-CPU repaint storm. No-op without
+        TTMT_OVERLAY_TRACE; connection dies with the scene."""
+        import os
+        if not os.environ.get("TTMT_OVERLAY_TRACE"):
+            return
+        try:
+            surface = self._surface
+            view = getattr(surface, "_cluster_view", None) if surface is not None else None
+            scene = getattr(view, "_scene", None) if view is not None else None
+            if scene is None:
+                return
+            from utils.overlay.backend import overlay_trace as _t
+            import time as _time
+            state = {"n": 0, "t0": None, "sample": None}
+
+            def _on_changed(regions):
+                now = _time.monotonic()
+                state["n"] += 1
+                if regions:
+                    r = regions[0]
+                    state["sample"] = (int(r.x()), int(r.y()),
+                                       int(r.width()), int(r.height()),
+                                       len(regions))
+                if state["t0"] is None:
+                    state["t0"] = now
+                elif now - state["t0"] >= 1.0:
+                    _t(f"scene-changed rate: {state['n'] / (now - state['t0']):.0f}/s "
+                       f"last-dirty={state['sample']}")
+                    state["t0"] = now
+                    state["n"] = 0
+            scene.changed.connect(_on_changed)
+        except Exception:
+            pass
 
     def leave(self) -> None:
         """Restore the borrowed host to the tab, reset framed (scale-1.0)

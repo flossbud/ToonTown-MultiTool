@@ -573,6 +573,22 @@ class _Emblem(QWidget):
 
     def set_pulse(self, v: float) -> None:
         self._pulse = float(v)
+        # DIAGNOSTIC (trace-gated, ~1 line/s): tick-rate counter for the
+        # idle-CPU storm hunt - is THIS the 125Hz scene dirtier?
+        import os as _os
+        if _os.environ.get("TTMT_OVERLAY_TRACE"):
+            import time as _time
+            now = _time.monotonic()
+            n = getattr(self, "_diag_pulse_n", 0) + 1
+            t0 = getattr(self, "_diag_pulse_t0", None)
+            if t0 is None:
+                self._diag_pulse_t0, self._diag_pulse_n = now, 1
+            elif now - t0 >= 1.0:
+                from utils.overlay.backend import overlay_trace as _dt
+                _dt(f"emblem pulse-rate: {n / (now - t0):.0f}/s")
+                self._diag_pulse_t0, self._diag_pulse_n = now, 0
+            else:
+                self._diag_pulse_n = n
         self.update()
 
     pulse = Property(float, get_pulse, set_pulse)
@@ -612,7 +628,11 @@ class _Emblem(QWidget):
         if broadcasting != self._broadcasting:
             self._broadcasting = broadcasting
             if broadcasting:
-                self._anim.start()
+                # DIAGNOSTIC kill switch (idle-CPU storm bisect): suppress the
+                # endless pulse animation to isolate its share of the repaints.
+                import os as _os
+                if not _os.environ.get("TTMT_DIAG_NO_PULSE"):
+                    self._anim.start()
             else:
                 self._anim.stop()
                 self._pulse = 1.0
@@ -1658,8 +1678,8 @@ class _CompactLayout(QWidget):
     # ── Theme ────────────────────────────────────────────────────────────────
     def apply_theme(self, c: dict) -> None:
         if self._emblem is not None:
-            broadcasting = bool(getattr(self._tab, "service_running", False))
-            self._emblem.configure(broadcasting, c["bg_app"], c["accent_blue_btn"])
+            self._emblem.configure(
+                self._emblem_broadcasting(), c["bg_app"], c["accent_blue_btn"])
         self._apply_initial_brands()
 
     def _apply_initial_brands(self) -> None:
@@ -1673,13 +1693,24 @@ class _CompactLayout(QWidget):
             self.set_card_brand(i, game, enabled=enabled)
         self._refresh_emblem()
 
+    def _emblem_broadcasting(self) -> bool:
+        """Whether the emblem should show the broadcast pulse: service running
+        AND at least one game window bound to a card. With no game windows
+        there is nothing to broadcast to - and the endless pulse animation is
+        expensive in float mode (each ~60Hz tick dirties the whole proxied
+        host and FullViewportUpdate escalates it to a full-window ARGB repaint:
+        ~38% idle CPU measured, 2026-07-05). Gating on occupancy makes the
+        idle cost zero by construction."""
+        return (bool(getattr(self._tab, "service_running", False))
+                and bool(self.occupied_cells()))
+
     def _refresh_emblem(self) -> None:
         if self._emblem is None:
             return
         from utils.theme_manager import get_theme_colors, resolve_theme
         c = get_theme_colors(resolve_theme(self._tab.settings_manager) == "dark")
-        broadcasting = bool(getattr(self._tab, "service_running", False))
-        self._emblem.configure(broadcasting, c["bg_app"], c["accent_blue_btn"])
+        self._emblem.configure(
+            self._emblem_broadcasting(), c["bg_app"], c["accent_blue_btn"])
 
     # ── Keep-alive collapse (master switch) ──────────────────────────────────
     def _collapsed_ka_group_width(self, i: int) -> int:
@@ -1865,11 +1896,14 @@ class _CompactLayout(QWidget):
 
     def _notify_occupancy(self) -> None:
         """Emit occupied_cells_changed iff the occupied set changed since last
-        emit. Called after the count or the permutation settles."""
+        emit. Called after the count or the permutation settles. Also re-gates
+        the emblem pulse (it runs only while some cell is occupied; configure()
+        de-dupes, so this is one cheap repaint per occupancy CHANGE)."""
         cells = self.occupied_cells()
         if cells != self._last_occupied:
             self._last_occupied = cells
             self.occupied_cells_changed.emit()
+            self._refresh_emblem()
 
     # ── Overlay / transparent-mode reparent accessors (Task 4.1b) ────────────
     def slot_widget(self, slot: int) -> QWidget:

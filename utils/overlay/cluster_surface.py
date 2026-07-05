@@ -223,6 +223,25 @@ class ClusterSurface(OverlaySurface):
         p.setCompositionMode(QPainter.CompositionMode_Source)
         p.fillRect(self.rect(), QColor(0, 0, 0, 0))
         p.end()
+        # DIAGNOSTIC (trace-gated, ~1 line/s): repaint-rate counter for the
+        # idle-CPU storm hunt. Cheap when TTMT_OVERLAY_TRACE is off.
+        import os as _os
+        if _os.environ.get("TTMT_OVERLAY_TRACE"):
+            import time as _time
+            now = _time.monotonic()
+            n = getattr(self, "_diag_paint_n", 0) + 1
+            t0 = getattr(self, "_diag_paint_t0", None)
+            if t0 is None:
+                self._diag_paint_t0 = now
+                self._diag_paint_n = 1
+            elif now - t0 >= 1.0:
+                from utils.overlay.backend import overlay_trace as _dt
+                _dt(f"{type(self).__name__} paint-rate: {n / (now - t0):.0f}/s "
+                    f"(region={ev.rect().width()}x{ev.rect().height()})")
+                self._diag_paint_t0 = now
+                self._diag_paint_n = 0
+            else:
+                self._diag_paint_n = n
         if self._awaiting_first_paint:
             # First real paint: a buffer exists now. Lift the pre-map opacity
             # stage NEXT loop turn (after this paint's flush), never inside
