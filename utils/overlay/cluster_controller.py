@@ -108,6 +108,12 @@ class ClusterOverlayController:
         self._orphans: list = []
         self._anchor: tuple[int, int] = self._default_anchor()
         self._active: bool = False
+        # Screen-topology watch (CP20): re-validate the anchor whenever the
+        # screen set changes (dock/undock, re-origined displays) - the restore
+        # clamp can race a live display reconfiguration and validate against a
+        # transitional screen list, stranding the model off every real screen.
+        self._topology_timer = None       # single-shot settle debounce
+        self._topology_watching = False   # app-signal connections live
         # quitOnLastWindowClosed value captured at enter (restored on leave/fail):
         # while active the main window is HIDDEN, so Qt's quit-on-last-window
         # default would fire if anything closed the remaining overlay windows.
@@ -636,6 +642,13 @@ class ClusterOverlayController:
         # windowHandle exists, so connect screenChanged to re-apply the input shape at
         # the new device-pixel ratio when the window crosses to another monitor.
         self._connect_screen_change()
+        # Topology watch (CP20) + one unconditional deferred settle-check: if
+        # this enter() raced a display reconfiguration (restore clamped against
+        # a transitional/empty screen list, or topology events fired BEFORE the
+        # watch was wired), the check re-clamps once things settle; when the
+        # world is healthy it is a traced no-op.
+        self._connect_topology_watch()
+        self._arm_topology_settle()
         # Apply the EXACT click-through shape NOW (emblem + visible-card controls
         # union) so the cluster is click-through the instant it appears. Without this
         # the freshly-mapped window keeps X11's default FULL-RECT input region and
@@ -792,8 +805,10 @@ class ClusterOverlayController:
             self._rep_peek_active = False   # re-enter starts unlatched
             # Stop reshaping on monitor/DPI changes: disconnect the screenChanged
             # handler so a late signal after teardown can never re-apply a shape
-            # to a dead surface.
+            # to a dead surface. Same for the app-level topology watch (its
+            # settle timer is stopped inside).
             self._disconnect_screen_change()
+            self._disconnect_topology_watch()
             # Cancel any pending settle, stop the zoom tween, and reset scaling
             # state so a re-enter starts framed (scale 1.0, no in-flight gesture).
             # A late timer/frame firing post-leave is a guarded no-op, but
@@ -2372,6 +2387,140 @@ class ClusterOverlayController:
         except Exception:
             pass
 
+    # ------------------------------------------------------------------
+    # Screen-topology watch (CP20): re-clamp the anchor when screens change
+    # ------------------------------------------------------------------
+    _TOPOLOGY_SETTLE_MS = 750   # dock/undock fires several waves; act on quiesce
+
+    def _connect_topology_watch(self) -> None:
+        """Watch APP-LEVEL screen topology (add/remove + per-screen geometry):
+        a dock/undock can strand the model anchor off every live screen (the
+        restore clamp may even have validated it against a TRANSITIONAL list -
+        CP20), and per-window ``screenChanged`` never fires for a window whose
+        assigned screen merely re-origins. All events funnel into ONE debounced
+        settle re-clamp. Idempotent; fully guarded (stub apps in tests)."""
+        if self._topology_watching:
+            return
+        try:
+            from PySide6.QtGui import QGuiApplication
+            app = QGuiApplication.instance()
+            if app is None:
+                return
+            app.screenAdded.connect(self._on_screen_added)
+            app.screenRemoved.connect(self._on_topology_event)
+            for s in app.screens():
+                try:
+                    s.geometryChanged.connect(self._on_topology_event)
+                except Exception:
+                    pass
+            self._topology_watching = True
+        except Exception:
+            pass
+
+    def _disconnect_topology_watch(self) -> None:
+        """Drop the app-level connections + stop the settle timer (leave()).
+        Removed screens' connections died with their QScreen objects."""
+        if self._topology_timer is not None:
+            self._topology_timer.stop()
+        if not self._topology_watching:
+            return
+        self._topology_watching = False
+        try:
+            from PySide6.QtGui import QGuiApplication
+            app = QGuiApplication.instance()
+            if app is None:
+                return
+            try:
+                app.screenAdded.disconnect(self._on_screen_added)
+            except Exception:
+                pass
+            try:
+                app.screenRemoved.disconnect(self._on_topology_event)
+            except Exception:
+                pass
+            for s in app.screens():
+                try:
+                    s.geometryChanged.disconnect(self._on_topology_event)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _on_screen_added(self, screen) -> None:
+        """A screen appeared: watch its geometry too, then debounce-settle."""
+        try:
+            screen.geometryChanged.connect(self._on_topology_event)
+        except Exception:
+            pass
+        self._on_topology_event()
+
+    def _on_topology_event(self, *_args) -> None:
+        """Any topology signal: (re)arm the settle debounce. Never raises into
+        Qt dispatch; a late event after leave() is a no-op via the timer guard
+        in _revalidate_anchor_for_screens."""
+        if not self._active:
+            return
+        from utils.overlay.backend import overlay_trace
+        overlay_trace("screen topology event -> settle re-clamp armed")
+        self._arm_topology_settle()
+
+    def _arm_topology_settle(self) -> None:
+        """(Re)start the single-shot topology settle timer (drag-settle shape)."""
+        from PySide6.QtCore import QTimer
+        if self._topology_timer is None:
+            self._topology_timer = QTimer()
+            self._topology_timer.setSingleShot(True)
+            self._topology_timer.timeout.connect(
+                self._revalidate_anchor_for_screens)
+        self._topology_timer.start(self._TOPOLOGY_SETTLE_MS)
+
+    def _revalidate_anchor_for_screens(self) -> bool:
+        """Re-validate the anchor against the CURRENT screen set and re-place
+        everything anchor-derived if it moved. Returns True iff the anchor
+        changed.
+
+        Semantics (the pure clamp with NO saved-monitor bias): an anchor still
+        on SOME live screen is kept exactly (a mere re-origin that keeps it
+        visible moves nothing); a stranded anchor recenters on the first
+        screen. Application reuses the drag path's proven steps: window move,
+        radial+panel re-park, exact input shape, rep blanking, debounced save.
+
+        Deferred (timer re-armed) while a scale gesture is live - the cluster
+        obeys the no-geometry-during-scale discipline - and while the screen
+        list is still empty/transitional."""
+        from utils.overlay.backend import overlay_trace
+        if not self._active:
+            return False
+        if self._scaling_active:
+            self._arm_topology_settle()
+            return False
+        screens = self._screens()
+        if not screens:
+            overlay_trace("topology settle: screen list still EMPTY - retrying")
+            self._arm_topology_settle()
+            return False
+        from utils.overlay.persistence import clamp_anchor_to_screens
+        clamped = clamp_anchor_to_screens(self._anchor, None, screens)
+        clamped = (int(clamped[0]), int(clamped[1]))
+        if clamped == (int(self._anchor[0]), int(self._anchor[1])):
+            overlay_trace("topology settle: anchor still on-screen (no-op)")
+            return False
+        overlay_trace(f"topology settle: anchor {self._anchor} -> {clamped} "
+                      "(re-clamped to live screens)")
+        self._anchor = clamped
+        surface = self._surface
+        if surface is not None:
+            try:
+                surface.set_overlay_geometry(self._compute_window_rect())
+            except Exception:
+                pass
+        self._reposition_radial()
+        self._reposition_panel()
+        self._apply_exact_input_shape()
+        self._update_rep_blanking()
+        self._schedule_save()
+        return True
+
     def _on_screen_changed(self, *_args) -> None:
         """The window moved to another monitor: its device-pixel ratio may have
         changed, so RE-APPLY the input shape(s) at the surface's CURRENT (fresh) DPR.
@@ -3595,8 +3744,21 @@ class ClusterOverlayController:
             anchor, scale, monitor = load_overlay_state(self._settings)
             self._scale = scale
             if anchor is not None:
-                self._anchor = clamp_anchor_to_screens(
-                    anchor, monitor, self._screens())
+                screens = self._screens()
+                if not screens:
+                    # Mid display-reconfiguration Qt's screen list can be
+                    # momentarily EMPTY (CP20: relaunch seconds after a dock
+                    # unplug) - the clamp's no-screens branch would pass the
+                    # stale anchor through unvalidated. Keep it for now and
+                    # lean on the topology settle-check armed at the end of
+                    # enter() to re-clamp once the screen list is real.
+                    from utils.overlay.backend import overlay_trace
+                    overlay_trace(
+                        "anchor restore: EMPTY screen list (transitional) - "
+                        "revalidation deferred to topology settle")
+                    self._anchor = (int(anchor[0]), int(anchor[1]))
+                    return True
+                self._anchor = clamp_anchor_to_screens(anchor, monitor, screens)
                 return True
             return False
         except Exception:
