@@ -157,6 +157,16 @@ class OverlaySurface(QWidget):
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         # Explicitly keep WA_DeleteOnClose OFF to avoid destroying a borrowed widget.
         self.setAttribute(Qt.WA_DeleteOnClose, False)
+        # Overlay surfaces are manually geometried and may legitimately extend
+        # past screen edges (the fixed cluster envelope is taller than a laptop
+        # screen). cocoa feeds safe-area margins (menu bar / notch / off-screen
+        # overlap) into the layout by default, silently pushing the hosted
+        # content DOWN inside the window while the input region, anchor model,
+        # and every mapToGlobal consumer stay at the window origin - painted
+        # reality and click reality diverge by the margin (live: emblem drawn
+        # 201px below its clickable disc, all clicks dead). Opt out: content
+        # must fill the window rect exactly, everywhere, on every platform.
+        self.setAttribute(Qt.WA_ContentsMarginsRespectsSafeArea, False)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

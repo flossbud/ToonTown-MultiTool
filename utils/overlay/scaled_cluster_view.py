@@ -38,6 +38,11 @@ class ScaledClusterView(QWidget):
         self._emblem_center = (0.0, 0.0)
         self._pivot = (0.0, 0.0)
 
+        # Safe-area opt-out (matches OverlaySurface): margins apply PER laid-out
+        # widget, so the surface-level opt-out alone still let THIS wrapper's
+        # layout inset the view by the window's menu-bar/off-screen overlap.
+        self.setAttribute(Qt.WA_ContentsMarginsRespectsSafeArea, False)
+
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)

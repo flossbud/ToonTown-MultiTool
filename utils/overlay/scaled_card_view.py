@@ -26,6 +26,11 @@ class ScaledCardView(QWidget):
         self._card: QWidget | None = None
         self._proxy = None
 
+        # Safe-area opt-out (matches OverlaySurface/ScaledClusterView): cocoa
+        # feeds menu-bar/off-screen overlap into every laid-out widget's
+        # margins, shifting the hosted content off the model geometry.
+        self.setAttribute(Qt.WA_ContentsMarginsRespectsSafeArea, False)
+
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)

@@ -651,8 +651,54 @@ class ClusterOverlayController:
             f"cluster.enter OK: active={self._active} visible={self._visible_cells} "
             f"emblem_rect={self._emblem_rect()} emblem_passive="
             f"{_emb1.testAttribute(_Qt2.WA_TransparentForMouseEvents) if _emb1 is not None else 'n/a'}")
+        self._trace_geometry_chain("enter-OK")
+        # Context-object form: a torn-down surface cancels the deferred dump.
+        from PySide6.QtCore import QTimer as _QT_diag
+        _QT_diag.singleShot(
+            1000, self._surface, lambda: self._trace_geometry_chain("enter+1s"))
         self._emit_active_changed()   # self._active is True here
         return True
+
+    def _trace_geometry_chain(self, tag: str) -> None:
+        """DIAGNOSTIC (systematic-debugging session 2026-07-05): dump every layer
+        of the window->view->scene->host->emblem geometry chain to find where the
+        painted content diverges from the model. Trace-only, no behavior."""
+        from utils.overlay.backend import overlay_trace as _t
+        try:
+            surface = self._surface
+            view = getattr(surface, "_cluster_view", None) if surface is not None else None
+            host = getattr(surface, "_hosted", None) if surface is not None else None
+            emb = getattr(self._card_provider, "_emblem", None)
+            parts = [f"geom-chain[{tag}]:"]
+            if surface is not None:
+                parts.append(f"surface.geo={surface.geometry()}")
+                wh = surface.windowHandle()
+                parts.append(f"qwindow.geo={wh.geometry() if wh is not None else None}")
+            if view is not None:
+                parts.append(f"wrapper.geo={view.geometry()}")
+                gv = getattr(view, "_view", None)
+                if gv is not None:
+                    parts.append(f"gview.geo={gv.geometry()}")
+                    vp = gv.viewport()
+                    parts.append(f"viewport.geo={vp.geometry() if vp is not None else None}")
+                    parts.append(f"hscroll={gv.horizontalScrollBar().value()} "
+                                 f"vscroll={gv.verticalScrollBar().value()}")
+                    parts.append(f"sceneRect={gv.sceneRect()}")
+                proxy = getattr(view, "_proxy", None)
+                if proxy is not None:
+                    parts.append(f"proxy.pos={proxy.pos()} proxy.scale={proxy.scale():.3f} "
+                                 f"proxy.origin={proxy.transformOriginPoint()}")
+                inner_host = getattr(view, "_host", None)
+                if inner_host is not None:
+                    parts.append(f"host.size={inner_host.size()} host.pos={inner_host.pos()}")
+            if emb is not None:
+                parts.append(f"emblem.geo={emb.geometry()}")
+                from PySide6.QtCore import QPoint as _QP
+                parts.append(f"emblem.mapToGlobal(0,0)={emb.mapToGlobal(_QP(0, 0))}")
+            _t(" ".join(str(p) for p in parts))
+        except Exception:
+            import traceback
+            _t("geom-chain[%s] FAILED:\n%s" % (tag, traceback.format_exc()))
 
     def leave(self) -> None:
         """Restore the borrowed host to the tab, reset framed (scale-1.0)

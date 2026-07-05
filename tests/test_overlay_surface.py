@@ -86,6 +86,39 @@ def test_delete_on_close_is_off(qapp):
     assert not s.testAttribute(Qt.WA_DeleteOnClose)
 
 
+def test_safe_area_margins_are_opted_out(qapp):
+    """Overlay surfaces must NEVER respect cocoa safe-area margins: when a
+    surface overlaps the menu bar / extends above the screen, the default
+    (True) feeds safe-area insets into the layout and pushes the hosted
+    content down INSIDE the window, while the input region, anchor model and
+    every mapToGlobal consumer stay at the window origin. Live on a laptop
+    screen this drew the emblem 201px below its clickable disc and killed
+    every overlay click (2026-07-05). The attribute is the by-construction
+    opt-out and must hold for every surface subclass."""
+    from utils.overlay.surface import CardSurface, EmblemSurface
+    from utils.overlay.cluster_surface import (
+        ClusterSurface, PanelSurface, RadialSurface,
+    )
+    from utils.overlay.scaled_card_view import ScaledCardView
+    from utils.overlay.scaled_cluster_view import ScaledClusterView
+    for surface in (
+        OverlaySurface(),
+        CardSurface(0),
+        EmblemSurface(),
+        ClusterSurface(),
+        RadialSurface(),
+        PanelSurface(),
+        # The margins apply PER laid-out widget, so the content wrappers
+        # inside the surfaces must opt out too (the surface-level opt-out
+        # alone still let the wrapper's own layout inset the view).
+        ScaledCardView(),
+        ScaledClusterView(),
+    ):
+        assert not surface.testAttribute(Qt.WA_ContentsMarginsRespectsSafeArea), (
+            f"{type(surface).__name__} must opt out of safe-area margins"
+        )
+
+
 # ---------------------------------------------------------------------------
 # host() / release()
 # ---------------------------------------------------------------------------
