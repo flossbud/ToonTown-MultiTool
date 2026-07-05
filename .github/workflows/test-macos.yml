@@ -53,7 +53,13 @@ jobs:
             tests/test_macos_native_port_ctypes.py tests/test_macos_platform_binary.py \
             tests/test_macos_engine_gate.py tests/test_macos_clt.py \
             tests/test_macos_inject_helper.py tests/test_macos_inject_remote.py \
-            tests/test_macos_inject_remote_rpc.py tests/test_macos_delivery_ready_reasons.py
+            tests/test_macos_inject_remote_rpc.py tests/test_macos_delivery_ready_reasons.py \
+            tests/test_macos_overlay_backend.py tests/test_overlay_gestures.py \
+            tests/test_win32_overlay_backend.py tests/test_overlay_surface.py \
+            tests/test_ghost_renderer.py tests/test_ghost_frame_pacing.py \
+            tests/test_click_sync_motion_injector.py tests/test_ghost_occlusion_gate.py \
+            tests/test_global_hotkeys_carbon.py tests/test_emblem_pulse_gate.py \
+            tests/test_cluster_topology_reclamp.py
 
       - name: Download DMG
         uses: actions/download-artifact@v8
