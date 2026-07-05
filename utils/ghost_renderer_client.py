@@ -16,7 +16,6 @@ the pipe as a belt for exit paths that skip the controller.
 from __future__ import annotations
 
 import atexit
-import fcntl
 import os
 import subprocess
 import sys
@@ -61,6 +60,11 @@ class GhostRendererClient:
                 _spawn_command(), stdin=subprocess.PIPE,
                 stdout=None, stderr=None, env=env)
             fd = self._proc.stdin.fileno()
+            # fcntl is Unix-only; the renderer only ever spawns on real cocoa
+            # (darwin), so import at USE, never at module level - the frozen
+            # Windows self-check imports every module and a top-level import
+            # broke it (ModuleNotFoundError: fcntl, CI 2026-07-05).
+            import fcntl
             fcntl.fcntl(fd, fcntl.F_SETFL,
                         fcntl.fcntl(fd, fcntl.F_GETFL) | os.O_NONBLOCK)
             self._fd = fd

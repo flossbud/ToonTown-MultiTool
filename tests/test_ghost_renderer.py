@@ -526,3 +526,23 @@ def test_legacy_window_mode_kill_switch(qapp, monkeypatch):
         c._hide_all()
         for ov in c._overlays.values():
             ov.deleteLater()
+
+
+def test_client_module_imports_without_fcntl(monkeypatch):
+    """fcntl is Unix-only and the frozen Windows self-check imports EVERY
+    module: a top-level `import fcntl` in the client broke the packaged
+    Windows build (CI 2026-07-05). The import must live at USE (inside
+    start(), which only ever runs on real cocoa). Simulate Windows by making
+    `import fcntl` raise, then import the module fresh."""
+    import importlib
+    import sys
+
+    saved = sys.modules.pop("utils.ghost_renderer_client", None)
+    monkeypatch.setitem(sys.modules, "fcntl", None)   # None -> ImportError
+    try:
+        mod = importlib.import_module("utils.ghost_renderer_client")
+        assert mod is not None
+    finally:
+        sys.modules.pop("utils.ghost_renderer_client", None)
+        if saved is not None:
+            sys.modules["utils.ghost_renderer_client"] = saved
