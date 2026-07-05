@@ -40,12 +40,6 @@ import time
 from utils.ghost_feed_protocol import decode_line
 
 IDLE_HIDE_S = 1.5      # match the in-process renderer's fade timing
-# 8ms ~ 125fps: matches the panel. 4ms ticks + interpolation drove 312-490
-# window moves/s and the WINDOW SERVER punished the flood with blocking
-# backpressure - the renderer's own loop stalled up to 489ms (measured) and
-# gloves froze outright. Cross-process NSWindow moves are not a 240Hz
-# animation primitive; cap the churn at display rate.
-FRAME_INTERVAL_MS = 8
 SWEEP_INTERVAL_S = 0.10
 
 # Display smoothing: render the stream this far behind real time and
@@ -69,6 +63,13 @@ _SAMPLE_KEEP_S = 0.5   # buffer horizon (>> smoothing window)
 # never contends). The float cards animate exactly this way and are smooth.
 # TTMT_GHOST_CANVAS=0 falls back to per-glove windows.
 CANVAS_MODE = os.environ.get("TTMT_GHOST_CANVAS") != "0"
+
+# Frame clock. Canvas mode: sprite moves are in-process painting, so the
+# full 4ms clock (~250fps ceiling) is safe and avoids the 125Hz-vs-120Hz
+# beat judder an 8ms tick shows against the panel. Legacy per-glove-window
+# mode keeps 8ms: its moves are CGS geometry transactions and a 4ms flood
+# provoked window-server backpressure stalls up to 489ms (measured).
+FRAME_INTERVAL_MS = 4 if CANVAS_MODE else 8
 
 
 class _GloveCanvas:
