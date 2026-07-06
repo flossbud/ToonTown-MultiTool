@@ -7,15 +7,25 @@ activations, CP2-C). Wheel events reach a hovered, never-activated overlay
 window (CP2); whether MAGNIFY gestures do is unproven. This probe maps a
 panel with that identity and installs two independent receivers:
 
-- RECEIVER A: an NSEvent local monitor on the magnify mask. App-local but
-  responder-independent - it sees the event even if no responder handles it.
-  Returns every event unchanged (never swallows).
+- RECEIVER A: an NSEvent local monitor on the magnify + scroll masks.
+  App-local but responder-independent - it sees the event even if no
+  responder handles it. Returns every event unchanged (never swallows).
 - RECEIVER B: magnifyWithEvent:/scrollWheel: overrides on the panel itself,
   installed by isa-swizzling the instance onto a runtime-registered subclass
   of its OWN class (the constrain-exempt pattern from
   utils/overlay/macos_backend.py: bare libobjc class pair with zero ivars so
   the instance layout is untouched, methods bridged via PyObjC
   classAddMethods). scrollWheel: doubles as evidence for scroll delivery.
+- RECEIVER C: a GLOBAL NSEvent monitor on the magnify mask - observes
+  events delivered to OTHER apps. First-run finding (2026-07-06): magnify
+  is only delivered app-locally while the app is ACTIVE (scroll flows to
+  the hovered panel regardless; inactive pinches degrade to MayBegin/
+  Cancelled scroll stubs), and production floats under a frontmost game,
+  so an inactive-capable receiver is mandatory.
+- RECEIVER D: a listen-only session CGEventTap on the gesture CG event
+  types (29 gesture family / 30 magnify), parsed via
+  NSEvent.eventWithCGEvent:. The production keyboard path already runs a
+  CGEventTap on this box, so this receiver is production-realistic.
 
 Run ON THE REAL cocoa SESSION from the repo root (never offscreen - off
 cocoa, winId() is not an NSView and wrapping it crashes natively):
@@ -33,14 +43,19 @@ import sys
 
 from PySide6 import QtCore
 from PySide6.QtCore import QPoint, Qt, QTimer
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QColor, QGuiApplication, QPainter
 from PySide6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 # NSWindowStyleMaskNonactivatingPanel - NSPanel-only (macos_backend recipe).
 _NONACTIVATING_PANEL_MASK = 1 << 7
 
-# NSEventTypeMagnify == 30; an NSEventMask bit is 1 << type.
-_NSEVENT_MASK_MAGNIFY = 1 << 30
+# NSEventTypeMagnify == 30, NSEventTypeScrollWheel == 22; an NSEventMask
+# bit is 1 << type. Scroll rides the same monitor as bonus delivery
+# evidence (receiver B's scrollWheel: never fires - QNSView consumes it).
+_NSEVENT_TYPE_MAGNIFY = 30
+_NSEVENT_TYPE_SCROLL = 22
+_NSEVENT_MASK_MAGNIFY = 1 << _NSEVENT_TYPE_MAGNIFY
+_NSEVENT_MASK_SCROLL = 1 << _NSEVENT_TYPE_SCROLL
 
 _PROBE_PANEL_CLASS_NAME = "CPP1MagnifyProbePanel"
 
@@ -55,14 +70,20 @@ _PHASE_NAMES = {
     32: "MayBegin",
 }
 
-# Keep bridged Python callables, super-IMP trampolines and the monitor token
-# alive for the process lifetime (PyObjC/ctypes hold no refs on our behalf).
+# Keep bridged Python callables, super-IMP trampolines and the monitor/tap
+# tokens alive for the process lifetime (PyObjC/ctypes hold no refs on our
+# behalf).
 _LIBOBJC = None
 _PROBE_CLS = 0
 _METHOD_CBS = []
 _SUPER_IMPS = {}
 _MONITOR = None
 _MONITOR_CB = None
+_GLOBAL_MONITOR = None
+_GLOBAL_MONITOR_CB = None
+_TAP = None
+_TAP_SOURCE = None
+_TAP_CB = None
 
 
 def _phase_name(value) -> str:
@@ -156,40 +177,156 @@ def _call_super(sel_name: bytes, self_obj, event) -> None:
         pass
 
 
+def _app_active() -> str:
+    """yes/NO/? - whether THIS app is active, per event (the load-bearing
+    axis: a local monitor only sees events the app receives at all)."""
+    try:
+        from AppKit import NSApplication
+        return "yes" if NSApplication.sharedApplication().isActive() else "NO"
+    except Exception:
+        return "?"
+
+
 def _monitor_handler(event):
     try:
-        print(f"[monitor] phase={_phase_name(event.phase())} "
-              f"mag={float(event.magnification()):+.4f} "
-              f"winNum={int(event.windowNumber())} "
-              f"type={int(event.type())}", flush=True)
+        etype = int(event.type())
+        if etype == _NSEVENT_TYPE_SCROLL:
+            print(f"[monitor-scroll] phase={_phase_name(event.phase())} "
+                  f"momentum={_phase_name(event.momentumPhase())} "
+                  f"dy={float(event.scrollingDeltaY()):+.2f} "
+                  f"active={_app_active()} "
+                  f"winNum={int(event.windowNumber())}", flush=True)
+        else:
+            print(f"[monitor] phase={_phase_name(event.phase())} "
+                  f"mag={float(event.magnification()):+.4f} "
+                  f"active={_app_active()} "
+                  f"winNum={int(event.windowNumber())} "
+                  f"type={etype}", flush=True)
     except Exception as exc:
         print(f"[monitor] print failed: {exc}", flush=True)
     return event  # returning None would swallow the event app-wide
 
 
 def _install_monitor() -> bool:
-    """RECEIVER A: NSEvent local monitor on the magnify mask."""
+    """RECEIVER A: NSEvent local monitor on the magnify + scroll masks."""
     global _MONITOR, _MONITOR_CB
     try:
         from AppKit import NSEvent
         _MONITOR_CB = _monitor_handler
         _MONITOR = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
-            _NSEVENT_MASK_MAGNIFY, _monitor_handler)
+            _NSEVENT_MASK_MAGNIFY | _NSEVENT_MASK_SCROLL, _monitor_handler)
         return _MONITOR is not None
     except Exception:
         return False
 
 
-def _remove_monitor() -> None:
-    global _MONITOR
-    if _MONITOR is None:
-        return
+def _global_handler(event):
+    try:
+        print(f"[global] phase={_phase_name(event.phase())} "
+              f"mag={float(event.magnification()):+.4f} "
+              f"active={_app_active()} "
+              f"winNum={int(event.windowNumber())} "
+              f"type={int(event.type())}", flush=True)
+    except Exception as exc:
+        print(f"[global] print failed: {exc}", flush=True)
+    # Global monitor handlers return nothing (observe-only by contract).
+
+
+def _install_global_monitor() -> bool:
+    """RECEIVER C: NSEvent GLOBAL monitor on the magnify mask. Observes
+    events delivered to other apps; cannot consume them. May need TCC
+    trust - installed=False/silence is itself a probe verdict."""
+    global _GLOBAL_MONITOR, _GLOBAL_MONITOR_CB
     try:
         from AppKit import NSEvent
-        NSEvent.removeMonitor_(_MONITOR)
+        _GLOBAL_MONITOR_CB = _global_handler
+        _GLOBAL_MONITOR = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+            _NSEVENT_MASK_MAGNIFY, _global_handler)
+        return _GLOBAL_MONITOR is not None
+    except Exception:
+        return False
+
+
+def _install_cg_tap() -> bool:
+    """RECEIVER D: listen-only session CGEventTap on the gesture CG types
+    (29 gesture family, 30 magnify), parsed via NSEvent.eventWithCGEvent:.
+    Tap creation returning None (TCC denial) is itself a probe verdict."""
+    global _TAP, _TAP_SOURCE, _TAP_CB
+    try:
+        import Quartz
+        from AppKit import NSEvent
+
+        def _dump_fields(cgevent) -> str:
+            """Nonzero CGEvent fields 0-199, both integer and double reads.
+            The NSEvent bridge drops magnification (probed: real pinches
+            print mag=+0.0000), so the delta field is identified from THIS
+            dump, never from remembered private-constant lore."""
+            parts = []
+            for idx in range(200):
+                try:
+                    iv = Quartz.CGEventGetIntegerValueField(cgevent, idx)
+                    dv = Quartz.CGEventGetDoubleValueField(cgevent, idx)
+                except Exception:
+                    continue
+                if iv:
+                    parts.append(f"i{idx}={iv}")
+                if abs(dv) > 1e-9 and float(iv) != dv:
+                    parts.append(f"d{idx}={dv:+.5f}")
+            return " ".join(parts)
+
+        def _tap_cb(_proxy, etype, cgevent, _refcon):
+            try:
+                parsed = ""
+                try:
+                    ns = NSEvent.eventWithCGEvent_(cgevent)
+                    if ns is not None:
+                        parsed = (f" nsType={int(ns.type())} "
+                                  f"phase={_phase_name(ns.phase())}")
+                except Exception as exc:
+                    parsed = f" parse-failed: {exc}"
+                loc = Quartz.CGEventGetLocation(cgevent)
+                print(f"[cgtap] cgType={int(etype)} active={_app_active()}"
+                      f"{parsed} loc=({loc.x:.0f},{loc.y:.0f}) "
+                      f"| {_dump_fields(cgevent)}", flush=True)
+            except Exception as exc:
+                print(f"[cgtap] print failed: {exc}", flush=True)
+            return cgevent
+
+        _TAP_CB = _tap_cb
+        mask = (1 << 29) | (1 << 30)
+        _TAP = Quartz.CGEventTapCreate(
+            Quartz.kCGSessionEventTap, Quartz.kCGHeadInsertEventTap,
+            Quartz.kCGEventTapOptionListenOnly, mask, _tap_cb, None)
+        if _TAP is None:
+            return False
+        _TAP_SOURCE = Quartz.CFMachPortCreateRunLoopSource(None, _TAP, 0)
+        Quartz.CFRunLoopAddSource(
+            Quartz.CFRunLoopGetMain(), _TAP_SOURCE,
+            Quartz.kCFRunLoopCommonModes)
+        Quartz.CGEventTapEnable(_TAP, True)
+        return True
+    except Exception:
+        return False
+
+
+def _remove_monitor() -> None:
+    global _MONITOR, _GLOBAL_MONITOR
+    try:
+        from AppKit import NSEvent
+        if _MONITOR is not None:
+            NSEvent.removeMonitor_(_MONITOR)
+        if _GLOBAL_MONITOR is not None:
+            NSEvent.removeMonitor_(_GLOBAL_MONITOR)
     except Exception:
         pass
     _MONITOR = None
+    _GLOBAL_MONITOR = None
+    try:
+        import Quartz
+        if _TAP is not None:
+            Quartz.CGEventTapEnable(_TAP, False)
+    except Exception:
+        pass
 
 
 def _ensure_probe_class(lib, base_name: bytes) -> int:
@@ -300,29 +437,38 @@ def _window_class_name(win) -> str:
         return "?"
 
 
+class _ProbeSquare(QWidget):
+    """Probe surface painted in paintEvent. The styled-background path
+    (WA_StyledBackground + object-name stylesheet) painted NOTHING on this
+    box (macOS 26.5 / Qt 6.8.3) - only the child label rendered, leaving the
+    panel effectively invisible. An empty surface risks a window-server
+    pass-through hit test, i.e. a silent false NO-GO for gesture delivery,
+    so the fill must be unconditional."""
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(255, 64, 160, 215))
+        p.end()
+
+
 def main() -> int:
     app = QApplication(sys.argv)
     print(f"[cp-p1] qt={QtCore.qVersion()} "
           f"platform={QGuiApplication.platformName()} "
           f"macos={platform.mac_ver()[0]}", flush=True)
 
-    w = QWidget(None, Qt.Tool | Qt.FramelessWindowHint
-                | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus)
+    w = _ProbeSquare(None, Qt.Tool | Qt.FramelessWindowHint
+                     | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus)
     w.setAttribute(Qt.WA_ShowWithoutActivating)
     w.setAttribute(Qt.WA_TranslucentBackground)
-    # A plain QWidget paints no stylesheet background without this.
-    w.setAttribute(Qt.WA_StyledBackground)
     w.setObjectName("cpP1Probe")
     w.setStyleSheet(
-        "#cpP1Probe { background: rgba(255, 64, 160, 215); }"
         "QLabel { color: white; font-size: 18px; background: transparent; }")
     lay = QVBoxLayout(w)
     label = QLabel("CP-P1 pinch here")
     label.setAlignment(Qt.AlignCenter)
     lay.addWidget(label)
     w.resize(300, 300)
-    geo = QGuiApplication.primaryScreen().geometry()
-    w.move(geo.center() - QPoint(150, 150))
     w.show()
 
     if QGuiApplication.platformName() != "cocoa":
@@ -342,13 +488,36 @@ def main() -> int:
     print(f"[cp-p1] window class={_window_class_name(win)} "
           f"styleMask={mask:#x} "
           f"nonactivating={'yes' if mask & _NONACTIVATING_PANEL_MASK else 'NO'} "
-          f"panel={'yes' if panel else 'NO'}", flush=True)
+          f"panel={'yes' if panel else 'NO'} "
+          f"windowNumber={int(win.windowNumber())}", flush=True)
+
+    # Place AFTER show: the pre-show move() was discarded when the panel
+    # mapped (landed at cocoa's default top-right placement, CG-verified at
+    # (1129, 85) for a requested (585, 328)). Post-show geometry sets stick
+    # (production sets cluster geometry on shown panels constantly).
+    geo = QGuiApplication.primaryScreen().geometry()
+    target = geo.center() - QPoint(150, 150)
+    w.move(target)
+
+    def _report_placement():
+        fg = w.frameGeometry()
+        ok = (fg.x(), fg.y()) == (target.x(), target.y())
+        print(f"[cp-p1] placement actual=({fg.x()},{fg.y()}) "
+              f"requested=({target.x()},{target.y()}) "
+              f"{'OK' if ok else 'DRIFTED'}", flush=True)
+
+    QTimer.singleShot(400, _report_placement)
 
     mon_ok = _install_monitor()
     resp_ok = _install_responder_receiver(win)
+    glob_ok = _install_global_monitor()
+    tap_ok = _install_cg_tap()
     print(f"[cp-p1] receiver A (local monitor) installed={mon_ok}", flush=True)
     print(f"[cp-p1] receiver B (responder swizzle) installed={resp_ok} "
           f"class={_window_class_name(win)}", flush=True)
+    print(f"[cp-p1] receiver C (global monitor) installed={glob_ok}", flush=True)
+    print(f"[cp-p1] receiver D (cg tap, types 29/30) installed={tap_ok}",
+          flush=True)
 
     print("\n[cp-p1] Operator steps (record which receiver lines appear at "
           "each step):\n"
