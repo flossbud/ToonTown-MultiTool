@@ -51,6 +51,9 @@ python-xlib>=0.33; sys_platform == "linux"
 # Declared explicitly rather than relying on pynput's transitive PyObjC deps.
 pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"
 pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
+# macOS only — LocalAuthentication (LAContext) for the single Touch ID / Mac
+# password gate that unlocks the credential vault at launch.
+pyobjc-framework-LocalAuthentication>=10.0; sys_platform == "darwin"
 
 # Linux only — YAML parsing for Bottles and Lutris config files
 PyYAML>=6.0; sys_platform == "linux"
