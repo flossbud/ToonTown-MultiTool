@@ -7,6 +7,25 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 
+@pytest.fixture(autouse=True)
+def _isolate_real_config(tmp_path, monkeypatch):
+    """Hard guard: no test may touch the developer's REAL config dir.
+
+    macOS ``config_dir()`` ignores ``XDG_CONFIG_HOME`` and derives from ``HOME``
+    (``~/Library/Application Support/...``). Tests that isolate only via
+    ``XDG_CONFIG_HOME`` therefore write to the REAL dir on darwin and can wipe
+    real ``accounts.json`` / vault files (this happened: the credential suites
+    clobbered live accounts on a dev Mac). Redirecting ``HOME`` to a per-test
+    tmp dir makes ``config_dir()`` land in tmp on every platform (darwin via
+    ``HOME``; Linux via ``HOME/.config`` when no ``XDG_CONFIG_HOME`` is set),
+    while leaving tests free to set their own ``TTMT_CONFIG_DIR`` /
+    ``XDG_CONFIG_HOME`` on top (both take precedence in ``config_dir()``).
+    """
+    home = tmp_path / "_isolated_home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+
+
 @pytest.fixture(scope="session")
 def qapp():
     app = QApplication.instance() or QApplication([])
