@@ -148,6 +148,14 @@ class ClusterOverlayController:
         self._scaling_active: bool = False
         self._input_phase: str | None = None
         self._settle_timer = None
+        # Continuous-gesture (trackpad pinch) single-writer flag: while True a
+        # pinch gesture owns the scale (wheel notches DROPPED, drag already
+        # locked out via _scaling_active) and the BROAD input shape is HELD
+        # (settle timer stopped) until the single termination path
+        # (_terminate_scale_gesture) settles + saves. See
+        # docs/superpowers/specs/2026-07-05-trackpad-pinch-zoom-design.md
+        # sections 2.3-2.5.
+        self._gesture_active: bool = False
 
         # Occupancy. The grid GEOMETRY is fixed (retainSizeWhenHidden keeps every
         # quadrant's space, so the pinwheel never reflows), but an EMPTY card is
@@ -769,6 +777,13 @@ class ClusterOverlayController:
         surface = self._surface
         token = self._token
         try:
+            # A live pinch gesture terminates through the single path FIRST
+            # (commit the current rendered scale, no snap; broad shape released
+            # via _settle_input) so the flush below persists the gesture's
+            # scale and the broad shape is never stranded. Force-cancel site
+            # per the pinch spec (2.3/2.5).
+            if self._gesture_active:
+                self._terminate_scale_gesture(self._view_scale)
             # Persist the FINAL anchor + scale before any teardown/reset (the
             # remembered overlay position, restored on the next enter). MUST run
             # before the scale reset below, else the flush would save the framed
@@ -818,6 +833,7 @@ class ClusterOverlayController:
             if self._scale_anim is not None:
                 self._scale_anim.stop()
             self._scaling_active = False
+            self._gesture_active = False   # backstop: never survives into framed
             self._input_phase = None
             self._scale = 1.0
             self._view_scale = 1.0
@@ -918,6 +934,12 @@ class ClusterOverlayController:
         """
         if not self._active:
             return
+        # Single-writer rule (pinch spec 2.5): while a continuous scale gesture
+        # is live it is the ONLY scale writer - wheel notches are DROPPED, not
+        # queued. See docs/superpowers/specs/2026-07-05-trackpad-pinch-zoom-
+        # design.md section 2.5.
+        if self._gesture_active:
+            return
         prev_scale = self.scale
         self.scale = step_scale(self.scale, notches)
         # Clamped at SCALE_MIN/MAX -> the scale did not actually change: skip the
@@ -941,6 +963,84 @@ class ClusterOverlayController:
         self._enter_broad_phase(self._compute_window_rect())
         # Persist the new scale (debounced). A clamp-pinned no-op scroll already
         # returned above, so reaching here always means the scale actually changed.
+        self._schedule_save()
+
+    # ------------------------------------------------------------------
+    # Continuous scale gesture (trackpad pinch; spec sections 2.3-2.5)
+    # ------------------------------------------------------------------
+    def begin_scale_gesture(self) -> float | None:
+        """Open a continuous scale gesture: kill any in-flight wheel tween at
+        its current RENDERED frame, adopt that frame as the gesture's base
+        scale, and hold the BROAD input shape for the whole gesture. Returns
+        the base scale, or None when refused (framed, or a gesture is already
+        live).
+
+        The base is ``_view_scale`` AFTER the tween stop - never ``self.scale``,
+        which mid-tween is the tween TARGET: basing the gesture there would
+        make the first pinch frame jump past what is actually rendered. The
+        broad phase is the same one the notch path uses, but HELD: the
+        per-notch settle timer is stopped so the exact shape can never swap in
+        under the fingers mid-gesture - the single termination path owns
+        settling."""
+        if not self._active or self._gesture_active:
+            return None
+        if self._scale_anim is not None:
+            self._scale_anim.stop()
+        base = float(self._view_scale)
+        self._gesture_active = True
+        self._enter_broad_phase(self._compute_window_rect())
+        # HOLD the broad shape: _enter_broad_phase armed the notch path's
+        # settle timer, which mid-gesture would fire _settle_input and narrow
+        # the input region while updates are still streaming. end/force-cancel
+        # settle through _terminate_scale_gesture instead.
+        if self._settle_timer is not None:
+            self._settle_timer.stop()
+        return base
+
+    def update_scale_gesture(self, scale: float) -> None:
+        """One live gesture frame: drive the whole-cluster transform DIRECTLY
+        (no tween - 1:1 finger tracking) and keep the radial/panel top-levels
+        in lockstep, exactly as the notch path does. No persistence, no
+        input-shape work, no settle re-arm: the broad shape stays HELD and the
+        termination path owns save + exact shape. No-op unless a gesture is
+        live (a stray translator update after end/force-cancel is safe)."""
+        if not self._active or not self._gesture_active:
+            return
+        value = float(scale)
+        self.scale = value
+        self._view_scale = value
+        surface = self._surface
+        setter = getattr(surface, "set_cluster_scale", None) \
+            if surface is not None else None
+        if setter is not None:
+            try:
+                setter(value)
+            except Exception:
+                pass
+        self._reposition_radial()
+        self._reposition_panel()
+
+    def end_scale_gesture(self, final_scale: float) -> None:
+        """Close the gesture at *final_scale* (possibly snapped by the caller):
+        the public face of the ONE termination path. Idempotent - a second end
+        (or an end racing a force-cancel) is a no-op."""
+        self._terminate_scale_gesture(final_scale)
+
+    def _terminate_scale_gesture(self, final_scale: float) -> None:
+        """The single gesture termination path (spec 2.3/2.5), shared by
+        ``end_scale_gesture`` and the force-cancel sites (``leave()``, the
+        topology settle re-clamp): commit *final_scale* as the authoritative
+        scale, release the held broad shape via ``_settle_input()`` (rendered-
+        scale sync + EXACT input shape + echo re-show + rep unblank - every
+        step internally guarded for the inactive/surfaceless leave-time
+        cases), and schedule exactly one debounced save. The flag clears
+        BEFORE the fallible calls, so no failure can strand a "live" gesture.
+        No-op when no gesture is live."""
+        if not self._gesture_active:
+            return
+        self.scale = float(final_scale)
+        self._gesture_active = False
+        self._settle_input()
         self._schedule_save()
 
     def _drive_view_scale(self, target: float) -> None:
@@ -2491,6 +2591,14 @@ class ClusterOverlayController:
         from utils.overlay.backend import overlay_trace
         if not self._active:
             return False
+        # A live PINCH gesture does not defer topology: it force-cancels
+        # through the single termination path (commit current, no snap; broad
+        # shape released) and the re-clamp proceeds NOW - topology wins (pinch
+        # spec 2.5). Only the wheel-notch gesture keeps the defer below (it
+        # quiesces on its own settle timer; a pinch's timer is HELD, so
+        # deferring on it would re-arm forever).
+        if self._gesture_active:
+            self._terminate_scale_gesture(self._view_scale)
         if self._scaling_active:
             self._arm_topology_settle()
             return False
