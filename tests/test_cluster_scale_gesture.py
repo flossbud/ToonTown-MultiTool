@@ -15,6 +15,11 @@ wheel-notch path. Pinned here:
 - Force-cancel sites: leave() and the topology settle re-clamp terminate a
   live gesture through the same path (committing the gesture's scale) before
   their own work - the broad shape is never stranded.
+- cursor_over_chrome (the gesture-begin gate) is PURE geometry: it answers
+  from the LAST-applied EXACT input region in global coords (the broad-phase
+  capture rect is never chrome), plus the radial/panel windows while OPEN;
+  always False when framed, no app-active test (the overlay is
+  nonactivating).
 
 Spec: docs/superpowers/specs/2026-07-05-trackpad-pinch-zoom-design.md
 (sections 2.3-2.5).
@@ -35,10 +40,12 @@ os.environ.setdefault("TTMT_NO_RADIAL_ANIM", "1")
 # The mid-flight-tween test re-enables the animation via monkeypatch.
 os.environ.setdefault("TTMT_NO_OVERLAY_SCALE_ANIM", "1")
 
-from PySide6.QtCore import QAbstractAnimation
+from PySide6.QtCore import QAbstractAnimation, QPoint
+from PySide6.QtWidgets import QApplication, QWidget
 
 from tests.test_cluster_controller import (   # reuse the recording-stub harness
-    _DictSettings, _RecordingBackend, _StubProvider, _StubSurface, _StubWindow,
+    _DictSettings, _PIVOT, _RecordingBackend, _StubProvider, _StubSurface,
+    _StubWindow, _patch_panel, _patch_radial,
 )
 from utils.overlay.backend import NoOpOverlayBackend
 from utils.overlay.cluster_controller import ClusterOverlayController
@@ -337,3 +344,145 @@ def test_topology_settle_mid_gesture_force_cancels_before_reclamp(qapp, monkeypa
     name, l, t, r, b = orig_screens()[0]
     assert ctrl._anchor == ((l + r) // 2, (t + b) // 2)    # recentered
     ctrl.leave()
+
+
+# ---------------------------------------------------------------------------
+# cursor_over_chrome (the gesture-begin gate)
+# ---------------------------------------------------------------------------
+# WINDOW-LOCAL probes, derived from the stub cluster (_PIVOT is the emblem
+# center at every scale; the exact union is the emblem + visible controls):
+# inside cell 1's first control at scale 1.0 (host (220, 20)), off the emblem.
+_CHROME_CONTROL_PT = (_PIVOT[0] + 110, _PIVOT[1] - 70)
+# Host (170, 90): off every control and PAST the emblem's scale-1.0 edge
+# (pivot+50), but INSIDE the emblem once the exact shape re-applies at 1.5
+# (pivot+75) - distinguishes the stored LAST region from a live recompute.
+_CHROME_EMBLEM_15_PT = (_PIVOT[0] + 60, _PIVOT[1])
+# Window corner: inside the BROAD (full-window) capture rect, outside every
+# exact rect at any tested scale.
+_CHROME_OFF_PT = (1, 1)
+
+
+def _global_pt(ctrl, wx, wy):
+    """WINDOW-local (x, y) -> GLOBAL QPoint through the model window rect (the
+    same envelope+anchor math the predicate must map queries through)."""
+    win = ctrl._compute_window_rect()
+    return QPoint(win.x() + int(wx), win.y() + int(wy))
+
+
+def test_over_chrome_answers_exact_region_in_global_coords(qapp):
+    """After enter() the predicate answers from the enter-time EXACT region
+    (emblem + visible-card controls) in GLOBAL coordinates - and from pure
+    geometry: nothing here is shown/activated (the real overlay is
+    nonactivating by design), so an app-active gate would answer False."""
+    ctrl, provider, window, created = _make()
+    assert ctrl.enter() is True
+    # Pure-geometry precondition: the cluster window is never the app-active
+    # window here (the stub is never really shown), so any activeWindow-style
+    # gate inside the predicate would answer False below.
+    assert QApplication.activeWindow() is not created[0]
+
+    assert ctrl.cursor_over_chrome(_global_pt(ctrl, *_CHROME_CONTROL_PT)) is True
+    assert ctrl.cursor_over_chrome(_global_pt(ctrl, *_PIVOT)) is True   # emblem
+    assert ctrl.cursor_over_chrome(_global_pt(ctrl, *_CHROME_OFF_PT)) is False
+    ctrl.leave()
+
+
+def test_over_chrome_broad_phase_answers_from_last_exact_region(qapp):
+    """Mid-gesture (BROAD full-window capture shape HELD) the predicate still
+    answers from the LAST EXACT region: a point inside the broad rect but off
+    the real controls is NOT chrome (no broad-rect false positives), while
+    the last exact region keeps answering truthfully. The single termination
+    path then refreshes the stored region at the final scale."""
+    ctrl, provider, window, created = _make()
+    assert ctrl.enter() is True
+    assert ctrl.begin_scale_gesture() is not None   # broad applied + HELD
+    ctrl.update_scale_gesture(1.5)
+
+    assert ctrl.cursor_over_chrome(_global_pt(ctrl, *_CHROME_OFF_PT)) is False
+    assert ctrl.cursor_over_chrome(_global_pt(ctrl, *_CHROME_CONTROL_PT)) is True
+    # Chrome only once the exact shape re-applies at 1.5 - never mid-gesture.
+    assert ctrl.cursor_over_chrome(
+        _global_pt(ctrl, *_CHROME_EMBLEM_15_PT)) is False
+
+    ctrl.end_scale_gesture(1.5)                     # settle re-stores at 1.5
+
+    assert ctrl.cursor_over_chrome(
+        _global_pt(ctrl, *_CHROME_EMBLEM_15_PT)) is True
+    assert ctrl.cursor_over_chrome(_global_pt(ctrl, *_CHROME_CONTROL_PT)) is False
+    assert ctrl.cursor_over_chrome(_global_pt(ctrl, *_CHROME_OFF_PT)) is False
+    ctrl.leave()
+
+
+def test_over_chrome_follows_a_window_move_without_reapply(qapp):
+    """The stored region is window-LOCAL: after a drag (which never re-applies
+    the exact shape) the predicate follows the window - the same window-local
+    probe stays True at its NEW screen position and the OLD screen point goes
+    False."""
+    ctrl, provider, window, created = _make()
+    assert ctrl.enter() is True
+    before = _global_pt(ctrl, *_CHROME_CONTROL_PT)
+    assert ctrl.cursor_over_chrome(before) is True
+
+    assert ctrl.move_group(40, 30) is True
+
+    assert ctrl.cursor_over_chrome(_global_pt(ctrl, *_CHROME_CONTROL_PT)) is True
+    assert ctrl.cursor_over_chrome(before) is False
+    ctrl.leave()
+
+
+def test_over_chrome_radial_geometry_only_while_open(qapp, monkeypatch):
+    """The radial window's geometry is chrome ONLY while the ring is OPEN: the
+    persistent top-level stays MAPPED while closed (empty + click-through),
+    so its invisible canvas must never gate a pinch in before/after."""
+    created_radial = _patch_radial(monkeypatch)
+    ctrl, provider, window, created = _make()
+    assert ctrl.enter() is True
+    rsurf = created_radial["surfaces"][0]        # pre-mapped at enter
+
+    def _corner():
+        return rsurf.geometry().topLeft() + QPoint(3, 3)
+
+    assert ctrl.cursor_over_chrome(_corner()) is False   # closed: not chrome
+    assert ctrl.open_radial_menu() is not None
+    assert ctrl.cursor_over_chrome(_corner()) is True
+    outside = rsurf.geometry().topLeft() - QPoint(2, 2)
+    assert ctrl.cursor_over_chrome(outside) is False     # just past the canvas
+    ctrl.close_radial_menu()
+    assert ctrl.cursor_over_chrome(_corner()) is False
+    ctrl.leave()
+
+
+def test_over_chrome_panel_geometry_only_while_open(qapp, monkeypatch):
+    """Same open-marker rule for the portable Settings panel: its persistent
+    top-level's geometry counts as chrome only between open and close."""
+    created_panel = _patch_panel(monkeypatch)
+    ctrl, provider, window, created = _make()
+    assert ctrl.enter() is True
+    psurf = created_panel["surfaces"][0]         # pre-mapped at enter
+
+    def _corner():
+        return psurf.geometry().topLeft() + QPoint(3, 3)
+
+    assert ctrl.cursor_over_chrome(_corner()) is False   # closed: not chrome
+    assert ctrl.open_panel_surface(QWidget()) is psurf
+    assert ctrl.cursor_over_chrome(_corner()) is True
+    ctrl.close_panel_surface()
+    assert ctrl.cursor_over_chrome(_corner()) is False
+    ctrl.leave()
+
+
+def test_over_chrome_false_when_framed(qapp):
+    """Framed (never entered, and again after leave()): False everywhere -
+    even on a point that IS chrome while floating - and the stored region
+    dies with the envelope state."""
+    ctrl, provider, window, created = _make()
+    probe = _global_pt(ctrl, *_PIVOT)    # model rect is recomputable pre-enter
+
+    assert ctrl.cursor_over_chrome(probe) is False
+
+    assert ctrl.enter() is True
+    assert ctrl.cursor_over_chrome(probe) is True
+    ctrl.leave()
+
+    assert ctrl.cursor_over_chrome(probe) is False
+    assert ctrl._exact_input_region is None      # cleared with the envelope

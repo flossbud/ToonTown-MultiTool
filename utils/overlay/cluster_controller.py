@@ -156,6 +156,13 @@ class ClusterOverlayController:
         # docs/superpowers/specs/2026-07-05-trackpad-pinch-zoom-design.md
         # sections 2.3-2.5.
         self._gesture_active: bool = False
+        # Chrome hit-test model (the pinch gesture-begin gate): the last
+        # APPLIED exact input region, window-LOCAL, stored by
+        # _apply_exact_input_shape. Deliberately never updated by the broad
+        # phase - the full-window capture rect is a gesture artifact, not
+        # chrome - so cursor_over_chrome keeps answering from the last
+        # settled chrome even mid-gesture. None while framed.
+        self._exact_input_region = None
 
         # Occupancy. The grid GEOMETRY is fixed (retainSizeWhenHidden keeps every
         # quadrant's space, so the pinwheel never reflows), but an EMPTY card is
@@ -1043,6 +1050,52 @@ class ClusterOverlayController:
         self._settle_input()
         self._schedule_save()
 
+    def cursor_over_chrome(self, global_pos) -> bool:
+        """True when the GLOBAL (logical screen) point sits on float-UI
+        chrome: the last-applied EXACT input region (emblem + visible-card
+        controls), the radial window while the ring is OPEN, or the panel
+        window while the panel is OPEN. The pinch gesture-begin gate: a
+        gesture may only claim the scale when the fingers start over our
+        chrome. Accepts a QPoint/QPointF or an ``(x, y)`` pair.
+
+        PURE GEOMETRY by design: the stored window-LOCAL region is translated
+        by the CURRENT model window rect (so it follows drags), and the
+        radial/panel checks read their widget geometry - no native queries,
+        and no app-active test (the overlay is NONACTIVATING by design, so an
+        activeWindow-style gate would answer False forever). Mid-gesture
+        (BROAD phase) this still answers from the LAST EXACT region: the
+        full-window capture rect is a gesture artifact, never chrome, so a
+        broad-rect point off the real controls is NOT chrome. begin only ever
+        runs from idle, but the predicate stays truthful at every phase.
+        Always False when framed."""
+        if not self._active:
+            return False
+        gx, gy = self._point_xy(global_pos)
+        region = self._exact_input_region
+        if region is not None:
+            from PySide6.QtCore import QPoint
+            win = self._compute_window_rect()
+            if region.contains(QPoint(gx - win.x(), gy - win.y())):
+                return True
+        # Ring/panel visibility comes from the controller's OWN open markers
+        # (menu hosted / nonzero open size), never Qt visibility: the
+        # persistent top-levels stay MAPPED while closed (empty +
+        # click-through), so a closed ring's invisible canvas is not chrome.
+        # Geometry reads guarded like _point_on_radial_chrome's.
+        if self.is_radial_open and self._radial_surface is not None:
+            try:
+                if self._radial_surface.geometry().contains(gx, gy):
+                    return True
+            except Exception:
+                pass
+        if self.is_panel_open and self._panel_surface is not None:
+            try:
+                if self._panel_surface.geometry().contains(gx, gy):
+                    return True
+            except Exception:
+                pass
+        return False
+
     def _drive_view_scale(self, target: float) -> None:
         """Bring the RENDERED scale to *target*: retarget the zoom tween from the
         current visual value (so a scroll burst reads as one continuous zoom), or
@@ -1228,6 +1281,11 @@ class ClusterOverlayController:
         emblem_rect = self._emblem_rect()
         card_controls = self._window_control_rects()
         region = input_union(emblem_rect, card_controls, self._visible_cells)
+        # The exact union doubles as the chrome hit-test model
+        # (cursor_over_chrome). Window-LOCAL on purpose: the query maps
+        # through the CURRENT window rect, so the stored region survives
+        # drags (which move the window but never re-apply the shape).
+        self._exact_input_region = region
         self._apply_input_shape(self._region_to_path(region))
         # The settled painted content just (potentially) changed - keep the
         # glove-echo clip on the same cadence as the exact input shape.
@@ -3939,6 +3997,9 @@ class ClusterOverlayController:
         self._pivot = None
         self._emblem_center = None
         self._host_size = None
+        # The chrome hit-test model dies with the placement it was mapped
+        # against (cursor_over_chrome is inactive-gated regardless).
+        self._exact_input_region = None
         # The echo layer is a child of the (just-torn-down) surface: it dies
         # with it; only the reference is dropped here.
         self._ghost_echo = None
