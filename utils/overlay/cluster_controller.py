@@ -272,6 +272,13 @@ class ClusterOverlayController:
         # is the controller's OWN bookkeeping slot - distinct from the provider's
         # self._card_provider._emblem (the widget used for placement/hit tests).
         self._emblem = None
+        # PinchZoomCoordinator (trackpad pinch -> the continuous-gesture API
+        # above). Constructed by connect_emblem - the same site that wires the
+        # emblem's wheel-scale signal, so both scale entry points share one
+        # lifecycle anchor - then armed per float session in enter() and
+        # stopped in leave(). None until an emblem is connected (framed-only
+        # harnesses never build it).
+        self._pinch_coordinator = None
 
         # Multi-monitor / HiDPI screen-change reshape. The single cluster window's
         # input shape is a LOGICAL surface-local path that the backend converts to
@@ -292,6 +299,14 @@ class ClusterOverlayController:
     @property
     def is_active(self) -> bool:
         return self._active
+
+    @property
+    def drag_in_progress(self) -> bool:
+        """True while the emblem-drag poll is running. Single source of truth
+        for the pinch begin gate's drag interlock (spec 2.4) and the rep's
+        obstruction test - the two must never disagree on what 'dragging'
+        means."""
+        return self._drag_timer is not None and self._drag_timer.isActive()
 
     @property
     def is_radial_open(self) -> bool:
@@ -685,6 +700,19 @@ class ClusterOverlayController:
         _QT_diag.singleShot(
             1000, self._surface, lambda: self._trace_geometry_chain("enter+1s"))
         self._connect_scene_change_diag()
+        # Arm the pinch coordinator for this float session, watching the live
+        # overlay windows (cluster + the persistent radial/panel top-levels
+        # pre-mapped above). Stamps exactly once per attempt (disabled /
+        # unavailable / armed) - the running-code proof live validation reads
+        # first. Best-effort: pinch is an input enhancement, never a reason
+        # to fail an otherwise valid enter.
+        if self._pinch_coordinator is not None:
+            try:
+                self._pinch_coordinator.arm(surfaces=tuple(
+                    s for s in (self._surface, self._radial_surface,
+                                self._panel_surface) if s is not None))
+            except Exception:
+                pass
         self._emit_active_changed()   # self._active is True here
         return True
 
@@ -784,11 +812,21 @@ class ClusterOverlayController:
         surface = self._surface
         token = self._token
         try:
-            # A live pinch gesture terminates through the single path FIRST
-            # (commit the current rendered scale, no snap; broad shape released
-            # via _settle_input) so the flush below persists the gesture's
-            # scale and the broad shape is never stranded. Force-cancel site
-            # per the pinch spec (2.3/2.5).
+            # The pinch coordinator dies with the float session: stop() first
+            # terminates any live machine gesture with cancel semantics
+            # (through the single termination path, so the flush below
+            # persists the gesture's scale), then stops the watchdog and the
+            # translator - no stray timer, no translator outliving its
+            # surfaces. The coordinator object survives for the next enter()
+            # to re-arm.
+            if self._pinch_coordinator is not None:
+                self._pinch_coordinator.stop()
+            # Backstop for a gesture begun through the raw begin/update API
+            # (no coordinator): terminate through the same single path
+            # (commit the current rendered scale, no snap; broad shape
+            # released via _settle_input) so the flush below persists the
+            # gesture's scale and the broad shape is never stranded.
+            # Force-cancel site per the pinch spec (2.3/2.5).
             if self._gesture_active:
                 self._terminate_scale_gesture(self._view_scale)
             # Persist the FINAL anchor + scale before any teardown/reset (the
@@ -2061,6 +2099,15 @@ class ClusterOverlayController:
         emblem.toggle_requested.connect(self.toggle, Qt.QueuedConnection)
         emblem.move_requested.connect(self.begin_group_drag)
         emblem.resize_scrolled.connect(self.set_scale_by_notches)
+        # The pinch coordinator is built HERE - the same site that wires the
+        # wheel-scale signal, so every scale entry point shares one lifecycle
+        # anchor. Construction only: arming (translator start + stamp) runs
+        # per float session in enter(), teardown in leave(). One instance for
+        # the controller's lifetime - it holds no emblem state, so an emblem
+        # re-bind keeps it.
+        if self._pinch_coordinator is None:
+            from utils.overlay.pinch_zoom import PinchZoomCoordinator
+            self._pinch_coordinator = PinchZoomCoordinator(self)
 
     def begin_group_drag(self) -> None:
         """Start a manual drag of the whole cluster, following the cursor.
@@ -2079,6 +2126,13 @@ class ClusterOverlayController:
         moving emblem instead of fading out with a hard teardown."""
         if not self._active:
             return
+        # A drag STARTING while a pinch is ACTIVE force-cancels the pinch
+        # FIRST (commit the current scale, no snap, through the single
+        # termination path) - spec 2.4: the drag never fights a live scale
+        # writer, and the termination's settle clears _scaling_active, which
+        # would otherwise keep move_group locked out for the whole drag.
+        if self._pinch_coordinator is not None:
+            self._pinch_coordinator.force_cancel()
         if self.is_radial_open:
             self.dismiss_radial_menu()
         from PySide6.QtGui import QCursor
@@ -3153,8 +3207,7 @@ class ClusterOverlayController:
         rep = self._taskbar_rep
         if rep is None:
             return
-        drag_active = self._drag_timer is not None and self._drag_timer.isActive()
-        obstructed = (self._scaling_active or drag_active
+        obstructed = (self._scaling_active or self.drag_in_progress
                       or self._rep_peek_active or self.is_radial_open)
         if obstructed:
             rep.set_blanked(True)
