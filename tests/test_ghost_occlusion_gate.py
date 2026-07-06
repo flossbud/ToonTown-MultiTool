@@ -277,6 +277,36 @@ def test_darwin_refresh_parses_bounds_pid_number_only(monkeypatch):
     assert gc._darwin_zorder_snapshot() is snap
 
 
+def test_darwin_refresh_excludes_system_chrome_layers(monkeypatch):
+    """Only normal app windows (kCGWindowLayer 0) can occlude the game. System
+    UI chrome at higher layers - menu bar / Control Center (25), the full-screen
+    Screenshot region overlay (24), the Dock (20) - must be dropped from the
+    snapshot; otherwise a full-screen (often transparent/click-through) overlay
+    is counted as an occluder and masks EVERY ghost glove to nothing. Live
+    packaged bug: an open Screenshot overlay carved all gloves."""
+    from tabs.multitoon import _ghost_cursors as gc
+    from utils import macos_discovery as md
+
+    def _info(num, pid, x, y, w, h, layer):
+        return {"kCGWindowNumber": num, "kCGWindowOwnerPID": pid,
+                "kCGWindowLayer": layer,
+                "kCGWindowBounds": {"X": x, "Y": y, "Width": w, "Height": h}}
+
+    infos = [
+        _info(2401, 660, 0, 0, 1470, 33, 25),      # Control Center (menu bar)
+        _info(2402, 58618, 0, 0, 1470, 956, 24),   # full-screen Screenshot overlay
+        _info(2403, 658, 0, 0, 1470, 956, 20),     # Dock
+        _info(GAME, 777, 0, 30, 800, 600, 0),      # the game (kept)
+        _info(FOREIGN, 555, 10, 20, 100, 50, 0),   # a real app window (kept)
+    ]
+    monkeypatch.setattr(md, "_raw_window_info", lambda: infos)
+    snap = gc._refresh_darwin_snapshot()
+    pids = {p for _, _, p in snap}
+    assert 660 not in pids and 58618 not in pids and 658 not in pids  # chrome gone
+    assert snap == [(GAME, (0, 30, 800, 630), 777),
+                    (FOREIGN, (10, 20, 110, 70), 555)]
+
+
 def test_darwin_refresh_error_keeps_previous_snapshot(monkeypatch):
     """A transient window-server error must not blank the mask basis: the
     previous snapshot stays in place (stale beats blank; the next sweep or

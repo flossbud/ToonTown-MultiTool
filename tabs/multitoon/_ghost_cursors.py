@@ -170,15 +170,29 @@ def _refresh_darwin_snapshot():
     front-to-back). Rects are GLOBAL points - identity with Qt logical space
     on this backend (dpr-1.0 logical regions, D2), so the shared region math
     runs unconverted. Reads ONLY kCGWindowNumber / kCGWindowOwnerPID /
-    kCGWindowBounds: kCGWindowName can demand the Screen Recording TCC
-    prompt and must never be touched here. On failure the previous snapshot
-    stays in place (a transient window-server error must not blank the mask
-    basis); returns the stored snapshot or None."""
+    kCGWindowBounds / kCGWindowLayer: kCGWindowName can demand the Screen
+    Recording TCC prompt and must never be touched here. On failure the previous
+    snapshot stays in place (a transient window-server error must not blank the
+    mask basis); returns the stored snapshot or None.
+
+    ONLY normal app windows (kCGWindowLayer == 0) are kept. System UI chrome
+    lives at higher layers - menu bar / Control Center (25), the Screenshot
+    region overlay (24), Spotlight (23), Notification Center (21), the Dock (20)
+    - and several of those are full-screen, click-through, or transparent. Before
+    this filter they were counted as occluders that masked EVERY ghost glove to
+    nothing the moment such an overlay was up (live: an open Screenshot overlay
+    carved all gloves on the packaged build); they never actually occlude the
+    game."""
     try:
         from utils.macos_discovery import _raw_window_info
         out = []
         for info in _raw_window_info():
             try:
+                # Only layer-0 windows occlude; skip system chrome (higher
+                # layers). Real CGWindowList always sets kCGWindowLayer, so the
+                # default-0 only affects test fakes (never drops a real window).
+                if info.get("kCGWindowLayer", 0) != 0:
+                    continue
                 num = info.get("kCGWindowNumber")
                 pid = info.get("kCGWindowOwnerPID")
                 b = info.get("kCGWindowBounds")
