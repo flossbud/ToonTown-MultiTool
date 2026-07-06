@@ -25,6 +25,7 @@ import sys
 
 import pytest
 
+import utils.overlay.macos_pinch as macos_pinch
 from utils.overlay.macos_pinch import (
     CG_TYPE_GESTURE,
     CG_TYPE_MAGNIFY,
@@ -36,6 +37,7 @@ from utils.overlay.macos_pinch import (
     PHASE_CHANGED,
     PHASE_ENDED,
     SUBTYPE_ZOOM,
+    MacOSPinchTranslator,
     PinchEvent,
     PinchFactorStream,
     PinchKind,
@@ -401,3 +403,383 @@ class TestStreamUnit:
         assert rec.calls[-2:] == [("begin",),
                                   ("update", 1.0 * (1.0 + 0.002))]
         assert rec.stream.in_gesture
+
+
+# ══ Tap-lifecycle section ════════════════════════════════════════════════════
+#
+# MacOSPinchTranslator is Quartz-lifecycle glue: it owns the CGEventTap and
+# routes decoded events into the coordinator's callbacks (the pure decoder +
+# stream above do the interpretation). Every test below MOCKS the Quartz
+# module surface (injected into sys.modules BEFORE start() imports it), so a
+# real CGEventTap is NEVER created under pytest - that would touch the live
+# session and can pop a TCC prompt. The mocked module surface also means these
+# tests are platform-agnostic: they pin darwin wire semantics but need no real
+# darwin (they pass on the Linux CI runner too).
+
+
+class _FakeQuartz:
+    """Stand-in for the Quartz module the tap glue imports at call time.
+
+    Records every call the glue makes (so the lifecycle tests can pin exact
+    args) and lets the field getters read the fixture's ``fields`` dict - the
+    same object handed in as the opaque CGEvent - by field number. Constant
+    IDENTITY is all the glue needs; the disable sentinels use the real
+    kCGEventTapDisabledBy* uint32 values so the reason branch is exercised."""
+
+    kCGSessionEventTap = "kCGSessionEventTap"
+    kCGHeadInsertEventTap = "kCGHeadInsertEventTap"
+    kCGEventTapOptionListenOnly = "kCGEventTapOptionListenOnly"
+    kCFRunLoopCommonModes = "kCFRunLoopCommonModes"
+    kCGEventTapDisabledByTimeout = 0xFFFFFFFE
+    kCGEventTapDisabledByUserInput = 0xFFFFFFFF
+
+    def __init__(self, tap="TAP", source="SOURCE"):
+        self._tap_result = tap
+        self._source = source
+        self.create_args = None
+        self.runloop_source_args = None
+        self.add_source_args = None
+        self.remove_source_args = None
+        self.enable_calls = []   # (tap, bool) in call order
+
+    # Tap construction -----------------------------------------------------
+    def CGEventTapCreate(self, location, place, options, mask, callback,
+                         refcon):
+        self.create_args = (location, place, options, mask, callback, refcon)
+        return self._tap_result
+
+    def CFMachPortCreateRunLoopSource(self, allocator, tap, order):
+        self.runloop_source_args = (allocator, tap, order)
+        return self._source
+
+    def CFRunLoopGetMain(self):
+        return "MAIN"
+
+    def CFRunLoopAddSource(self, runloop, source, mode):
+        self.add_source_args = (runloop, source, mode)
+
+    def CFRunLoopRemoveSource(self, runloop, source, mode):
+        self.remove_source_args = (runloop, source, mode)
+
+    def CGEventTapEnable(self, tap, enable):
+        self.enable_calls.append((tap, enable))
+
+    # Per-event field reads (the "event" is the fixture fields dict) --------
+    def CGEventGetIntegerValueField(self, event, field):
+        return int(event.get(field, 0))
+
+    def CGEventGetDoubleValueField(self, event, field):
+        return float(event.get(field, 0.0))
+
+
+def _install_quartz(monkeypatch, tap="TAP"):
+    """Route the glue's deferred ``import Quartz`` to a fake. Because the name
+    is already in sys.modules, the import short-circuits to the fake on ANY
+    platform (no real Quartz needed)."""
+    fake = _FakeQuartz(tap=tap)
+    monkeypatch.setitem(sys.modules, "Quartz", fake)
+    return fake
+
+
+def _capture_traces(monkeypatch):
+    """Redirect overlay_trace to a list so the re-enable / error stamps are
+    assertable without relying on TTMT_OVERLAY_TRACE + stderr."""
+    traces = []
+    monkeypatch.setattr(macos_pinch, "overlay_trace",
+                        lambda msg: traces.append(msg))
+    return traces
+
+
+class _TranslatorRecorder:
+    """Mimics the coordinator: assigns on_begin / on_update / on_end AFTER
+    construction (the translator is zero-arg and late-binds them)."""
+
+    def __init__(self, translator):
+        self.calls = []
+        translator.on_begin = lambda: self.calls.append(("begin",))
+        translator.on_update = lambda f: self.calls.append(("update", f))
+        translator.on_end = lambda c: self.calls.append(("end", c))
+
+    @property
+    def updates(self):
+        return [c[1] for c in self.calls if c[0] == "update"]
+
+
+def _begin_event(delta=0.01):
+    """A minimal cgType-29 zoom BEGIN event (opaque CGEvent == fields dict)."""
+    return {FIELD_SUBTYPE: SUBTYPE_ZOOM, FIELD_DELTA: delta,
+            FIELD_PHASE: PHASE_BEGAN}
+
+
+# ── Construction contract ────────────────────────────────────────────────────
+
+class TestTranslatorContract:
+    def test_zero_arg_constructible(self):
+        MacOSPinchTranslator()   # coordinator builds it with no args
+
+    def test_mechanism_is_cgtap(self):
+        # The armed stamp reads this ("[PinchZoom] armed (cgtap) ...").
+        assert MacOSPinchTranslator.mechanism == "cgtap"
+        assert MacOSPinchTranslator().mechanism == "cgtap"
+
+
+# ── start(): tap creation arguments ──────────────────────────────────────────
+
+class TestStartCreatesTap:
+    def test_create_uses_exact_documented_arguments(self, monkeypatch):
+        fake = _install_quartz(monkeypatch)
+        _capture_traces(monkeypatch)
+        t = MacOSPinchTranslator()
+        t.start(())
+        location, place, options, mask, callback, refcon = fake.create_args
+        assert location == fake.kCGSessionEventTap
+        assert place == fake.kCGHeadInsertEventTap
+        assert options == fake.kCGEventTapOptionListenOnly
+        # Gesture-family (29) + magnify (30): the only two cgTypes decoded.
+        assert mask == (1 << 29) | (1 << 30)
+        assert callback is t._callback and callable(callback)
+        assert refcon is None
+
+    def test_runloop_wiring_and_initial_enable(self, monkeypatch):
+        fake = _install_quartz(monkeypatch)
+        _capture_traces(monkeypatch)
+        t = MacOSPinchTranslator()
+        t.start(())
+        # CFMachPortCreateRunLoopSource(None, tap, 0)
+        assert fake.runloop_source_args == (None, "TAP", 0)
+        # CFRunLoopAddSource(main, source, common)
+        assert fake.add_source_args == ("MAIN", "SOURCE",
+                                        fake.kCFRunLoopCommonModes)
+        # CGEventTapEnable(tap, True) exactly once at start.
+        assert fake.enable_calls == [("TAP", True)]
+
+    def test_surfaces_are_accepted_and_ignored(self, monkeypatch):
+        """The tap is session-wide (it must see pinches while a game/Finder
+        is frontmost); the coordinator's cursor gate does all scoping, so
+        surfaces are accepted for API parity and dropped."""
+        fake = _install_quartz(monkeypatch)
+        _capture_traces(monkeypatch)
+        t = MacOSPinchTranslator()
+        t.start(("cluster", "radial", "panel"))
+        # Nothing surface-derived reaches Quartz: one session tap, period.
+        assert fake.create_args[0] == fake.kCGSessionEventTap
+        assert fake.enable_calls == [("TAP", True)]
+
+
+# ── start(): denial + protocol misuse ────────────────────────────────────────
+
+class TestStartFailureModes:
+    def test_tcc_denial_raises_descriptive_error(self, monkeypatch):
+        """CGEventTapCreate returning None == the OS refused the tap (no
+        input-monitoring TCC grant / sandbox). start() must raise so the
+        coordinator disarms with that cause in the stamp."""
+        _install_quartz(monkeypatch, tap=None)
+        _capture_traces(monkeypatch)
+        t = MacOSPinchTranslator()
+        with pytest.raises(RuntimeError,
+                           match="input monitoring permission"):
+            t.start(())
+        # A denied start leaves the object re-armable (no stuck refs).
+        assert t._tap is None
+
+    def test_double_start_raises(self, monkeypatch):
+        """Two starts without an intervening stop() is protocol misuse - the
+        coordinator always stop()s first."""
+        _install_quartz(monkeypatch)
+        _capture_traces(monkeypatch)
+        t = MacOSPinchTranslator()
+        t.start(())
+        with pytest.raises(RuntimeError):
+            t.start(())
+
+    def test_restart_after_stop_creates_a_fresh_tap(self, monkeypatch):
+        fake = _install_quartz(monkeypatch)
+        _capture_traces(monkeypatch)
+        t = MacOSPinchTranslator()
+        t.start(())
+        t.stop()
+        t.start(())   # re-arm path: must not raise
+        assert t._tap == "TAP"
+
+
+# ── stop(): teardown + idempotence ───────────────────────────────────────────
+
+class TestStopTeardown:
+    def test_stop_disables_and_removes_source_and_drops_refs(self,
+                                                             monkeypatch):
+        fake = _install_quartz(monkeypatch)
+        _capture_traces(monkeypatch)
+        t = MacOSPinchTranslator()
+        t.start(())
+        t.stop()
+        assert fake.enable_calls == [("TAP", True), ("TAP", False)]
+        assert fake.remove_source_args == ("MAIN", "SOURCE",
+                                           fake.kCFRunLoopCommonModes)
+        assert t._tap is None and t._source is None
+        assert t._callback is None and t._stream is None
+
+    def test_stop_is_idempotent(self, monkeypatch):
+        fake = _install_quartz(monkeypatch)
+        _capture_traces(monkeypatch)
+        t = MacOSPinchTranslator()
+        t.start(())
+        t.stop()
+        fake.remove_source_args = None   # sentinel: a 2nd remove would reset it
+        t.stop()   # safe twice: no Quartz calls, no raise
+        assert fake.remove_source_args is None
+        assert fake.enable_calls == [("TAP", True), ("TAP", False)]
+
+    def test_stop_before_start_is_safe(self, monkeypatch):
+        _install_quartz(monkeypatch)
+        _capture_traces(monkeypatch)
+        t = MacOSPinchTranslator()
+        t.stop()   # never started: no-op, no raise
+
+
+# ── callback: end-to-end decode through the mocked field getters ─────────────
+
+class TestCallbackRouting:
+    def _start(self, monkeypatch, tap="TAP"):
+        fake = _install_quartz(monkeypatch, tap=tap)
+        traces = _capture_traces(monkeypatch)
+        t = MacOSPinchTranslator()
+        rec = _TranslatorRecorder(t)
+        t.start(())
+        return t, fake, traces, rec
+
+    def _replay(self, translator, events):
+        """Push (cgType, fields) records through the tap callback exactly as
+        the CFRunLoop would (etype == cgType; the fields dict is the opaque
+        CGEvent the mocked getters read)."""
+        for cgtype, fields in events:
+            ret = translator._on_tap_event(None, cgtype, fields, None)
+            assert ret is fields   # listen-only: event returned UNCHANGED
+
+    def test_positive_fixture_end_to_end_matches_golden(self, monkeypatch):
+        """The real CP-P1 positive gesture, replayed through the tap glue and
+        the mocked field getters, must reproduce the decoder-suite's golden
+        factor trail bit-for-bit (same deltas, same product order)."""
+        _, events = _load("cp_p1_positive_zoom.json")
+        deltas = _zoom_deltas(events)              # independent of the glue
+        golden = _product_factor(deltas)
+        running = []
+        factor = 1.0
+        for d in deltas:
+            factor *= (1.0 + d)
+            running.append(factor)
+
+        t, fake, traces, rec = self._start(monkeypatch)
+        self._replay(t, events)
+
+        assert rec.calls[0] == ("begin",)
+        assert rec.calls[-1] == ("end", False)
+        assert rec.updates == running
+        assert rec.updates[-1] == golden
+        assert golden > 1.0
+        # Listen-only never toggles the tap during delivery.
+        assert fake.enable_calls == [("TAP", True)]
+
+    def test_type30_fixture_end_to_end_differences_cumulative(self,
+                                                              monkeypatch):
+        """The cgType-30 path reads d124 (cumulative) and the stream
+        differences it - proves the glue selects field 124 by cgType."""
+        _, events = _load("cp_p1_type30_cumulative.json")
+        cumulatives = [f[FIELD_CUMULATIVE] for typ, f in events
+                       if typ == CG_TYPE_MAGNIFY]
+        golden, prev = 1.0, 0.0
+        for c in cumulatives:
+            golden *= (1.0 + (c - prev))
+            prev = c
+        t, fake, traces, rec = self._start(monkeypatch)
+        self._replay(t, events)
+        assert rec.calls[0] == ("begin",)
+        assert rec.calls[-1] == ("end", False)
+        assert rec.updates[-1] == golden
+
+    def test_noise_fixture_produces_no_callbacks(self, monkeypatch):
+        _, events = _load("cp_p1_noise_subtypes.json")
+        t, fake, traces, rec = self._start(monkeypatch)
+        self._replay(t, events)
+        assert rec.calls == []
+
+
+# ── callback: auto-disable re-enable + trace ─────────────────────────────────
+
+class TestDisableReenable:
+    def _start(self, monkeypatch):
+        fake = _install_quartz(monkeypatch)
+        traces = _capture_traces(monkeypatch)
+        t = MacOSPinchTranslator()
+        _TranslatorRecorder(t)
+        t.start(())
+        return t, fake, traces
+
+    def test_disable_by_timeout_reenables_and_traces_once(self, monkeypatch):
+        t, fake, traces = self._start(monkeypatch)
+        sentinel = object()
+        ret = t._on_tap_event(None, fake.kCGEventTapDisabledByTimeout,
+                              sentinel, None)
+        assert ret is sentinel   # the disable event is returned untouched
+        # start()'s enable + this re-enable.
+        assert fake.enable_calls == [("TAP", True), ("TAP", True)]
+        assert traces == ["[PinchZoom] cgtap re-enabled (timeout)"]
+
+    def test_disable_by_user_input_names_that_reason(self, monkeypatch):
+        t, fake, traces = self._start(monkeypatch)
+        t._on_tap_event(None, fake.kCGEventTapDisabledByUserInput, None, None)
+        assert traces == ["[PinchZoom] cgtap re-enabled (userinput)"]
+
+    def test_trace_is_once_per_burst_not_per_event(self, monkeypatch):
+        t, fake, traces = self._start(monkeypatch)
+        # A storm of back-to-back disables re-enables every time but traces
+        # only on the leading edge.
+        for _ in range(4):
+            t._on_tap_event(None, fake.kCGEventTapDisabledByTimeout, None,
+                            None)
+        assert traces == ["[PinchZoom] cgtap re-enabled (timeout)"]
+        assert fake.enable_calls == [("TAP", True)] + [("TAP", True)] * 4
+        # A real event flows: the burst is over, the next disable traces anew.
+        t._on_tap_event(None, CG_TYPE_GESTURE, _begin_event(), None)
+        t._on_tap_event(None, fake.kCGEventTapDisabledByTimeout, None, None)
+        assert traces == ["[PinchZoom] cgtap re-enabled (timeout)",
+                          "[PinchZoom] cgtap re-enabled (timeout)"]
+
+
+# ── callback: exceptions never escape the CFRunLoop ──────────────────────────
+
+class TestCallbackExceptionTrapped:
+    def test_callback_error_is_trapped_and_later_events_still_flow(
+            self, monkeypatch):
+        """A decode/callback fault must not escape into the run loop (it would
+        kill event delivery process-wide). The tap stays enabled, the fault
+        traces once, and subsequent events still reach the decoder."""
+        fake = _install_quartz(monkeypatch)
+        traces = _capture_traces(monkeypatch)
+        t = MacOSPinchTranslator()
+
+        seen = {"begins": 0}
+        boom = {"fired": False}
+
+        def on_begin():
+            if not boom["fired"]:
+                boom["fired"] = True
+                raise RuntimeError("decode boom")
+            seen["begins"] += 1
+
+        t.on_begin = on_begin
+        t.on_update = lambda f: None
+        t.on_end = lambda c: None
+        t.start(())
+
+        # First BEGIN -> on_begin raises -> trapped (no exception escapes).
+        ret = t._on_tap_event(None, CG_TYPE_GESTURE, _begin_event(0.01), None)
+        assert ret is not None            # returned the event, did not raise
+        assert seen["begins"] == 0
+        # Second BEGIN -> flows through cleanly: later events still deliver.
+        t._on_tap_event(None, CG_TYPE_GESTURE, _begin_event(0.02), None)
+        assert seen["begins"] == 1
+        # The tap was NEVER disabled by the fault (delivery survives).
+        assert ("TAP", False) not in fake.enable_calls
+        # Traced once, not per faulting event.
+        assert traces == [t_ for t_ in traces if "callback error" in t_]
+        assert sum("callback error" in m for m in traces) == 1
