@@ -62,7 +62,7 @@ jobs:
             tests/test_cluster_topology_reclamp.py \
             tests/test_chord_capture_session.py \
             tests/test_pinch_zoom_machine.py tests/test_pinch_zoom_coordinator.py \
-            tests/test_cluster_scale_gesture.py
+            tests/test_cluster_scale_gesture.py tests/test_macos_pinch_translator.py
 
       - name: Download DMG
         uses: actions/download-artifact@v8
