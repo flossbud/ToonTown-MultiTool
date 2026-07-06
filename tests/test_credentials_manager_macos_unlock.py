@@ -166,6 +166,28 @@ def test_migration_moves_legacy_password_and_deletes_it(monkeypatch, tmp_path):
     assert (keyring_service(), "acc-1") not in backend.store
 
 
+def test_migration_keeps_legacy_when_flag_set(monkeypatch, tmp_path):
+    # TTMT_VAULT_KEEP_LEGACY=1: copy into the vault but leave the legacy
+    # Keychain item as a recovery fallback (no delete).
+    monkeypatch.setenv("TTMT_VAULT_KEEP_LEGACY", "1")
+    backend = _RecordingBackend()
+    cm = _make_cm(monkeypatch, tmp_path, backend=backend)
+    cm._accounts = [{"id": "acc-1", "game": "cc"}]
+    backend.store[(keyring_service(), "acc-1")] = "legacy-pw"
+    backend.store[(cc_token_service(), "acc-1")] = "legacy-tok"
+    _mock_gate(monkeypatch, BiometricResult.SUCCESS)
+
+    assert cm.run_probe() is True
+    # Copied into the vault...
+    assert cm._macos_vault.get_password("acc-1") == "legacy-pw"
+    assert cm._macos_vault.get_token("acc-1") == "legacy-tok"
+    # ...but the legacy items are NOT deleted (kept as fallback).
+    assert ("delete", keyring_service(), "acc-1") not in backend.calls
+    assert ("delete", cc_token_service(), "acc-1") not in backend.calls
+    assert (keyring_service(), "acc-1") in backend.store
+    assert (cc_token_service(), "acc-1") in backend.store
+
+
 def test_migration_moves_legacy_cc_token_and_deletes_it(monkeypatch, tmp_path):
     backend = _RecordingBackend()
     cm = _make_cm(monkeypatch, tmp_path, backend=backend)

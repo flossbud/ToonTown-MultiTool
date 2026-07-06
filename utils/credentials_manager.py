@@ -40,6 +40,16 @@ MAX_ACCOUNTS = 32
 # prompt at this calm post-gate moment (decoupled from any game login).
 _MACOS_MIGRATION_TIMEOUT = 30.0
 
+
+def _macos_keep_legacy() -> bool:
+    """When ``TTMT_VAULT_KEEP_LEGACY=1``, migration copies secrets into the vault
+    but leaves the legacy macOS Keychain items in place as a recovery fallback
+    (they are never read once the vault has the secret, so they cause no prompts).
+    Off by default: migration moves (copy-then-delete). Intended for the first
+    live validation, so real passwords stay recoverable until the vault is
+    trusted."""
+    return os.environ.get("TTMT_VAULT_KEEP_LEGACY") == "1"
+
 # Always-on diagnostic log. Writes to a file independent of stdout/console
 # state, so issues inside PyInstaller --noconsole builds (e.g. AppImage) can
 # still be diagnosed after-the-fact.
@@ -519,12 +529,17 @@ class CredentialsManager:
                 if value is not None:
                     # Write-verify FIRST (raises on a bad verify), then delete.
                     self._macos_vault.set_password(account_id, value)
-                    self._try_keyring_call(
-                        keyring.delete_password, keyring_service(), account_id,
-                        timeout=_MACOS_MIGRATION_TIMEOUT,
-                    )
-                    _dbg(f"[Vault] migrated password for {account_id[:8]} "
-                         "(legacy item removed).")
+                    if _macos_keep_legacy():
+                        _dbg(f"[Vault] migrated password for {account_id[:8]} "
+                             "(legacy Keychain item KEPT as fallback: "
+                             "TTMT_VAULT_KEEP_LEGACY=1).")
+                    else:
+                        self._try_keyring_call(
+                            keyring.delete_password, keyring_service(), account_id,
+                            timeout=_MACOS_MIGRATION_TIMEOUT,
+                        )
+                        _dbg(f"[Vault] migrated password for {account_id[:8]} "
+                             "(legacy item removed).")
                 else:
                     # No legacy secret: record a known-absent marker so the
                     # legacy item is never probed again.
@@ -543,12 +558,17 @@ class CredentialsManager:
             else:
                 if value is not None:
                     self._macos_vault.set_token(account_id, value)
-                    self._try_keyring_call(
-                        keyring.delete_password, cc_token_service(), account_id,
-                        timeout=_MACOS_MIGRATION_TIMEOUT,
-                    )
-                    _dbg(f"[Vault] migrated CC token for {account_id[:8]} "
-                         "(legacy item removed).")
+                    if _macos_keep_legacy():
+                        _dbg(f"[Vault] migrated CC token for {account_id[:8]} "
+                             "(legacy Keychain item KEPT as fallback: "
+                             "TTMT_VAULT_KEEP_LEGACY=1).")
+                    else:
+                        self._try_keyring_call(
+                            keyring.delete_password, cc_token_service(), account_id,
+                            timeout=_MACOS_MIGRATION_TIMEOUT,
+                        )
+                        _dbg(f"[Vault] migrated CC token for {account_id[:8]} "
+                             "(legacy item removed).")
                 else:
                     self._macos_vault.set_token(account_id, None)
                 did_work = True
