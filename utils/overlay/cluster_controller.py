@@ -2106,6 +2106,27 @@ class ClusterOverlayController:
         # the controller's lifetime - it holds no emblem state, so an emblem
         # re-bind keeps it.
         if self._pinch_coordinator is None:
+            import sys
+            if sys.platform == "darwin":
+                # Static probe-decided selection (spec 2.2 - no runtime
+                # fallback): register the macOS translator into the
+                # platform-bucket registry BEFORE the coordinator exists, so
+                # its first arm() (float enter) finds it. setdefault so a
+                # test-injected translator (or a future manual override) is
+                # never clobbered. Guarded: a broken Quartz/PyObjC stack must
+                # degrade to the coordinator's ordinary "unavailable" stamp,
+                # never crash emblem wiring - pinch is an input enhancement,
+                # not a reason to fail float mode.
+                try:
+                    from utils.overlay.macos_pinch import MacOSPinchTranslator
+                    from utils.overlay.pinch_zoom import TRANSLATOR_REGISTRY
+                    TRANSLATOR_REGISTRY.setdefault(
+                        "darwin", MacOSPinchTranslator)
+                except Exception as exc:
+                    from utils.overlay.backend import overlay_trace
+                    overlay_trace(
+                        f"[PinchZoom] macOS translator registration failed "
+                        f"({exc})")
             from utils.overlay.pinch_zoom import PinchZoomCoordinator
             self._pinch_coordinator = PinchZoomCoordinator(self)
 

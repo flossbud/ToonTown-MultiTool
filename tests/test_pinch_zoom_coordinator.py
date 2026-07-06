@@ -49,6 +49,8 @@ from tests.test_cluster_controller import _SignalEmblem
 from tests.test_cluster_scale_gesture import (
     _CHROME_CONTROL_PT, _CHROME_OFF_PT, _global_pt, _make,
 )
+from tests.test_macos_pinch_translator import _install_quartz
+from utils.overlay.macos_pinch import MacOSPinchTranslator
 from utils.overlay.pinch_zoom import (
     PINCH_WATCHDOG_MS,
     PinchState,
@@ -593,3 +595,192 @@ def test_enter_arms_and_leave_tears_down_then_reenter_rearms(qapp, monkeypatch):
     assert translators[1].started
     ctrl.leave()
     assert translators[1].stopped == 1
+
+
+# ---------------------------------------------------------------------------
+# Task 4: darwin registration (cluster_controller.connect_emblem)
+#
+# The REAL registration site - utils/overlay/cluster_controller.py's
+# connect_emblem() - sys.platform-gates an import of MacOSPinchTranslator and
+# TRANSLATOR_REGISTRY.setdefault("darwin", ...) immediately before building
+# the coordinator (spec 2.2: static probe-decided selection, no runtime
+# fallback). These tests exercise that call site directly (never an injected
+# per-coordinator registry), so every one of them installs an ISOLATED
+# TRANSLATOR_REGISTRY first via `_fresh_registry` - connect_emblem's deferred
+# `from utils.overlay.pinch_zoom import TRANSLATOR_REGISTRY` re-resolves the
+# module attribute at call time, so the patched dict is what actually gets
+# mutated, and the process-wide registry (and any other test's "ships empty"
+# assumption, e.g. test_empty_registry_stamps_unavailable_with_bucket above)
+# is never touched. sys.platform is always PINNED via monkeypatch, never
+# inherited from the real box this suite happens to run on.
+# ---------------------------------------------------------------------------
+def _fresh_registry(monkeypatch, initial=None):
+    """Install an isolated TRANSLATOR_REGISTRY so a test's real
+    connect_emblem() registration can never leak into the process-wide dict
+    (or another test's assumptions about it, in this file or elsewhere)."""
+    registry = dict(initial) if initial else {}
+    monkeypatch.setattr(pinch_zoom, "TRANSLATOR_REGISTRY", registry)
+    return registry
+
+
+def _backend_stamps(monkeypatch):
+    """Capture overlay_trace calls made via cluster_controller.py's OWN
+    deferred `from utils.overlay.backend import overlay_trace` (the
+    registration-failure trace) - a different name binding than pinch_zoom's
+    own `overlay_trace`, which `_stamps` above captures instead."""
+    import utils.overlay.backend as backend
+    lines: list = []
+    monkeypatch.setattr(backend, "overlay_trace", lines.append)
+    return lines
+
+
+def test_registration_puts_macos_translator_under_darwin(qapp, monkeypatch):
+    """connect_emblem, run with sys.platform pinned to darwin, registers the
+    real MacOSPinchTranslator under the "darwin" bucket of the (isolated)
+    registry - the static selection the arm() stamp later reads."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    registry = _fresh_registry(monkeypatch)
+    ctrl, _provider, _window, _created = _make()
+
+    ctrl.connect_emblem(_SignalEmblem())
+
+    assert registry == {"darwin": MacOSPinchTranslator}
+
+
+def test_registration_does_not_overwrite_an_existing_entry(qapp, monkeypatch):
+    """setdefault semantics: a translator already registered under "darwin"
+    (a test double, or a future manual override) is never clobbered."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    sentinel = lambda: "sentinel-translator"
+    registry = _fresh_registry(monkeypatch, {"darwin": sentinel})
+    ctrl, _provider, _window, _created = _make()
+
+    ctrl.connect_emblem(_SignalEmblem())
+
+    assert registry == {"darwin": sentinel}
+
+
+def test_registration_is_idempotent_across_controllers(qapp, monkeypatch):
+    """A second, independent registration attempt (a second controller's
+    connect_emblem, same process) leaves the registry exactly as the first
+    one did - no duplication, no error, no second entry."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    registry = _fresh_registry(monkeypatch)
+    ctrl1, _provider1, _window1, _created1 = _make()
+    ctrl2, _provider2, _window2, _created2 = _make()
+
+    ctrl1.connect_emblem(_SignalEmblem())
+    after_first = dict(registry)
+    ctrl2.connect_emblem(_SignalEmblem())
+
+    assert registry == after_first
+    assert registry == {"darwin": MacOSPinchTranslator}
+
+
+@pytest.mark.parametrize("raw,bucket", [("win32", "win32"), ("linux", "linux")])
+def test_registration_is_darwin_scoped_never_leaks_to_other_buckets(
+        qapp, monkeypatch, raw, bucket):
+    """Non-darwin platforms must never see the darwin registration - and
+    still arm to the Phase-1 "unavailable" stamp exactly as before Task 4."""
+    monkeypatch.setattr(sys, "platform", raw)
+    registry = _fresh_registry(monkeypatch)
+    ctrl, _provider, _window, _created = _make()
+
+    ctrl.connect_emblem(_SignalEmblem())
+
+    assert registry == {}                             # never touched
+    stamps = _stamps(monkeypatch)
+
+    assert ctrl.enter() is True
+    assert stamps == [f"[PinchZoom] unavailable (no translator: {bucket})"]
+    ctrl.leave()
+
+
+def test_darwin_arm_end_to_end_stamps_armed_cgtap(qapp, monkeypatch):
+    """End-to-end through the REAL registration + REAL translator (Quartz
+    mocked so no CGEventTap is ever created): sys.platform pinned to darwin,
+    connect_emblem registers, enter() arms, and the stamp is exactly the
+    Task-4 pinned format - the running-code proof live validation reads
+    first."""
+    from PySide6.QtCore import qVersion
+    monkeypatch.setattr(sys, "platform", "darwin")
+    _fresh_registry(monkeypatch)
+    fake = _install_quartz(monkeypatch)
+    ctrl, _provider, _window, _created = _make()
+    ctrl.connect_emblem(_SignalEmblem())
+    stamps = _stamps(monkeypatch)
+
+    assert ctrl.enter() is True
+
+    assert stamps == [f"[PinchZoom] armed (cgtap) "
+                      f"qt={qVersion()} platform=darwin"]
+    assert ctrl._pinch_coordinator.armed is True
+    assert fake.create_args is not None             # the tap was really built
+    ctrl.leave()
+
+
+def test_darwin_kill_switch_wins_translator_never_built(qapp, monkeypatch):
+    """The kill switch is checked BEFORE the registry lookup (arm()'s
+    existing order): even with darwin registered for real, TTMT_NO_PINCH_ZOOM
+    must stamp disabled and the translator must never even be constructed."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    _fresh_registry(monkeypatch)
+    monkeypatch.setenv("TTMT_NO_PINCH_ZOOM", "1")
+    constructed = []
+    monkeypatch.setattr(MacOSPinchTranslator, "__init__",
+                        lambda self: constructed.append(1))
+    ctrl, _provider, _window, _created = _make()
+    ctrl.connect_emblem(_SignalEmblem())
+    stamps = _stamps(monkeypatch)
+
+    assert ctrl.enter() is True
+    assert stamps == ["[PinchZoom] disabled (env)"]
+    assert ctrl._pinch_coordinator.armed is False
+    assert constructed == []                         # never constructed
+    ctrl.leave()
+
+
+def test_darwin_tcc_denial_disarms_with_stamp(qapp, monkeypatch):
+    """CGEventTapCreate returning None (no input-monitoring TCC grant) makes
+    the real MacOSPinchTranslator.start() raise; the coordinator's own
+    disarm path (not a new mechanism) surfaces it in the pinned stamp."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    _fresh_registry(monkeypatch)
+    _install_quartz(monkeypatch, tap=None)           # CGEventTapCreate -> None
+    ctrl, _provider, _window, _created = _make()
+    ctrl.connect_emblem(_SignalEmblem())
+    stamps = _stamps(monkeypatch)
+
+    assert ctrl.enter() is True                      # pinch is best-effort
+    assert stamps == [
+        "[PinchZoom] disarmed (cgtap denied - input monitoring permission?)"]
+    assert ctrl._pinch_coordinator.armed is False
+    ctrl.leave()
+
+
+def test_broken_macos_pinch_import_degrades_to_unavailable(qapp, monkeypatch):
+    """A broken macos_pinch import (missing PyObjC/Quartz stack) must never
+    crash connect_emblem - the guarded try/except drops registration and the
+    next arm() falls through to the ordinary "unavailable" stamp, exactly as
+    if no translator existed for this platform."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    registry = _fresh_registry(monkeypatch)
+    # None in sys.modules -> the next `import`/`from ... import` of this
+    # module raises ImportError immediately (the standard broken-import
+    # simulation this suite uses elsewhere, e.g. test_ghost_renderer.py).
+    monkeypatch.setitem(sys.modules, "utils.overlay.macos_pinch", None)
+    ctrl, _provider, _window, _created = _make()
+    backend_stamps = _backend_stamps(monkeypatch)
+
+    ctrl.connect_emblem(_SignalEmblem())             # must not raise
+
+    assert registry == {}                             # never registered
+    assert ctrl._pinch_coordinator is not None         # coordinator still built
+    assert len(backend_stamps) == 1
+    assert backend_stamps[0].startswith(
+        "[PinchZoom] macOS translator registration failed")
+
+    stamps = _stamps(monkeypatch)
+    assert ctrl.enter() is True
+    assert stamps == ["[PinchZoom] unavailable (no translator: darwin)"]
+    ctrl.leave()
