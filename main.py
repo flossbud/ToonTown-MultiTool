@@ -1581,6 +1581,13 @@ class MultiToonTool(QMainWindow):
         self._mode_controller.toggle_cards_hidden(animate=True)
 
     def _on_hotkey_action(self, action_id: str):
+        # Chord-capture holiday: while a Settings capture button is recording,
+        # a provider-side fire of the very chord being re-recorded (Carbon
+        # never routes through the session tap) must not trigger its action.
+        from utils import chord_capture_state
+        if chord_capture_state.is_active():
+            print(f"[GlobalHotkeys] {action_id} ignored (chord capture recording)")
+            return
         handler = self._hotkey_dispatch.get(action_id)
         if handler is None:
             print(f"[GlobalHotkeys] unknown action {action_id!r} (dropped)")

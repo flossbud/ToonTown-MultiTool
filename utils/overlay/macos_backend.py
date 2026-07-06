@@ -86,6 +86,98 @@ _LIBOBJC = None
 _FREE_PANEL_METHOD = None
 _FREE_PANEL_CLS = 0
 
+# Chord-capture keyboard sessions (the Spotlight pattern): a nonactivating
+# panel IS allowed to become the key window without activating its app -
+# that is how Spotlight/Alfred take typing while the previous app stays
+# frontmost. Qt's WindowDoesNotAcceptFocus pins QNSPanel's
+# canBecomeKeyWindow to NO, so no keyboard event is EVER delivered to an
+# overlay surface (live: the Settings chord-capture button was deaf, every
+# key beeped off the still-key app, 2026-07-05). The runtime subclass
+# overrides canBecomeKeyWindow to consult this membership set: a window is
+# key-capable exactly while a capture session holds it open, and the
+# override returns NO otherwise - identical to Qt's own answer for every
+# overlay surface (they all carry WindowDoesNotAcceptFocus).
+# Keyed by objc pointer (objc.pyobjc_id); entries live only for the span
+# of one capture session, so pointer reuse cannot alias.
+_KEY_SESSION_WINDOWS: set[int] = set()
+_KEY_METHOD_OK = False
+_KEY_METHOD_CB = None  # keep the Python callable alive (same rule as above)
+
+
+def _objc_ptr(win) -> int:
+    """Stable identity for an NSWindow proxy (the raw objc pointer). The
+    canBecomeKeyWindow override and the session set must agree on this
+    token; tests monkeypatch it to id()."""
+    import objc
+    return objc.pyobjc_id(win)
+
+
+# The window-level override is only HALF the delivery path: AppKit routes a
+# key window's keyDown to its FIRST RESPONDER, and Qt's QNSView refuses
+# first-responder status for WindowDoesNotAcceptFocus windows (the same flag
+# consult, one layer down). Probed live 2026-07-05: the panel became key
+# (BEGIN key=True), the tap passed every keystroke, and the events still
+# died unhandled at the NSWindow (system beep) - so the content view gets
+# the same runtime-subclass treatment, gated on the same session set.
+_KEY_VIEW_CLASS_NAME = "TTMTKeySessionView"
+_KEY_VIEW_CLS = 0
+_KEY_VIEW_BASE = None   # runtime class name the subclass was built on
+_KEY_VIEW_CB = None     # keep the Python callable alive
+
+
+def _ensure_key_view_class(lib, base_name: bytes) -> int:
+    """Register the acceptsFirstResponder-override subclass of the content
+    view's own runtime class. One registration per process; if a later view
+    reports a DIFFERENT base class the swizzle is refused (never subclass a
+    layout we did not verify)."""
+    global _KEY_VIEW_CLS, _KEY_VIEW_BASE, _KEY_VIEW_CB
+    if _KEY_VIEW_CLS:
+        return _KEY_VIEW_CLS if base_name == _KEY_VIEW_BASE else 0
+    try:
+        import objc
+        existing = lib.objc_getClass(_KEY_VIEW_CLASS_NAME.encode())
+        if not existing:
+            base = lib.objc_getClass(base_name)
+            if not base:
+                return 0
+            cls = lib.objc_allocateClassPair(
+                base, _KEY_VIEW_CLASS_NAME.encode(), 0)
+            if not cls:
+                return 0
+            lib.objc_registerClassPair(cls)
+            existing = cls
+
+        def acceptsFirstResponder(self):
+            try:
+                w = self.window()
+                return w is not None and _objc_ptr(w) in _KEY_SESSION_WINDOWS
+            except Exception:
+                return False
+
+        sel = lib.sel_registerName(b"acceptsFirstResponder")
+        method = lib.class_getInstanceMethod(lib.objc_getClass(base_name), sel)
+        encoding = lib.method_getTypeEncoding(method) if method else None
+        target = objc.lookUpClass(_KEY_VIEW_CLASS_NAME)
+        for enc in (encoding, b"B@:", b"c@:"):
+            if enc is None:
+                continue
+            try:
+                objc.classAddMethods(target, [objc.selector(
+                    acceptsFirstResponder,
+                    selector=b"acceptsFirstResponder",
+                    signature=enc)])
+                _KEY_VIEW_CB = acceptsFirstResponder
+                _KEY_VIEW_CLS = existing
+                _KEY_VIEW_BASE = base_name
+                overlay_trace("macos key-session: view responder class registered "
+                              f"(base={base_name.decode()})")
+                return existing
+            except Exception:
+                continue
+        return 0
+    except Exception:
+        return 0
+
 
 def _libobjc():
     """libobjc with the runtime functions typed. Cached; None on failure."""
@@ -178,11 +270,57 @@ def _ensure_free_panel_class(lib) -> int:
         if not added:
             return 0
         _FREE_PANEL_METHOD = constrainFrameRect_toScreen_
+        _add_key_window_method(lib, target)
         _FREE_PANEL_CLS = existing
         overlay_trace("macos constrain-exempt: runtime class registered")
         return existing
     except Exception:
         return 0
+
+
+def _add_key_window_method(lib, target) -> None:
+    """Bridge canBecomeKeyWindow onto the runtime class (same category
+    mechanism as constrainFrameRect - never a PyObjC subclass, CP10).
+
+    A failure here is deliberately non-fatal: the constrain exemption is
+    load-bearing for the whole float UI, key sessions only for chord
+    capture, so the class must register even if this method cannot. A
+    begin_key_session against a class without the override simply finds
+    isKeyWindow False (makeKeyWindow consults canBecomeKeyWindow) and
+    reports the session as not established."""
+    global _KEY_METHOD_OK, _KEY_METHOD_CB
+    try:
+        import objc
+
+        def canBecomeKeyWindow(self):
+            try:
+                return _objc_ptr(self) in _KEY_SESSION_WINDOWS
+            except Exception:
+                return False
+
+        sel = lib.sel_registerName(b"canBecomeKeyWindow")
+        method = lib.class_getInstanceMethod(lib.objc_getClass(b"QNSPanel"), sel)
+        encoding = lib.method_getTypeEncoding(method) if method else None
+        # BOOL encodes as 'B' (arm64) or 'c' (x86_64); try the runtime's own
+        # encoding first, then both literals (universal2).
+        for enc in (encoding, b"B@:", b"c@:"):
+            if enc is None:
+                continue
+            try:
+                objc.classAddMethods(target, [objc.selector(
+                    canBecomeKeyWindow,
+                    selector=b"canBecomeKeyWindow",
+                    signature=enc)])
+                _KEY_METHOD_CB = canBecomeKeyWindow
+                _KEY_METHOD_OK = True
+                overlay_trace("macos key-session: canBecomeKeyWindow bridged")
+                return
+            except Exception:
+                continue
+        overlay_trace("macos key-session: canBecomeKeyWindow bridge FAILED "
+                      "(chord capture will stay deaf on overlay surfaces)")
+    except Exception:
+        pass
 
 
 class MacOSOverlayBackend(OverlayBackend):
@@ -425,6 +563,83 @@ class MacOSOverlayBackend(OverlayBackend):
         """No-op: the representative is never constructed on macOS
         (wants_taskbar_rep() is False; the Dock identity is app-level)."""
         overlay_trace("macos set_rep_initial_state: no-op (rep unused on macOS)")
+
+    # -- chord-capture keyboard session ------------------------------------
+
+    def begin_key_session(self, window) -> bool:
+        """Let *window* (an overlay surface) receive keyboard events for the
+        span of a chord capture, WITHOUT activating the app - the Spotlight
+        pattern. Returns whether the window actually became key (the caller
+        treats False as "capture stays deaf", never an error)."""
+        if not self.is_available():
+            return False
+        win = self._nswindow(window)
+        if win is None:
+            return False
+        # The override lives on the runtime subclass; make sure this window
+        # is swizzled (idempotent - surfaces already are, pre-map).
+        if not self._exempt_frame_constrain(win) or not _KEY_METHOD_OK:
+            overlay_trace("macos key-session BEGIN refused: "
+                          f"swizzle/method unavailable (method_ok={_KEY_METHOD_OK})")
+            return False
+        try:
+            # BOTH halves of the delivery path must open: the WINDOW must be
+            # allowed to become key AND its content VIEW must accept first
+            # responder, or AppKit drops the keyDown at the window (beep).
+            view = win.contentView()
+            view_ok = self._exempt_view_responder(view)
+            _KEY_SESSION_WINDOWS.add(_objc_ptr(win))
+            win.makeKeyWindow()
+            if view_ok:
+                # After membership: makeFirstResponder consults
+                # acceptsFirstResponder, which reads the session set.
+                win.makeFirstResponder_(view)
+            ok = bool(win.isKeyWindow()) and view_ok
+        except Exception:
+            ok = False
+        overlay_trace(f"macos key-session BEGIN key={ok}")
+        return ok
+
+    def _exempt_view_responder(self, view) -> bool:
+        """isa-swizzle the content view onto the responder-override subclass
+        (mirrors _exempt_frame_constrain; idempotent; never raises)."""
+        try:
+            import objc
+            lib = _libobjc()
+            if lib is None or view is None:
+                return False
+            view_ptr = objc.pyobjc_id(view)
+            name = lib.object_getClassName(view_ptr)
+            if name == _KEY_VIEW_CLASS_NAME.encode():
+                return True
+            cls_ptr = _ensure_key_view_class(lib, name)
+            if not cls_ptr:
+                overlay_trace(f"macos key-session: view swizzle refused (class={name!r})")
+                return False
+            lib.object_setClass(view_ptr, cls_ptr)
+            return lib.object_getClassName(view_ptr) == _KEY_VIEW_CLASS_NAME.encode()
+        except Exception:
+            return False
+
+    def end_key_session(self, window) -> None:
+        """Close the capture session: drop key-capability and hand keyboard
+        focus back to the app the user was in. AppKit has no 'resign key'
+        command - the reliable primitive is hiding the key window (key falls
+        back to the active app) and re-fronting ours without key. Both calls
+        run in one event-loop turn, so the panel does not visibly blink."""
+        if not self.is_available():
+            return
+        win = self._nswindow(window)
+        if win is None:
+            return
+        try:
+            _KEY_SESSION_WINDOWS.discard(_objc_ptr(win))
+            if win.isKeyWindow():
+                win.orderOut_(None)
+                win.orderFrontRegardless()
+        except Exception:
+            pass
+        overlay_trace("macos key-session END")
 
     def set_skip_close_animation(self, window) -> None:
         return  # no KWin close animation to skip

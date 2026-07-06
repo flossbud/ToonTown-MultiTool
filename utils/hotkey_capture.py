@@ -19,7 +19,9 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QPushButton
 
+from utils import chord_capture_state
 from utils.hotkey_chords import Chord, chord_error, format_chord
+from utils.overlay import key_session
 
 _QT_MODS = ((Qt.ControlModifier, "ctrl"), (Qt.AltModifier, "alt"),
             (Qt.ShiftModifier, "shift"), (Qt.MetaModifier, "super"))
@@ -133,12 +135,23 @@ class ChordCaptureButton(QPushButton):
         # grab below is never stomped by that release.
         self.setFocus(Qt.MouseFocusReason)
         self.setText("Press a chord... (Esc cancels, Backspace clears)")
+        # Input holiday FIRST: the flag gates the session tap / router /
+        # hotkey providers, and its edge drains held keys - all before any
+        # chord key can arrive. Then the keyboard session: on cocoa the
+        # unfocusable float panel must become the key window or no key
+        # event is ever delivered to it (Qt's grab below only redirects
+        # events already delivered to the app).
+        chord_capture_state.set_active(True)
+        key_session.begin(self)
         self.grabKeyboard()
 
     def _end_capture(self) -> None:
         self._capturing = False
         self._reset_held()
         self.releaseKeyboard()
+        # Mirror order: hand key focus back, then lift the input holiday.
+        key_session.end(self)
+        chord_capture_state.set_active(False)
 
     def _reset_held(self) -> None:
         self._held = {}

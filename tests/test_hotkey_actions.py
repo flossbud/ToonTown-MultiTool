@@ -1,6 +1,15 @@
 from utils.hotkey_actions import ACTIONS, action_by_id, effective_bindings
 from utils.settings_keys import HOTKEY_BINDINGS
 
+# The refresh default is platform-dependent (bare F5 is the Dictation
+# media key on Mac laptop keyboards, so darwin defaults to a modifier
+# chord). Assertions compare against the registry's own answer.
+_REFRESH = action_by_id("app.refresh").default_chord
+_REFRESH_MODS = frozenset(p for p in _REFRESH.split("+")
+                          if p in ("ctrl", "alt", "shift", "super"))
+_REFRESH_KEYS = frozenset(p for p in _REFRESH.split("+")
+                          if p not in ("ctrl", "alt", "shift", "super"))
+
 
 class _FakeSettings:
     def __init__(self, data=None):
@@ -19,7 +28,9 @@ def test_registry_ids_and_defaults():
         "profile.load_1", "profile.load_2", "profile.load_3",
         "profile.load_4", "profile.load_5",
     ]
-    assert action_by_id("app.refresh").default_chord == "F5"
+    import sys
+    assert action_by_id("app.refresh").default_chord == (
+        "ctrl+alt+r" if sys.platform == "darwin" else "F5")
     assert action_by_id("profile.load_3").default_chord == "ctrl+3"
     assert action_by_id("overlay.toggle_cards").default_chord is None
     assert action_by_id("overlay.scale_up").repeat_ok is True
@@ -29,7 +40,7 @@ def test_registry_ids_and_defaults():
 def test_effective_bindings_defaults_absent_null():
     # Empty config -> only the actions with defaults are bound.
     eff = effective_bindings(_FakeSettings())
-    assert eff["app.refresh"] == "F5"
+    assert eff["app.refresh"] == _REFRESH
     assert eff["profile.load_1"] == "ctrl+1"
     assert "overlay.toggle_cards" not in eff
     # Explicit null CLEARS a default; explicit chord overrides it.
@@ -45,7 +56,7 @@ def test_effective_bindings_drops_invalid_entries():
         HOTKEY_BINDINGS: {"app.refresh": "not a + chord +",
                           "no.such.action": "ctrl+9",
                           "clicksync.toggle": "h"}}))   # guardrail violation
-    assert eff["app.refresh"] == "F5"     # invalid override -> default survives
+    assert eff["app.refresh"] == _REFRESH  # invalid override -> default survives
     assert "no.such.action" not in eff
     assert "clicksync.toggle" not in eff
 
@@ -65,7 +76,7 @@ def test_effective_bindings_canonicalizes_and_survives_wrong_type():
         HOTKEY_BINDINGS: {"overlay.toggle_cards": "alt+ctrl+H"}}))
     assert eff["overlay.toggle_cards"] == "ctrl+alt+h"
     eff = effective_bindings(_FakeSettings({HOTKEY_BINDINGS: "oops"}))
-    assert eff["app.refresh"] == "F5"     # wrong-typed store -> defaults only
+    assert eff["app.refresh"] == _REFRESH  # wrong-typed store -> defaults only
     assert "overlay.toggle_cards" not in eff
 
 
@@ -85,7 +96,7 @@ def test_make_hotkey_hook_matches_and_tracks_changes():
 
     s = _S()
     hook = make_hotkey_hook(s)
-    assert hook(frozenset(), frozenset({"F5"})) == "app.refresh"
+    assert hook(_REFRESH_MODS, _REFRESH_KEYS) == "app.refresh"
     assert hook(frozenset({"ctrl"}), frozenset({"2"})) == "profile.load_2"
     assert hook(frozenset({"ctrl", "alt"}), frozenset({"h"})) is None
     s.set(HOTKEY_BINDINGS, {"overlay.toggle_cards": "ctrl+alt+h"})
@@ -96,12 +107,12 @@ def test_make_hotkey_hook_matches_and_tracks_changes():
 def test_make_hotkey_hook_duplicate_chord_first_wins():
     from utils.hotkey_actions import make_hotkey_hook
 
-    # overlay.toggle_cards precedes app.refresh (default F5) in ACTIONS order;
-    # binding it to F5 creates a duplicate chord. First-wins, mirroring the
-    # X11 provider's _compile_bindings.
-    s = _FakeSettings({HOTKEY_BINDINGS: {"overlay.toggle_cards": "F5"}})
+    # overlay.toggle_cards precedes app.refresh in ACTIONS order; binding
+    # it to the refresh default chord creates a duplicate. First-wins,
+    # mirroring the X11 provider's _compile_bindings.
+    s = _FakeSettings({HOTKEY_BINDINGS: {"overlay.toggle_cards": _REFRESH}})
     hook = make_hotkey_hook(s)
-    assert hook(frozenset(), frozenset({"F5"})) == "overlay.toggle_cards"
+    assert hook(_REFRESH_MODS, _REFRESH_KEYS) == "overlay.toggle_cards"
 
 
 def test_make_hotkey_hook_multikey_keyset_matching():
@@ -119,5 +130,5 @@ def test_make_hotkey_hook_multikey_keyset_matching():
     assert hook(frozenset({"ctrl"}), frozenset({"t"})) is None
     # exact-set matching: a superset never matches
     assert hook(frozenset({"ctrl"}), frozenset({"h", "t", "x"})) is None
-    # single-key bindings still resolve
-    assert hook(frozenset(), frozenset({"F5"})) == "app.refresh"
+    # default bindings still resolve
+    assert hook(_REFRESH_MODS, _REFRESH_KEYS) == "app.refresh"

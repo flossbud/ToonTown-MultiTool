@@ -9,6 +9,7 @@ import queue
 import threading
 from PySide6.QtCore import QObject, Signal
 
+from utils import chord_capture_state
 from utils.key_registry import PYNPUT_NAME_MAP_BASE
 from utils.input_trace import trace as _itrace, ENABLED as _ITRACE
 
@@ -420,6 +421,16 @@ class HotkeyManager(QObject):
                 is_repeat = False
             if is_repeat:
                 return None if keysym in self._suppressed_down else event
+            # Chord-capture holiday: a recording capture widget must SEE the
+            # chord, so fresh keydowns are never suppressed while it runs.
+            # Keyups above stay on the pairing law (a hold suppressed before
+            # the capture began still gets its release eaten - its down never
+            # reached the capture widget either, so the pair stays coherent).
+            if chord_capture_state.is_active():
+                self._suppressed_down.discard(keysym)
+                if _ITRACE:
+                    _itrace("hk_intercept", f"pass (chord capture) keysym={keysym}")
+                return event
             sp = self.suppress_predicate
             if sp is None or not sp(keysym):
                 # Fresh native down supersedes any stale pairing entry (a
@@ -523,6 +534,15 @@ class HotkeyManager(QObject):
             if _ITRACE:
                 _itrace("hk_press", f"DROP keydown (should_capture=False) raw={key!r} "
                                     f"active={self.window_manager.active_window_id!r}")
+            return None
+        # Chord-capture holiday: the pressed keys belong to the recording
+        # capture widget - no hotkey consult (re-recording a bound chord must
+        # not fire it), no keydown enqueue (a recorded 'w' is a chord key,
+        # not movement). Keyups below stay ungated so a hold enqueued before
+        # the capture began still drains downstream.
+        if chord_capture_state.is_active():
+            if _ITRACE:
+                _itrace("hk_press", f"DROP keydown (chord capture) raw={key!r}")
             return None
 
         normalized = None

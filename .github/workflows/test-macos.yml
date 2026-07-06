@@ -59,7 +59,8 @@ jobs:
             tests/test_ghost_renderer.py tests/test_ghost_frame_pacing.py \
             tests/test_click_sync_motion_injector.py tests/test_ghost_occlusion_gate.py \
             tests/test_global_hotkeys_carbon.py tests/test_emblem_pulse_gate.py \
-            tests/test_cluster_topology_reclamp.py
+            tests/test_cluster_topology_reclamp.py \
+            tests/test_chord_capture_session.py
 
       - name: Download DMG
         uses: actions/download-artifact@v8

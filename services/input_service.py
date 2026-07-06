@@ -223,6 +223,15 @@ class InputService(QObject):
         # itself has focus still resolve through a meaningful default set.
         self._last_known_foreground_game: str | None = None
 
+        # Chord-capture holiday: when a Settings capture button starts
+        # recording, drain every held key immediately. A movement key
+        # physically held across the mode flip would otherwise strand its
+        # synthetic keydown in a game client (the capture gates block the
+        # keyup's normal delivery path) - the V2 stuck-key class.
+        from utils import chord_capture_state as _ccs
+        self._chord_capture_state = _ccs
+        _ccs.register(self._on_chord_capture_edge)
+
         # UIPI blocked-movement episode counter + deferred modal signal state.
         import time as _t_uipi
         self._uipi_clock = _t_uipi.monotonic
@@ -971,6 +980,7 @@ class InputService(QObject):
 
     def shutdown(self):
         """Call once on app exit to clean up the Xlib connection."""
+        self._chord_capture_state.unregister(self._on_chord_capture_edge)
         self.stop(wait=True)
         self._stop_uipi_refresh()
         if self._key_grabber is not None:
@@ -2455,6 +2465,23 @@ class InputService(QObject):
             return True
         except subprocess.CalledProcessError:
             return False
+
+    def _on_chord_capture_edge(self, active: bool) -> None:
+        """chord_capture_state listener (GUI thread, capture begin/end).
+
+        Begin: full drain via release_all_keys - held synthetic keys are
+        released NOW, while their delivery paths still exist; the capture
+        gates (tap pass-through, router keydown drop, provider ignore) then
+        own the keyboard until the capture ends. End needs no reinstall:
+        the gates read the flag live and nothing was torn down."""
+        if not active:
+            _itrace("capture", "chord-capture holiday END")
+            return
+        try:
+            self.release_all_keys()
+        except Exception as e:  # noqa: BLE001 - capture must start regardless
+            print(f"[InputService] chord-capture drain error: {e}")
+        _itrace("capture", "chord-capture holiday BEGIN (release_all)")
 
     def release_all_keys(self):
         assignments = self._get_assignments(self.get_enabled_toons())

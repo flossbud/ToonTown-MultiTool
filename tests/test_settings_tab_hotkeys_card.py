@@ -8,10 +8,21 @@ import sys
 import pytest
 from PySide6.QtWidgets import QApplication
 
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
+
+# Platform-dependent refresh default (darwin: bare F5 is the Dictation
+# media key on Mac laptops, so the default is a modifier chord there).
+from utils.hotkey_actions import action_by_id
+_REFRESH = action_by_id("app.refresh").default_chord
+_REFRESH_DISPLAY = "+".join(
+    p.capitalize() if p in ("ctrl", "alt", "shift", "super")
+    else (p.upper() if len(p) == 1 else p)
+    for p in _REFRESH.split("+"))
+
 
 
 @pytest.fixture(scope="module")
@@ -50,7 +61,7 @@ def test_hotkeys_card_lists_every_action(settings_tab):
     from utils.hotkey_actions import ACTIONS
     assert set(settings_tab._hotkey_rows) == {a.id for a in ACTIONS}
     # defaulted actions show their chord, unbound show Not set
-    assert settings_tab._hotkey_rows["app.refresh"].text() == "F5"
+    assert settings_tab._hotkey_rows["app.refresh"].text() == _REFRESH_DISPLAY
     assert settings_tab._hotkey_rows["overlay.toggle_cards"].text() == "Not set"
 
 
@@ -84,15 +95,15 @@ def test_conflict_decline_keeps_both(settings_tab, monkeypatch):
 
 
 def test_default_conflict_is_detected(settings_tab, monkeypatch):
-    # Stealing a DEFAULT binding (F5 = app.refresh, never explicitly stored)
+    # Stealing a DEFAULT binding (app.refresh's default chord, never explicitly stored)
     from utils.settings_keys import HOTKEY_BINDINGS
     from PySide6.QtWidgets import QMessageBox
     tab = settings_tab
     monkeypatch.setattr(QMessageBox, "question",
                         staticmethod(lambda *a, **k: QMessageBox.Yes))
-    tab._on_hotkey_chord("overlay.toggle_cards", "F5")
+    tab._on_hotkey_chord("overlay.toggle_cards", _REFRESH)
     stored = tab.settings_manager.get(HOTKEY_BINDINGS)
-    assert stored["overlay.toggle_cards"] == "F5"
+    assert stored["overlay.toggle_cards"] == _REFRESH
     assert stored["app.refresh"] is None          # default explicitly cleared
     assert tab._hotkey_rows["app.refresh"].text() == "Not set"
 
@@ -148,7 +159,7 @@ def test_hotkey_status_badges_failures_and_respects_capture(settings_tab):
     assert "in use" in tab._hotkey_rows["app.refresh"].text()
     # badge clears when failures go away
     tab.set_hotkey_status({})
-    assert tab._hotkey_rows["app.refresh"].text() == "F5"
+    assert tab._hotkey_rows["app.refresh"].text() == _REFRESH_DISPLAY
     # a capturing row is never touched by a status push
     btn = tab._hotkey_rows["app.refresh"]
     btn.begin_capture()

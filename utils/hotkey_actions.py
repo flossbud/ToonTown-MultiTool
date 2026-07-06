@@ -10,10 +10,19 @@ binding. Invalid ids/chords are dropped defensively (hand-edited config).
 """
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 
 from utils.hotkey_chords import parse_chord, chord_error, format_chord
 from utils.settings_keys import HOTKEY_BINDINGS
+
+# A stock MacBook keyboard sends media/system actions for bare F-keys (F5 is
+# the Dictation key - pressing it pops the "enable Dictation?" dialog and no
+# F5 ever reaches Carbon; live 2026-07-05). The refresh default must work out
+# of the box, so darwin gets a modifier chord instead. Users who set the
+# "Use F1, F2... as standard function keys" system toggle can still bind F5
+# by hand; ABSENT settings entries resolve to this default with no migration.
+_REFRESH_DEFAULT = "ctrl+alt+r" if sys.platform == "darwin" else "F5"
 
 
 @dataclass(frozen=True)
@@ -40,7 +49,7 @@ ACTIONS = (
                  "Multitoon"),
     HotkeyAction("clicksync.toggle", "Toggle Click Sync", "Multitoon"),
     HotkeyAction("app.refresh", "Refresh", "Multitoon",
-                 default_chord="F5"),
+                 default_chord=_REFRESH_DEFAULT),
     HotkeyAction("profile.load_1", "Load profile 1", "Profiles",
                  default_chord="ctrl+1"),
     HotkeyAction("profile.load_2", "Load profile 2", "Profiles",

@@ -13,6 +13,15 @@ def qapp():
     yield app
 
 
+@pytest.fixture(autouse=True)
+def _reset_capture_state():
+    # begin_capture flips the global chord-capture flag; a test that leaves a
+    # capture open must not leak the input holiday into later tests.
+    yield
+    from utils import chord_capture_state
+    chord_capture_state.set_active(False)
+
+
 def _event(etype, key, mods, text, autorep, sc, vk):
     if sc or vk:
         # Long form carries native params: (type, key, modifiers,
