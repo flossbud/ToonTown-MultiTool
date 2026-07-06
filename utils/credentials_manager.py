@@ -35,6 +35,11 @@ from utils.models import AccountCredential
 # ceiling of 16 (MAX_PER_GAME); with two games that is up to 32 accounts total.
 MAX_ACCOUNTS = 32
 
+# Per-item timeout for the one-time darwin legacy->vault migration reads/deletes.
+# Generous because each un-migrated item may show a one-time macOS Keychain ACL
+# prompt at this calm post-gate moment (decoupled from any game login).
+_MACOS_MIGRATION_TIMEOUT = 30.0
+
 # Always-on diagnostic log. Writes to a file independent of stdout/console
 # state, so issues inside PyInstaller --noconsole builds (e.g. AppImage) can
 # still be diagnosed after-the-fact.
@@ -112,6 +117,14 @@ class CredentialsManager:
         self._macos_vault = None
         self._macos_vault_fallback = None
         self._VaultState = None
+        self._VaultError = None
+        # Darwin launch-unlock outcome for the UI (inert on Linux/Windows).
+        # "pending" until the biometric gate resolves on the probe worker
+        # thread; then one of "unlocked" | "denied" | "none" | "corrupt".
+        # Guarded by a small lock because it is set off the worker thread and
+        # read from the UI thread.
+        self._macos_unlock_state = "pending"
+        self._macos_unlock_lock = threading.Lock()
         if sys.platform == "darwin":
             self._init_macos_vault()
 
@@ -280,11 +293,12 @@ class CredentialsManager:
         keyring path rather than breaking construction.
         """
         try:
-            from utils.macos_credential_vault import MacOSCredentialVault, VaultState
+            from utils.macos_credential_vault import MacOSCredentialVault, VaultState, VaultError
         except Exception as e:
             _dbg(f"[CredentialsManager] macOS vault unavailable ({type(e).__name__}); using legacy keyring path.")
             return
         self._VaultState = VaultState
+        self._VaultError = VaultError
         try:
             if os.environ.get("TTMT_MACOS_VAULT") == "0":
                 self._macos_vault = None
@@ -310,11 +324,10 @@ class CredentialsManager:
         (which use a short 1.5s timeout) succeed without re-prompting.
         """
         if self._macos_vault is not None:
-            # Milestone 4 runs the biometric gate BEFORE this call; here we only
-            # load the (already-authorised) vault into memory. No keyring probe.
-            loaded = self._macos_vault.load() == self._VaultState.LOADED
-            _dbg(f"[Credentials] macOS vault probe: state={self._macos_vault.state.value} loaded={loaded}")
-            return loaded
+            # Darwin: the launch-time "probe" is the single biometric gate plus a
+            # vault load and the one-time legacy migration. No keyring probe. The
+            # UI re-triggers a gate simply by re-running this on the worker.
+            return self._macos_unlock()
         _dbg(f"[Credentials] Probe start: selected={type(keyring.get_keyring()).__module__}."
              f"{type(keyring.get_keyring()).__name__} timeout={timeout}")
         # Step 1: read the probe key. Forces wallet unlock if key exists.
@@ -355,6 +368,192 @@ class CredentialsManager:
     def run_deferred_v1_migration(self):
         if self._deferred_v1_migration and self.keyring_available:
             self._migrate_from_v1(os.path.dirname(self._path))
+
+    # ── macOS launch-unlock (darwin only) ───────────────────────────────────
+
+    def _set_macos_unlock_state(self, state: str) -> None:
+        with self._macos_unlock_lock:
+            self._macos_unlock_state = state
+
+    @property
+    def macos_unlock_state(self) -> str:
+        """Read-only view of the darwin launch-unlock outcome for the UI:
+        "pending" | "unlocked" | "denied" | "none" | "corrupt". Always
+        "pending" (and unused) on Linux/Windows."""
+        with self._macos_unlock_lock:
+            return self._macos_unlock_state
+
+    def _emit_vault_stamp(self, unlock: str, migrated: int) -> None:
+        """Startup stamp (running-code proof). Emitted via ``_dbg`` (which always
+        prints), so live-validation can grep it. The format is stable - do not
+        reflow: ``[Vault] mode=<...> accounts=<N> unlock=<...> migrated=<M>``."""
+        _dbg(f"[Vault] mode=adhoc-keyfile accounts={len(self._accounts)} "
+             f"unlock={unlock} migrated={migrated}")
+
+    def _macos_unlock(self) -> bool:
+        """Darwin launch-unlock orchestrator (runs on the KeyringProbeWorker
+        BACKGROUND thread, so a blocking system auth dialog is fine here).
+
+        Runs the SINGLE biometric gate (Touch ID / Apple Watch / Mac password),
+        loads the vault on success, runs the one-time legacy->vault migration,
+        emits the startup stamp, and records the outcome in
+        ``self._macos_unlock_state``. Never prompts when nothing is saved and
+        never raises out of the probe worker.
+        """
+        migrated = 0
+
+        # Hard requirement: never gate when nothing may be saved.
+        if not self.macos_secret_may_exist():
+            self._macos_vault.load()
+            self._set_macos_unlock_state("none")
+            self._emit_vault_stamp("none", migrated)
+            return True
+
+        # A secret may exist -> exactly one auth prompt.
+        try:
+            from services import macos_biometric_gate as gate
+            result = gate.authenticate("Unlock your ToonTown MultiTool accounts")
+        except Exception as e:
+            # Import/call failure is treated like a failed gate: never crash the
+            # probe worker, leave the vault NOT_LOADED, show the locked UI.
+            _dbg(f"[Vault] biometric gate raised ({type(e).__name__}: {e}); treating as denied.")
+            self._set_macos_unlock_state("denied")
+            self._emit_vault_stamp("denied", migrated)
+            return False
+
+        BR = gate.BiometricResult
+        if result == BR.SUCCESS:
+            state = self._macos_vault.load()
+            if state == self._VaultState.LOADED:
+                migrated = self._macos_migrate_legacy_to_vault()
+                # A failed write-verify during migration can drive the vault
+                # CORRUPT; reflect that rather than reporting a false unlock.
+                if self._macos_vault.state == self._VaultState.LOADED:
+                    self._set_macos_unlock_state("unlocked")
+                    self._emit_vault_stamp("gate", migrated)
+                    return True
+                self._set_macos_unlock_state("corrupt")
+                self._emit_vault_stamp("corrupt", migrated)
+                return False
+            # Gate passed but the vault is CORRUPT / KEY_MISSING (no data loss:
+            # the raw file is preserved). Surface the recovery state.
+            self._set_macos_unlock_state("corrupt")
+            self._emit_vault_stamp("corrupt", migrated)
+            return False
+
+        if result == BR.UNAVAILABLE:
+            # Deliberate fail-open: no auth method configured at all, so there is
+            # no local security boundary to honor. Load without a gate + migrate.
+            self._macos_vault.load()
+            if self._macos_vault.state == self._VaultState.LOADED:
+                migrated = self._macos_migrate_legacy_to_vault()
+            self._set_macos_unlock_state("none")
+            self._emit_vault_stamp("none", migrated)
+            return True
+
+        # CANCELLED or FAILED: do NOT load; leave the vault NOT_LOADED so the UI
+        # shows the "Unlock accounts" affordance and re-running re-gates.
+        self._set_macos_unlock_state("denied")
+        self._emit_vault_stamp("denied", migrated)
+        return False
+
+    def _macos_migrate_legacy_to_vault(self) -> int:
+        """One-time controlled migration of legacy per-account Keychain items
+        into the vault. Called ONLY from :meth:`_macos_unlock` AFTER a successful
+        vault load - never inline on a toon launch. Returns the number of
+        accounts migrated (touched) this run for the startup stamp.
+
+        Write-verify-THEN-delete: the vault persists + reads back internally, and
+        the legacy item is deleted only after the vault write did not raise. A
+        :class:`VaultError` (CORRUPT / KEY_MISSING) stops the whole migration
+        without deleting anything; one bad account never aborts the rest.
+        """
+        # The gate has passed; allow the timeout-guarded keyring wrapper to make
+        # the migration reads/deletes (its probe guard otherwise blocks deletes).
+        self._probe_complete = True
+        migrated = 0
+        for a in list(self._accounts):
+            account_id = a.get("id")
+            if not account_id:
+                continue
+            game = a.get("game", "ttr")
+            try:
+                if self._macos_migrate_one_account(account_id, game):
+                    migrated += 1
+            except Exception as e:
+                # A VaultError (CORRUPT / KEY_MISSING) means a write refused, so
+                # nothing was deleted for this account - STOP the whole migration
+                # rather than risk deleting a legacy item the vault cannot store.
+                if self._VaultError is not None and isinstance(e, self._VaultError):
+                    _dbg(f"[Vault] migration halted at {account_id[:8]} "
+                         f"({type(e).__name__}: {e}); nothing deleted.")
+                    break
+                # Any other per-account failure is logged and skipped so one bad
+                # account never aborts the rest.
+                _dbg(f"[Vault] migration skipped {account_id[:8]} "
+                     f"({type(e).__name__}: {e}).")
+                continue
+        return migrated
+
+    def _macos_migrate_one_account(self, account_id: str, game: str) -> bool:
+        """Migrate one account's legacy secrets into the vault. Returns True if
+        any namespace was touched this run (so it is counted once even when both
+        a password and a CC token migrate). Raises the vault's ``VaultError`` if a
+        vault write refuses (CORRUPT / KEY_MISSING) - the caller stops migration.
+        """
+        did_work = False
+
+        # Passwords namespace (all games). Skip if already migrated.
+        if not self._macos_vault.has_password(account_id):
+            ok, value = self._try_keyring_call(
+                keyring.get_password, keyring_service(), account_id,
+                timeout=_MACOS_MIGRATION_TIMEOUT,
+            )
+            if not ok:
+                # Keyring read failed (timeout / backend error): leave the item
+                # un-migrated so a later run retries. Never mark it absent (that
+                # would strand a real legacy secret).
+                _dbg(f"[Vault] migration: legacy password read failed for "
+                     f"{account_id[:8]}; leaving un-migrated.")
+            else:
+                if value is not None:
+                    # Write-verify FIRST (raises on a bad verify), then delete.
+                    self._macos_vault.set_password(account_id, value)
+                    self._try_keyring_call(
+                        keyring.delete_password, keyring_service(), account_id,
+                        timeout=_MACOS_MIGRATION_TIMEOUT,
+                    )
+                    _dbg(f"[Vault] migrated password for {account_id[:8]} "
+                         "(legacy item removed).")
+                else:
+                    # No legacy secret: record a known-absent marker so the
+                    # legacy item is never probed again.
+                    self._macos_vault.set_password(account_id, None)
+                did_work = True
+
+        # CC launcher-token namespace (CC accounts only).
+        if game == "cc" and not self._macos_vault.has_token(account_id):
+            ok, value = self._try_keyring_call(
+                keyring.get_password, cc_token_service(), account_id,
+                timeout=_MACOS_MIGRATION_TIMEOUT,
+            )
+            if not ok:
+                _dbg(f"[Vault] migration: legacy CC token read failed for "
+                     f"{account_id[:8]}; leaving un-migrated.")
+            else:
+                if value is not None:
+                    self._macos_vault.set_token(account_id, value)
+                    self._try_keyring_call(
+                        keyring.delete_password, cc_token_service(), account_id,
+                        timeout=_MACOS_MIGRATION_TIMEOUT,
+                    )
+                    _dbg(f"[Vault] migrated CC token for {account_id[:8]} "
+                         "(legacy item removed).")
+                else:
+                    self._macos_vault.set_token(account_id, None)
+                did_work = True
+
+        return did_work
 
     def _try_keyring_call(self, func, *args, timeout=1.5):
         if not self._use_keyring:

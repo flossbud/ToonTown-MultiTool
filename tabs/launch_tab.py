@@ -13,8 +13,8 @@ import sys
 import threading
 from dataclasses import dataclass
 from PySide6.QtWidgets import (
-    QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QScrollArea,
-    QSizePolicy, QVBoxLayout, QWidget,
+    QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QPushButton,
+    QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt, QObject, Signal, QThread, Slot, QTimer
 
@@ -283,6 +283,108 @@ class KeyringWarningBanner(QFrame):
             f"font-size: 10px; color: {c['text_muted']};"
             " background: transparent; border: none;"
         )
+
+
+class MacOSVaultLockedBanner(QFrame):
+    """Darwin-only banner for the two non-loaded vault outcomes.
+
+    ``"denied"``  - the launch-time biometric gate was cancelled or failed.
+                    Retriable: shows an "Unlock accounts" button that re-runs
+                    the probe worker (which re-gates).
+    ``"corrupt"`` - the gate passed but the vault could not be read. No data was
+                    lost (the raw file is preserved); points at recovery.
+
+    Chrome and theming mirror the sibling keyring banners so it slots into the
+    same ``_keyring_banner`` machinery (``apply_theme`` is called from
+    ``refresh_theme``).
+    """
+
+    def __init__(self, mode: str, on_unlock, parent=None):
+        super().__init__(parent)
+        self._mode = "corrupt" if mode == "corrupt" else "denied"
+        self._on_unlock = on_unlock
+        self.setObjectName("macos_vault_locked_banner")
+        self.setMaximumWidth(480)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(8)
+
+        if self._mode == "corrupt":
+            header_text = "⚠  Couldn't open your saved accounts"
+            body_text = (
+                "Your saved accounts could not be unlocked, so they are not\n"
+                "available this session. Your data was left untouched. Restart\n"
+                "TTMT to try again; if it keeps happening, please share the\n"
+                "keyring-debug.log file when reporting."
+            )
+        else:
+            header_text = "🔒  Your accounts are locked"
+            body_text = (
+                "Unlock to load your saved accounts for this session."
+            )
+
+        self.header_label = QLabel(header_text)
+        self.header_label.setWordWrap(True)
+        layout.addWidget(self.header_label)
+
+        self.body_label = QLabel(body_text)
+        self.body_label.setWordWrap(True)
+        layout.addWidget(self.body_label)
+
+        self.unlock_button = None
+        if self._mode == "denied":
+            self.unlock_button = QPushButton("Unlock accounts")
+            self.unlock_button.setCursor(Qt.PointingHandCursor)
+            self.unlock_button.clicked.connect(self._on_click)
+            layout.addWidget(self.unlock_button, alignment=Qt.AlignLeft)
+
+        self.apply_theme(get_theme_colors(True))
+
+    def _on_click(self):
+        # Give immediate feedback and prevent a double-start; the probe worker
+        # rebuilds the UI when it finishes (clearing this banner on success).
+        if self.unlock_button is not None:
+            self.unlock_button.setEnabled(False)
+            self.unlock_button.setText("Unlocking...")
+        if self._on_unlock is not None:
+            self._on_unlock()
+
+    def apply_theme(self, c: dict) -> None:
+        accent = c["accent_orange_border"] if self._mode == "corrupt" else c["accent_blue"]
+        self.setStyleSheet(
+            "QFrame#macos_vault_locked_banner {"
+            f" background: {c['bg_card']};"
+            f" border: 1px solid {c['border_card']};"
+            f" border-left: 3px solid {accent};"
+            " border-radius: 10px;"
+            "}"
+        )
+        header_color = accent if self._mode == "corrupt" else c["text_primary"]
+        self.header_label.setStyleSheet(
+            f"font-size: 13px; font-weight: 700; color: {header_color};"
+            " background: transparent; border: none;"
+        )
+        self.body_label.setStyleSheet(
+            f"font-size: 11px; color: {c['text_secondary']};"
+            " background: transparent; border: none;"
+        )
+        if self.unlock_button is not None:
+            self.unlock_button.setStyleSheet(
+                "QPushButton {"
+                f" background: {c['accent_blue_btn']};"
+                f" border: 1px solid {c['accent_blue_btn_border']};"
+                " border-radius: 6px; padding: 5px 14px;"
+                " font-size: 12px; font-weight: 600; color: #ffffff;"
+                "}"
+                "QPushButton:hover {"
+                f" background: {c['accent_blue_btn_hover']};"
+                "}"
+                "QPushButton:disabled {"
+                f" background: {c['bg_card_inner']}; color: {c['text_secondary']};"
+                f" border: 1px solid {c['border_card']};"
+                "}"
+            )
 
 
 class LaunchTab(QWidget):
@@ -636,6 +738,26 @@ class LaunchTab(QWidget):
         self._probe_thread = None
         self._probe_worker = None
 
+    def _build_macos_vault_banner(self) -> bool:
+        """Darwin: add the locked / recovery vault banner when the launch-time
+        biometric gate was denied ("denied") or the vault could not be read
+        ("corrupt"), and return True. Return False for every other state so the
+        generic keyring banner logic runs unchanged. Never called off darwin."""
+        state = getattr(self.cred_manager, "macos_unlock_state", None)
+        if state not in ("denied", "corrupt"):
+            return False
+        self._keyring_banner = MacOSVaultLockedBanner(
+            state, self._on_unlock_accounts_clicked, parent=self
+        )
+        self._layout.addWidget(self._keyring_banner, alignment=Qt.AlignHCenter)
+        return True
+
+    def _on_unlock_accounts_clicked(self):
+        """Re-run the probe worker, which re-fires the single biometric gate.
+        The completion handler rebuilds the UI, clearing the locked banner on a
+        successful unlock."""
+        self._start_keyring_probe()
+
     def _set_launch_buttons_enabled(self, enabled: bool):
         # Only visible tiles carry buttons; off-page tiles don't exist and
         # their buttons are created enabled on the next render.
@@ -837,8 +959,12 @@ class LaunchTab(QWidget):
                 w.deleteLater()
         self._keyring_banner = None
 
-        # Keyring banner (pending or warning) at top.
-        if getattr(self.cred_manager, "keyring_probe_pending", False):
+        # Banner (pending / warning / darwin-locked) at top. On darwin a denied
+        # or corrupt vault state takes precedence over the generic keyring
+        # banners; otherwise the pending/warning logic is byte-identical.
+        if sys.platform == "darwin" and self._build_macos_vault_banner():
+            pass
+        elif getattr(self.cred_manager, "keyring_probe_pending", False):
             self._keyring_banner = KeyringPendingBanner(parent=self)
             self._layout.addWidget(self._keyring_banner, alignment=Qt.AlignHCenter)
         elif not getattr(self.cred_manager, "keyring_available", True):
