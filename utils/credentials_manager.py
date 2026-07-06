@@ -106,6 +106,15 @@ class CredentialsManager:
         self._primary_backend_name = None
         self._change_callbacks: list[Callable[[], None]] = []  # subscribers fired on add/delete/clear_all
 
+        # macOS credential vault (darwin only). On Linux/Windows both handles
+        # stay None and the vault module is never imported, so every accessor
+        # below falls straight through to the existing keyring path unchanged.
+        self._macos_vault = None
+        self._macos_vault_fallback = None
+        self._VaultState = None
+        if sys.platform == "darwin":
+            self._init_macos_vault()
+
         self._cleanup_legacy_fallback_file()
 
         self._migrate_from_v1(config_dir)
@@ -261,6 +270,35 @@ class CredentialsManager:
         else:
             self._legacy_fallback_deleted = False
 
+    def _init_macos_vault(self) -> None:
+        """Wire up the macOS credential vault (darwin only).
+
+        Normal darwin: the vault is the primary secret store. Kill switch
+        (``TTMT_MACOS_VAULT=0``): no primary vault, but a read-only fallback so
+        secrets that already moved into the vault are still reachable via the
+        legacy path. Any import/construction failure degrades to the legacy
+        keyring path rather than breaking construction.
+        """
+        try:
+            from utils.macos_credential_vault import MacOSCredentialVault, VaultState
+        except Exception as e:
+            _dbg(f"[CredentialsManager] macOS vault unavailable ({type(e).__name__}); using legacy keyring path.")
+            return
+        self._VaultState = VaultState
+        try:
+            if os.environ.get("TTMT_MACOS_VAULT") == "0":
+                self._macos_vault = None
+                self._macos_vault_fallback = MacOSCredentialVault()
+                _dbg("[CredentialsManager] macOS vault kill switch (TTMT_MACOS_VAULT=0): legacy writes, vault read-fallback.")
+            else:
+                self._macos_vault = MacOSCredentialVault()
+                self._macos_vault_fallback = None
+                _dbg("[CredentialsManager] macOS credential vault active (primary store).")
+        except Exception as e:
+            self._macos_vault = None
+            self._macos_vault_fallback = None
+            _dbg(f"[CredentialsManager] macOS vault construction failed ({type(e).__name__}); using legacy keyring path.")
+
     def run_probe(self, timeout: float = 45.0) -> bool:
         """
         Probe the keyring from a background thread.
@@ -271,6 +309,12 @@ class CredentialsManager:
         open it stays open for the session, so subsequent _get_password calls
         (which use a short 1.5s timeout) succeed without re-prompting.
         """
+        if self._macos_vault is not None:
+            # Milestone 4 runs the biometric gate BEFORE this call; here we only
+            # load the (already-authorised) vault into memory. No keyring probe.
+            loaded = self._macos_vault.load() == self._VaultState.LOADED
+            _dbg(f"[Credentials] macOS vault probe: state={self._macos_vault.state.value} loaded={loaded}")
+            return loaded
         _dbg(f"[Credentials] Probe start: selected={type(keyring.get_keyring()).__module__}."
              f"{type(keyring.get_keyring()).__name__} timeout={timeout}")
         # Step 1: read the probe key. Forces wallet unlock if key exists.
@@ -542,6 +586,25 @@ class CredentialsManager:
         """
         if not account_id:
             return ""
+        if self._macos_vault is not None:
+            try:
+                return self._macos_vault.get_token(account_id)
+            except Exception as e:
+                _dbg(f"[CredentialsManager] get_launcher_token({account_id[:8]}) vault read failed: {type(e).__name__}")
+                return ""
+        value = self._get_launcher_token_legacy(account_id)
+        if not value and self._macos_vault_fallback is not None:
+            try:
+                recovered = self._macos_vault_fallback.get_token(account_id)
+                if recovered:
+                    return recovered
+            except Exception as e:
+                _dbg(f"[CredentialsManager] get_launcher_token({account_id[:8]}) vault fallback read failed: {type(e).__name__}")
+        return value
+
+    def _get_launcher_token_legacy(self, account_id: str) -> str:
+        if not account_id:
+            return ""
         try:
             ok, value = self._try_keyring_call(
                 keyring.get_password, cc_token_service(), account_id, timeout=1.5
@@ -566,6 +629,12 @@ class CredentialsManager:
         if not token:
             self.clear_launcher_token(account_id)
             return
+        if self._macos_vault is not None:
+            try:
+                self._macos_vault.set_token(account_id, token)
+            except Exception as e:
+                _dbg(f"[CredentialsManager] set_launcher_token({account_id[:8]}) vault write failed: {type(e).__name__}")
+            return
         try:
             ok, _ = self._try_keyring_call(
                 keyring.set_password, cc_token_service(), account_id, token, timeout=1.5
@@ -586,6 +655,12 @@ class CredentialsManager:
         """
         if not account_id:
             return
+        if self._macos_vault is not None:
+            try:
+                self._macos_vault.clear_token(account_id)
+            except Exception as e:
+                _dbg(f"[CredentialsManager] clear_launcher_token({account_id[:8]}) vault clear failed: {type(e).__name__}")
+            return
         try:
             self._try_keyring_call(
                 keyring.delete_password, cc_token_service(), account_id, timeout=1.5
@@ -598,6 +673,32 @@ class CredentialsManager:
             pass
 
     def _get_password(self, account_id: str) -> str:
+        # macOS routes reads to the credential vault. On Linux/Windows both vault
+        # handles are None, so this dispatches straight to the legacy body below
+        # and the result is byte-identical to before.
+        if not account_id:
+            _dbg("[Credentials] _get_password called with empty account_id")
+            return ""
+        if self._macos_vault is not None:
+            try:
+                return self._macos_vault.get_password(account_id)
+            except Exception as e:
+                _dbg(f"[Credentials] _get_password vault read failed: {type(e).__name__}")
+                return ""
+        value = self._get_password_legacy(account_id)
+        if not value and self._macos_vault_fallback is not None:
+            # Kill switch: legacy read was empty; recover an already-migrated
+            # secret from the vault so users are not stranded.
+            try:
+                recovered = self._macos_vault_fallback.get_password(account_id)
+                if recovered:
+                    _dbg("[Credentials] _get_password: recovered from vault fallback (kill switch)")
+                    return recovered
+            except Exception as e:
+                _dbg(f"[Credentials] _get_password vault fallback read failed: {type(e).__name__}")
+        return value
+
+    def _get_password_legacy(self, account_id: str) -> str:
         if not account_id:
             _dbg("[Credentials] _get_password called with empty account_id")
             return ""
@@ -634,6 +735,13 @@ class CredentialsManager:
     def _set_password(self, account_id: str, password: str) -> bool:
         if not account_id:
             return False
+        if self._macos_vault is not None:
+            try:
+                self._macos_vault.set_password(account_id, password)
+                return True
+            except Exception as e:
+                _dbg(f"[Credentials] _set_password vault write failed: {type(e).__name__}")
+                return False
         if not self._use_keyring:
             with self._fallback_lock:
                 self._fallback_passwords[account_id] = (password or "", time.monotonic())
@@ -652,17 +760,41 @@ class CredentialsManager:
     def _delete_password(self, account_id: str):
         if not account_id:
             return
+        if self._macos_vault is not None:
+            try:
+                self._macos_vault.delete_password(account_id)
+            except Exception as e:
+                _dbg(f"[Credentials] _delete_password vault delete failed: {type(e).__name__}")
+            return
         self._try_keyring_call(keyring.delete_password, keyring_service(), account_id, timeout=1.5)
         with self._fallback_lock:
             self._fallback_passwords.pop(account_id, None)
 
     @property
     def keyring_available(self) -> bool:
+        if self._macos_vault is not None:
+            return self._macos_vault.state == self._VaultState.LOADED
         return self._probe_complete and self._use_keyring
 
     @property
     def keyring_probe_pending(self) -> bool:
+        if self._macos_vault is not None:
+            return self._macos_vault.state == self._VaultState.NOT_LOADED
         return not self._probe_complete
+
+    def macos_secret_may_exist(self) -> bool:
+        """True if a credential MIGHT be stored: any account exists, or (on
+        darwin) a ``vault.enc`` / ``vault.key`` file is present in
+        ``config_dir()``. Pure and read-only - used by the darwin unlock-gate
+        decision so the biometric gate never fires when nothing is saved."""
+        if self._accounts:
+            return True
+        if sys.platform == "darwin":
+            cfg = _config_dir()
+            for name in ("vault.enc", "vault.key"):
+                if os.path.exists(os.path.join(cfg, name)):
+                    return True
+        return False
 
     def get_backend_diagnostics(self) -> dict:
         backend = keyring.get_keyring()
