@@ -2,7 +2,19 @@
 import os, sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
+import pytest
 from utils import macos_permissions as mp
+
+
+@pytest.fixture(autouse=True)
+def _non_translocated_home(monkeypatch):
+    """classify_location() treats any path under ``/private/var/folders/`` as App
+    Translocation. The global conftest isolation fixture points HOME at pytest's
+    tmp_path, which on macOS lives exactly there, so ``expanduser("~/Downloads")``
+    /``~/Applications`` would misclassify as 'translocated'. These are pure
+    string-classification tests that never touch config, so pin HOME to a stable
+    non-translocated path."""
+    monkeypatch.setenv("HOME", "/Users/ttmt-permtest")
 
 
 class _FakeNative:
