@@ -42,6 +42,19 @@ def test_protocol_tolerates_garbage():
 
 # ── renderer core (offscreen) ────────────────────────────────────────────────
 
+@pytest.fixture(autouse=True)
+def _stub_darwin_snapshot(monkeypatch):
+    """De-flake: renderer-core tests that feed a REAL-looking wid (e.g.
+    str(GAME)) hit the occlusion path, which - unless a test mocks it - reads
+    the CI runner's LIVE window list. GAME is never a real window there, so the
+    region computed empty or open depending on whatever happened to be on screen
+    -> intermittent isVisible() failures on macOS CI (test_core_focus_* flaked
+    for months). Default the darwin snapshot to None (occlusion open); the
+    occlusion tests set their own snapshot in-body, which overrides this."""
+    from tabs.multitoon import _ghost_cursors as gc
+    monkeypatch.setattr(gc, "_darwin_zorder_snapshot", lambda: None)
+
+
 @pytest.fixture
 def core(qapp):
     c = GhostRendererCore()
