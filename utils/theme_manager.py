@@ -414,6 +414,90 @@ def get_theme_colors(is_dark: bool) -> dict:
         }
 
 
+# ── V2 design tokens (Settings/Launch v2 kit, 2026-07 redesign) ─────────────
+# Accent pairs {c: base fill, b: bright border/active}. Constant across
+# themes; the per-theme surface formulas live in get_v2_tokens().
+# Source: Redesign/design_handoff_settings_redesign/settings-v2-widgets.reference.jsx
+V2_ACCENTS = {
+    "blue":   {"c": "#0077ff", "b": "#3399ff"},
+    "yellow": {"c": "#d4a017", "b": "#e8c14d"},
+    "ttr":    {"c": "#4A8FE7", "b": "#6ba8f0"},
+    "cc":     {"c": "#F26D21", "b": "#ff8f4d"},
+    "orange": {"c": "#ff9500", "b": "#ffb04d"},
+    "pink":   {"c": "#b03064", "b": "#d4548a"},
+    "green":  {"c": "#3da343", "b": "#56d66a"},
+    "teal":   {"c": "#1fb8a6", "b": "#4dd2c3"},
+    "red":    {"c": "#b34848", "b": "#e05252"},
+}
+
+
+def get_v2_tokens(is_dark: bool) -> dict:
+    """Theme-dependent token set for the v2 kit primitives (inset rows,
+    pill controls, option tiles, nav pills, badges). Values are exact ports
+    of V2_DARK_T / V2_LIGHT_T in settings-v2-widgets.reference.jsx, with
+    rgba alpha expressed 0-255 (this codebase's QSS convention)."""
+    from utils.color_math import alpha
+    if is_dark:
+        return {
+            "row_bg": alpha("#000000", 0.24), "row_border": alpha("#000000", 0.30),
+            "label": "#ffffff", "helper": alpha("#ffffff", 0.58),
+            "title": "#ffffff", "sub": alpha("#ffffff", 0.62),
+            "ctrl_bg": alpha("#000000", 0.35), "ctrl_border": alpha("#ffffff", 0.14),
+            "ctrl_text": "#ffffff", "ctrl_hover": alpha("#ffffff", 0.14),
+            "btn_bg": alpha("#000000", 0.30), "btn_border": alpha("#ffffff", 0.18),
+            "seg_bg": alpha("#000000", 0.35), "seg_border": alpha("#ffffff", 0.10),
+            "seg_idle": alpha("#ffffff", 0.60),
+            "sw_off": alpha("#000000", 0.35), "sw_off_border": alpha("#ffffff", 0.16),
+            "chevron": alpha("#ffffff", 0.60),
+            "chord_idle": alpha("#ffffff", 0.45),
+            "chord_idle_border": alpha("#ffffff", 0.12),
+            "chord_border": alpha("#ffffff", 0.28),
+            "tile_idle_bg": alpha("#000000", 0.24),
+            "tile_idle_border": alpha("#ffffff", 0.08),
+            "tile_idle_text": alpha("#ffffff", 0.75),
+            "tile_idle_desc": alpha("#ffffff", 0.45),
+            "tile_sel_text": "#ffffff", "tile_sel_desc": alpha("#ffffff", 0.72),
+            "tile_sel_alpha": 0.28,
+            "nav_idle_bg": alpha("#000000", 0.24),
+            "nav_idle_border": alpha("#ffffff", 0.09),
+            "nav_idle_text": "#aaaaaa", "nav_hover": alpha("#ffffff", 0.07),
+            "badge_ring": alpha("#000000", 0.28),
+            "badge_logo_bg": alpha("#000000", 0.30),
+            "more_border": alpha("#ffffff", 0.25), "more_text": alpha("#ffffff", 0.75),
+            "micro_label": "#888888",
+            "radius_row": 13, "radius_card": 20,
+        }
+    return {
+        "row_bg": alpha("#ffffff", 0.62), "row_border": alpha("#0f172a", 0.10),
+        "label": "#0f172a", "helper": alpha("#0f172a", 0.60),
+        "title": "#0f172a", "sub": alpha("#0f172a", 0.55),
+        "ctrl_bg": alpha("#ffffff", 0.80), "ctrl_border": alpha("#0f172a", 0.16),
+        "ctrl_text": "#0f172a", "ctrl_hover": alpha("#0f172a", 0.08),
+        "btn_bg": alpha("#ffffff", 0.75), "btn_border": alpha("#0f172a", 0.18),
+        "seg_bg": alpha("#0f172a", 0.06), "seg_border": alpha("#0f172a", 0.10),
+        "seg_idle": alpha("#0f172a", 0.55),
+        "sw_off": "#e2e8f0", "sw_off_border": "#cbd5e1",
+        "chevron": alpha("#0f172a", 0.55),
+        "chord_idle": alpha("#0f172a", 0.45),
+        "chord_idle_border": alpha("#0f172a", 0.12),
+        "chord_border": alpha("#0f172a", 0.30),
+        "tile_idle_bg": alpha("#ffffff", 0.55),
+        "tile_idle_border": alpha("#0f172a", 0.08),
+        "tile_idle_text": alpha("#0f172a", 0.75),
+        "tile_idle_desc": alpha("#0f172a", 0.50),
+        "tile_sel_text": "#0f172a", "tile_sel_desc": alpha("#0f172a", 0.65),
+        "tile_sel_alpha": 0.16,
+        "nav_idle_bg": alpha("#0f172a", 0.05),
+        "nav_idle_border": alpha("#0f172a", 0.10),
+        "nav_idle_text": "#475569", "nav_hover": alpha("#0f172a", 0.09),
+        "badge_ring": alpha("#ffffff", 0.75),
+        "badge_logo_bg": alpha("#0f172a", 0.10),
+        "more_border": alpha("#0f172a", 0.25), "more_text": alpha("#0f172a", 0.60),
+        "micro_label": "#64748b",
+        "radius_row": 13, "radius_card": 20,
+    }
+
+
 # ── Global Stylesheets ────────────────────────────────────────────────────
 
 DARK_THEME = """
