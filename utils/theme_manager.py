@@ -430,6 +430,16 @@ V2_ACCENTS = {
     "red":    {"c": "#b34848", "b": "#e05252"},
 }
 
+# Nav identity colors for the Glass Dock selected-tab tint. Exact hex from the
+# nav redesign bundle; constant across themes (like V2_ACCENTS). Blue/green
+# already match V2_ACCENTS; Launcher red + Keysets gold intentionally differ.
+V2_NAV = {
+    "multitoon": {"c": "#0077ff", "b": "#3399ff"},
+    "launcher":  {"c": "#E05252", "b": "#ea7a7a"},
+    "keysets":   {"c": "#DAA520", "b": "#e8c14d"},
+    "settings":  {"c": "#3da343", "b": "#56d66a"},
+}
+
 
 def get_v2_tokens(is_dark: bool) -> dict:
     """Theme-dependent token set for the v2 kit primitives (inset rows,
