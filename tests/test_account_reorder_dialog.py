@@ -218,3 +218,8 @@ def test_drag_commit_does_not_animate(qapp, monkeypatch):
     d._end_drag()
     assert d.ordered_ids() == ["id1", "id2", "id0"]
     assert d._swap_anims == []            # drag commit path is instant
+
+
+def test_swap_duration_unchanged():
+    from utils.widgets.account_reorder_dialog import SWAP_DURATION_MS
+    assert SWAP_DURATION_MS == 160

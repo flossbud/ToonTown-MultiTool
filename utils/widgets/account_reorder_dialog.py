@@ -1,38 +1,172 @@
 """Per-game account reorder modal. A scrollable list of rows over an explicit
 order model; drag a row by its handle, or use the per-row up/down arrows. Both
-funnel through _move(src, dst). The caller reads ordered_ids() on Accepted."""
+funnel through _move(src, dst). The caller reads ordered_ids() on Accepted.
+
+Visual surface: the dialog paints the game's v2 rich-tint card gradient
+(158deg, darken/lighten of V2_ACCENTS[game]["c"]) plus a 2px accent border
+directly on its own client area (paintEvent), rather than wrapping content in
+a separate CardSurface widget - CardSurface assumes a normal child layout and
+fights the absolute-positioned drag layer's row.y()/row.pos() bookkeeping.
+Native QDialog modality (setModal(True)) is kept as-is; a literal frameless
+full-parent dimming scrim was intentionally not added; this project's own
+history (KWin window-type/transient-for/black-band landmines) shows that
+class of window-manager trick is high risk for a low-stakes utility dialog.
+"""
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QPropertyAnimation, Qt, QTimer, Signal
+import os
+import sys
+
+from PySide6.QtCore import QPoint, QPointF, QPropertyAnimation, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QColor, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
+)
 from PySide6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
     QToolButton, QVBoxLayout, QWidget,
 )
 
 import utils.motion as motion
-from utils.theme_manager import get_theme_colors
+from utils.color_math import alpha as css_alpha
+from utils.color_math import darken_rgb, lighten_rgb, with_alpha
+from utils.theme_manager import V2_ACCENTS, get_theme_colors, get_v2_tokens
+from utils.toon_silhouette import paint_race_silhouette
 
-_ACCENT = {"ttr": "#4A8FE7", "cc": "#F26D21"}
 _GAME_NAMES = {"ttr": "Toontown Rewritten", "cc": "Corporate Clash"}
 SWAP_DURATION_MS = 160
+
+MODAL_WIDTH = 470
+MODAL_RADIUS = 20
+MODAL_PADDING = 16
+ROW_HEIGHT = 56
+ROW_GAP = 8
+LOGO_SIZE = 40
+BADGE_SIZE = 18
+ARROW_SIZE = 26
+MINI_SIZE = 30
+MINI_SIL_FRACTION = 0.76
+MINI_RING_W = 2.5
+
+_logo_cache: dict[str, QPixmap] = {}
+
+
+def _asset_path(name: str) -> str:
+    """Resolve a bundled asset relative to repo root / PyInstaller _MEIPASS.
+    Same idiom as tabs/settings_tab.py._asset_path, ported here (utils/widgets
+    is one directory deeper than tabs/, hence the extra dirname())."""
+    base = getattr(
+        sys, "_MEIPASS",
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    )
+    return os.path.join(base, "assets", name)
+
+
+def _game_logo_pixmap(game: str) -> QPixmap:
+    """40px circular game-logo portrait for the header, cached per game."""
+    cached = _logo_cache.get(game)
+    if cached is not None:
+        return cached
+    src = QPixmap(_asset_path(f"{game}.png"))
+    pm = QPixmap(LOGO_SIZE, LOGO_SIZE)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    circle = QRectF(0, 0, LOGO_SIZE, LOGO_SIZE)
+    clip = QPainterPath()
+    clip.addEllipse(circle)
+    p.setClipPath(clip)
+    if not src.isNull():
+        scaled = src.scaled(LOGO_SIZE, LOGO_SIZE, Qt.KeepAspectRatioByExpanding,
+                             Qt.SmoothTransformation)
+        dx = (scaled.width() - LOGO_SIZE) // 2
+        dy = (scaled.height() - LOGO_SIZE) // 2
+        p.drawPixmap(-dx, -dy, scaled)
+    else:
+        p.fillPath(clip, QColor(V2_ACCENTS.get(game, V2_ACCENTS["blue"])["c"]))
+    p.end()
+    _logo_cache[game] = pm
+    return pm
+
+
+def _mini_toon_pixmap(game: str, is_dark: bool, species: str | None,
+                       accent_hex: str | None) -> QPixmap:
+    """30px mini primary-toon portrait for a reorder row: a tinted race
+    silhouette ringed in the toon's own accent (or the game accent) when a
+    primary toon is set, else a faint dashed circle with a generic person
+    glyph. Mirrors the recipe in utils/widgets/primary_toon_slot.py and
+    utils/widgets/toon_picker_popover.py's _face_pixmap."""
+    pm = QPixmap(MINI_SIZE, MINI_SIZE)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    circle = QRectF(0, 0, MINI_SIZE, MINI_SIZE)
+    base_hex = "#ffffff" if is_dark else "#0f172a"
+
+    if species:
+        accent = accent_hex or V2_ACCENTS.get(game, V2_ACCENTS["blue"])["c"]
+        p.setPen(Qt.NoPen)
+        p.setBrush(with_alpha("#000000" if is_dark else "#0f172a", 0.22 if is_dark else 0.06))
+        p.drawEllipse(circle)
+        inset = MINI_SIZE * (1 - MINI_SIL_FRACTION) / 2
+        sil_rect = circle.adjusted(inset, inset, -inset, -inset).toRect()
+        fill_hex = lighten_rgb(QColor(accent), 0.5).name()
+        paint_race_silhouette(p, sil_rect, species, fill_hex)
+        p.setBrush(Qt.NoBrush)
+        pen = QPen(QColor(accent))
+        pen.setWidthF(MINI_RING_W)
+        p.setPen(pen)
+        ring = circle.adjusted(MINI_RING_W / 2, MINI_RING_W / 2,
+                                -MINI_RING_W / 2, -MINI_RING_W / 2)
+        p.drawEllipse(ring)
+    else:
+        p.setBrush(Qt.NoBrush)
+        dash_pen = QPen(with_alpha(base_hex, 0.35), 2, Qt.DashLine)
+        p.setPen(dash_pen)
+        ring = circle.adjusted(1, 1, -1, -1)
+        p.drawEllipse(ring)
+        # Generic person glyph (head + shoulders), clipped to the circle so
+        # the shoulder rect doesn't spill past the ring.
+        clip = QPainterPath()
+        clip.addEllipse(circle)
+        p.setClipPath(clip)
+        p.setPen(Qt.NoPen)
+        p.setBrush(with_alpha(base_hex, 0.40))
+        cx = MINI_SIZE / 2
+        head_r = MINI_SIZE * 0.14
+        p.drawEllipse(QPointF(cx, MINI_SIZE * 0.36), head_r, head_r)
+        shoulders = QPainterPath()
+        shoulders.addRoundedRect(
+            QRectF(cx - MINI_SIZE * 0.24, MINI_SIZE * 0.54,
+                   MINI_SIZE * 0.48, MINI_SIZE * 0.34),
+            MINI_SIZE * 0.16, MINI_SIZE * 0.16)
+        p.drawPath(shoulders)
+    p.end()
+    return pm
 
 
 class _ReorderRow(QFrame):
     """One reorder list row: drag handle (drag source), position badge,
-    label-or-username text, and up/down buttons. Reordering is delegated to
-    the owning dialog's _move() (arrows) or _begin_drag() (handle drag)."""
+    mini primary-toon portrait, label-or-username text, and up/down buttons.
+    Reordering is delegated to the owning dialog's _move() (arrows) or
+    _begin_drag() (handle drag)."""
     def __init__(self, dialog: "AccountReorderDialog", index: int, account: dict,
                  is_first: bool, is_last: bool):
         super().__init__()
         self._dialog = dialog
         self._index = index
         self.setObjectName("reorder_row")
+        self.setFixedHeight(ROW_HEIGHT)
+
+        # Primary-toon fields (optional; absent -> the dashed/person placeholder).
+        self._toon_is_set = bool(account.get("primary_is_set"))
+        self._toon_species = account.get("primary_species")
+        self._toon_accent = account.get("primary_accent")
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(11, 9, 11, 9)
-        lay.setSpacing(11)
+        lay.setContentsMargins(12, 8, 12, 8)
+        lay.setSpacing(10)
 
-        self.handle = QLabel("⠇⠇")  # grip glyph
+        self.handle = QLabel("⠿")  # braille "grip" glyph (dot-grid look)
         self.handle.setObjectName("reorder_handle")
         self.handle.setCursor(Qt.OpenHandCursor)
         self.handle.setToolTip("Drag to reorder")
@@ -41,9 +175,15 @@ class _ReorderRow(QFrame):
 
         self.badge = QLabel(str(index + 1))
         self.badge.setObjectName("reorder_badge")
-        self.badge.setFixedSize(20, 20)
+        self.badge.setFixedSize(BADGE_SIZE, BADGE_SIZE)
         self.badge.setAlignment(Qt.AlignCenter)
         lay.addWidget(self.badge)
+
+        self.portrait = QLabel()
+        self.portrait.setObjectName("reorder_portrait")
+        self.portrait.setFixedSize(MINI_SIZE, MINI_SIZE)
+        self.portrait.setStyleSheet("background: transparent;")
+        lay.addWidget(self.portrait)
 
         label = (account.get("label") or "").strip()
         username = (account.get("username") or "").strip()
@@ -60,6 +200,7 @@ class _ReorderRow(QFrame):
 
         self.up_btn = QToolButton()
         self.up_btn.setText("▲")
+        self.up_btn.setFixedSize(ARROW_SIZE, ARROW_SIZE)
         self.up_btn.setCursor(Qt.PointingHandCursor)
         self.up_btn.setToolTip("Move up")
         self.up_btn.setAccessibleName("Move up")
@@ -69,6 +210,7 @@ class _ReorderRow(QFrame):
 
         self.down_btn = QToolButton()
         self.down_btn.setText("▼")
+        self.down_btn.setFixedSize(ARROW_SIZE, ARROW_SIZE)
         self.down_btn.setCursor(Qt.PointingHandCursor)
         self.down_btn.setToolTip("Move down")
         self.down_btn.setAccessibleName("Move down")
@@ -118,40 +260,60 @@ class AccountReorderDialog(QDialog):
         self._swap_anims: list[QPropertyAnimation] = []
         self.setModal(True)
         self.setWindowTitle(f"Reorder {_GAME_NAMES[game]} accounts")
-        self.setMinimumWidth(440)
+        self.setFixedWidth(MODAL_WIDTH)
+
+        # Card gradient/border colors, painted directly on the dialog's own
+        # client area in paintEvent(). Real values are computed in
+        # apply_theme(); these are just a safe pre-paint default.
+        self._grad_top = QColor("#202020")
+        self._grad_bot = QColor("#151515")
+        self._border_col = QColor(255, 255, 255, 40)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
+        outer.setContentsMargins(MODAL_PADDING, MODAL_PADDING, MODAL_PADDING, MODAL_PADDING)
+        outer.setSpacing(12)
 
-        self.accent_bar = QFrame()
-        self.accent_bar.setFixedHeight(3)
-        self.accent_bar.setStyleSheet(f"background: {_ACCENT[game]};")
-        outer.addWidget(self.accent_bar)
-
-        head = QVBoxLayout()
-        head.setContentsMargins(20, 16, 20, 4)
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        head.setSpacing(10)
+        self.logo_label = QLabel()
+        self.logo_label.setFixedSize(LOGO_SIZE, LOGO_SIZE)
+        self.logo_label.setStyleSheet("background: transparent;")
+        self.logo_label.setPixmap(_game_logo_pixmap(game))
+        head.addWidget(self.logo_label)
+        head_text = QVBoxLayout()
+        head_text.setSpacing(2)
+        # Kept as "Reorder <Game> accounts" (rather than the design mock's
+        # generic "Reorder accounts") because test_cc_game_title_and_accent
+        # asserts the game name appears in title_label.text(); the logo
+        # portrait to its left carries the same identity visually.
         self.title_label = QLabel(f"Reorder {_GAME_NAMES[game]} accounts")
         self.title_label.setObjectName("reorder_dialog_title")
-        head.addWidget(self.title_label)
+        head_text.addWidget(self.title_label)
         self.help_label = QLabel("Drag a row or use the arrows. Numbers match the launcher order.")
         self.help_label.setObjectName("reorder_dialog_help")
-        head.addWidget(self.help_label)
+        self.help_label.setWordWrap(True)
+        head_text.addWidget(self.help_label)
+        head.addLayout(head_text, 1)
         outer.addLayout(head)
 
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self._scroll.viewport().setStyleSheet("background: transparent;")
         self._rows_host = QWidget()
+        self._rows_host.setStyleSheet("background: transparent;")
         self._rows_lay = QVBoxLayout(self._rows_host)
-        self._rows_lay.setContentsMargins(14, 8, 14, 8)
-        self._rows_lay.setSpacing(8)
+        self._rows_lay.setContentsMargins(0, 4, 0, 4)
+        self._rows_lay.setSpacing(ROW_GAP)
         self._rows_lay.addStretch(1)
         self._scroll.setWidget(self._rows_host)
         outer.addWidget(self._scroll, 1)
 
         foot = QHBoxLayout()
-        foot.setContentsMargins(20, 12, 20, 16)
+        foot.setContentsMargins(0, 4, 0, 0)
+        foot.setSpacing(8)
         foot.addStretch(1)
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self.reject)
@@ -404,38 +566,105 @@ class AccountReorderDialog(QDialog):
         self._rows_lay.addStretch(1)
         self.apply_theme(getattr(self, "_theme", get_theme_colors(True)))
 
+    def _update_card_colors(self, is_dark: bool) -> None:
+        """158deg rich-tint gradient + 2px border, exactly the recipe
+        utils/widgets/card_surface.py's CardSurface._target_colors uses for
+        the game group cards, so the reorder modal reads as the same surface
+        family. Painted directly (see paintEvent) rather than via a nested
+        CardSurface, which assumes a normal child layout and would fight the
+        absolute-positioned drag layer's row.y()/row.pos() bookkeeping."""
+        accent = V2_ACCENTS.get(self._game, V2_ACCENTS["blue"])
+        c = QColor(accent["c"])
+        if is_dark:
+            self._grad_top = darken_rgb(c, 0.30)
+            self._grad_bot = darken_rgb(c, 0.15)
+            self._border_col = with_alpha(accent["b"], 0.55)
+        else:
+            self._grad_top = lighten_rgb(c, 0.80)
+            self._grad_bot = lighten_rgb(c, 0.90)
+            self._border_col = with_alpha(accent["c"], 0.50)
+
+    def paintEvent(self, event):
+        # Flat QSS background first (fills the tiny corner slivers outside
+        # the rounded card - the dialog keeps its native OS window frame, so
+        # this paints only the CONTENT area, not the title bar).
+        super().paintEvent(event)
+        if self.width() <= 0 or self.height() <= 0:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        r = QRectF(1.0, 1.0, self.width() - 2.0, self.height() - 2.0)
+        path = QPainterPath()
+        path.addRoundedRect(r, MODAL_RADIUS, MODAL_RADIUS)
+
+        grad = QLinearGradient(r.topLeft().x(), r.topLeft().y(),
+                                r.x() + r.width() * 0.38, r.y() + r.height())
+        grad.setColorAt(0.0, self._grad_top)
+        grad.setColorAt(1.0, self._grad_bot)
+        p.fillPath(path, grad)
+
+        p.save()
+        p.setClipPath(path)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(self._border_col, 4))
+        p.drawPath(path)
+        p.restore()
+        p.end()
+
     def apply_theme(self, c: dict) -> None:
         self._theme = c
+        is_dark = QColor(c["text_primary"]).lightnessF() > 0.5
+        v2 = get_v2_tokens(is_dark)
+        accent = V2_ACCENTS.get(self._game, V2_ACCENTS["blue"])
+        base_hex = "#ffffff" if is_dark else "#0f172a"
+
+        self._update_card_colors(is_dark)
         self.setStyleSheet(f"QDialog {{ background: {c['bg_app']}; }}")
+        self.update()
+
         self.title_label.setStyleSheet(
-            f"color: {c['text_primary']}; font-size: 16px; font-weight: 700;")
-        self.help_label.setStyleSheet(f"color: {c['text_muted']}; font-size: 12px;")
+            f"color: {v2['title']}; font-size: 15px; font-weight: 700; background: transparent;")
+        self.help_label.setStyleSheet(
+            f"color: {v2['helper']}; font-size: 11px; background: transparent;")
+
+        icon_color = css_alpha(base_hex, 0.62 if is_dark else 0.55)
+        disabled_icon = css_alpha(base_hex, 0.35)
+        disabled_border = css_alpha(base_hex, 0.35 * (0.14 if is_dark else 0.16))
+
         for r in self._rows:
             r.setStyleSheet(
                 "QFrame#reorder_row {"
-                f" background: {c['bg_card_inner']}; border: 1px solid {c['border_card']};"
-                " border-radius: 9px; }")
-            r.handle.setStyleSheet(f"color: {c['text_muted']}; font-size: 14px; background: transparent;")
+                f" background: {v2['row_bg']}; border: 1px solid {v2['row_border']};"
+                f" border-radius: {v2['radius_row']}px; }}")
+            r.handle.setStyleSheet(f"color: {v2['helper']}; font-size: 18px; background: transparent;")
             r.badge.setStyleSheet(
-                f"background: {_ACCENT[self._game]}; color: {c['text_on_accent']};"
-                " border-radius: 10px; font-size: 11px; font-weight: 700;")
-            r.title.setStyleSheet(f"color: {c['text_primary']}; font-size: 13px; font-weight: 600; background: transparent;")
-            r.subtitle.setStyleSheet(f"color: {c['text_muted']}; font-size: 11px; background: transparent;")
+                f"background: {accent['b']}; color: #ffffff;"
+                f" border: 2px solid {accent['c']}; border-radius: {BADGE_SIZE // 2}px;"
+                " font-size: 9px; font-weight: 800;")
+            r.portrait.setPixmap(_mini_toon_pixmap(
+                self._game, is_dark,
+                r._toon_species if r._toon_is_set else None,
+                r._toon_accent))
+            r.title.setStyleSheet(f"color: {v2['title']}; font-size: 13px; font-weight: 700; background: transparent;")
+            r.subtitle.setStyleSheet(f"color: {v2['sub']}; font-size: 10.5px; background: transparent;")
             for b in (r.up_btn, r.down_btn):
                 b.setStyleSheet(
                     "QToolButton {"
-                    f" border: 1px solid {c['border_muted']}; border-radius: 6px;"
-                    f" color: {c['text_secondary']}; font-size: 10px; padding: 4px 6px; }}"
-                    f"QToolButton:disabled {{ color: {c['border_card']}; border-color: {c['border_muted']}; }}")
-        for btn, primary in ((self.cancel_btn, False), (self.save_btn, True)):
-            if primary:
-                btn.setStyleSheet(
-                    "QPushButton {"
-                    f" background: {c['accent_blue_btn']}; color: {c['text_on_accent']};"
-                    " border: none; border-radius: 8px; padding: 8px 18px; font-weight: 600; }"
-                    f"QPushButton:hover {{ background: {c['accent_blue_btn_hover']}; }}")
-            else:
-                btn.setStyleSheet(
-                    "QPushButton {"
-                    f" background: transparent; border: 1px solid {c['border_muted']};"
-                    f" color: {c['text_secondary']}; border-radius: 8px; padding: 8px 18px; }}")
+                    f" background: {v2['ctrl_bg']}; border: 1px solid {v2['ctrl_border']};"
+                    f" border-radius: {ARROW_SIZE // 2}px; color: {icon_color}; font-size: 10px; }}"
+                    f"QToolButton:hover {{ background: {v2['ctrl_hover']}; }}"
+                    "QToolButton:disabled {"
+                    f" background: transparent; border: 1px solid {disabled_border};"
+                    f" color: {disabled_icon}; }}")
+        self.cancel_btn.setStyleSheet(
+            "QPushButton {"
+            f" background: {v2['btn_bg']}; border: 1px solid {v2['btn_border']};"
+            f" color: {v2['title']}; border-radius: 17px; padding: 8px 18px;"
+            " font-size: 12.5px; font-weight: 600; }"
+            f"QPushButton:hover {{ background: {v2['ctrl_hover']}; }}")
+        save_hover = lighten_rgb(QColor(accent["c"]), 0.12).name()
+        self.save_btn.setStyleSheet(
+            "QPushButton {"
+            f" background: {accent['c']}; color: #ffffff; border: none;"
+            " border-radius: 17px; padding: 8px 20px; font-size: 12.5px; font-weight: 700; }"
+            f"QPushButton:hover {{ background: {save_hover}; }}")
