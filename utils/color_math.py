@@ -54,6 +54,14 @@ def lighten_rgb(color: QColor, factor: float) -> QColor:
     return QColor(r, g, b, color.alpha())
 
 
+def rgb_floats_to_hex(rgb) -> str | None:
+    """(r, g, b) floats in [0, 1] -> '#rrggbb'. None-safe."""
+    if not rgb or len(rgb) < 3:
+        return None
+    r, g, b = (max(0, min(255, round(c * 255))) for c in rgb[:3])
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
 def _coerce(color: "QColor | str") -> QColor:
     return color if isinstance(color, QColor) else QColor(color)
 

@@ -64,3 +64,10 @@ def test_darken_hsl_preserves_alpha(qapp):
     c.setAlpha(128)
     out = darken_hsl(c, 0.7)
     assert out.alpha() == 128
+
+
+def test_rgb_floats_to_hex():
+    from utils.color_math import rgb_floats_to_hex
+    assert rgb_floats_to_hex((1.0, 0.0, 0.0)) == "#ff0000"
+    assert rgb_floats_to_hex(None) is None
+    assert rgb_floats_to_hex((0.0, 0.4, 0.65)) == "#0066a6"

@@ -13,7 +13,7 @@ def test_pid_for_window_returns_none_for_garbage_window():
 
 class _FakeStore:
     def __init__(self): self.calls = []
-    def record(self, account_id, toon_name, game, dna=""):
+    def record(self, account_id, toon_name, game, dna="", **kw):
         self.calls.append((account_id, toon_name, game, dna))
 
 
@@ -55,6 +55,27 @@ def test_toon_changed_dedup():
     from utils.toon_capture_bridge import toon_changed
     seen = {}
     assert toon_changed(seen, "w1", "Toon", "d") is True
-    seen["w1"] = ("Toon", "d")
+    seen["w1"] = ("Toon", "d", None)
     assert toon_changed(seen, "w1", "Toon", "d") is False
     assert toon_changed(seen, "w1", "Toon", "d2") is True
+
+
+def test_capture_forwards_metadata():
+    from utils.toon_capture_bridge import ToonCaptureBridge
+    calls = []
+    class _RS:
+        def record(self, aid, name, game, dna, **kw): calls.append((aid, name, game, dna, kw))
+    b = ToonCaptureBridge(_RS())
+    b.record_launch(101, "ttr", "acct-1")
+    b.capture(101, "Moe", "dna1", laff=120, max_laff=137, species="HORSE", accent="#4a8fe7")
+    aid, name, game, dna, kw = calls[0]
+    assert (aid, name, game, dna) == ("acct-1", "Moe", "ttr", "dna1")
+    assert kw == {"laff": 120, "max_laff": 137, "species": "HORSE", "accent": "#4a8fe7"}
+
+def test_toon_changed_includes_laff():
+    from utils.toon_capture_bridge import toon_changed
+    seen = {}
+    assert toon_changed(seen, "w1", "Moe", "dna1", 120) is True
+    seen["w1"] = ("Moe", "dna1", 120)
+    assert toon_changed(seen, "w1", "Moe", "dna1", 120) is False
+    assert toon_changed(seen, "w1", "Moe", "dna1", 121) is True

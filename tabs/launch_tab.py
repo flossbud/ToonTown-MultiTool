@@ -607,9 +607,11 @@ class LaunchTab(QWidget):
         right-click menu). Forwards to the internal launch handler."""
         self._on_launch(game, account_id)
 
-    def capture_toon(self, pid: int, toon_name: str, dna: str = "") -> None:
+    def capture_toon(self, pid: int, toon_name: str, dna: str = "", *,
+                     laff=None, max_laff=None, species=None, accent=None) -> None:
         """Record the in-world toon for whatever account owns ``pid`` (no-op if unknown)."""
-        self._toon_bridge.capture(pid, toon_name, dna)
+        self._toon_bridge.capture(pid, toon_name, dna, laff=laff, max_laff=max_laff,
+                                  species=species, accent=accent)
 
     def set_overlay_active_provider(self, fn) -> None:
         """Install a ``() -> bool`` predicate reporting whether the transparent

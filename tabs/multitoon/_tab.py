@@ -3366,22 +3366,25 @@ class MultitoonTab(QWidget):
     # ── Name handling ──────────────────────────────────────────────────────
 
     def set_toon_capture_sink(self, sink) -> None:
-        """Wire LaunchTab.capture_toon so resolved toon names update recent_toons."""
+        """Wire LaunchTab.capture_toon so resolved toon names update recent_toons.
+        The sink now also receives keyword metadata (laff/max_laff/species/accent)."""
         self._toon_capture_sink = sink
 
-    def _capture_account_toon(self, wid, toon_name: str, dna: str) -> None:
+    def _capture_account_toon(self, wid, toon_name: str, dna: str, *,
+                              laff=None, max_laff=None, species=None, accent=None) -> None:
         if not self._toon_capture_sink or not toon_name:
             return
         from utils.toon_capture_bridge import toon_changed
         from utils.game_registry import GameRegistry
         key = str(wid)
         dna = dna or ""
-        if not toon_changed(self._last_captured_toon, key, toon_name, dna):
+        if not toon_changed(self._last_captured_toon, key, toon_name, dna, laff):
             return  # unchanged since last refresh -> skip X round-trip + sink
         pid = GameRegistry.pid_for_window(key)   # HOST pid (Flatpak-safe), matches launch
         if pid is not None:
-            self._toon_capture_sink(pid, toon_name, dna)
-            self._last_captured_toon[key] = (toon_name, dna)
+            self._toon_capture_sink(pid, toon_name, dna, laff=laff, max_laff=max_laff,
+                                    species=species, accent=accent)
+            self._last_captured_toon[key] = (toon_name, dna, laff)
 
     @Slot(list, list, list, list, list, list, list)
     def _apply_merged_toon_data(self, target_wids, names, styles, colors, laffs, max_laffs, beans):
@@ -3392,9 +3395,15 @@ class MultitoonTab(QWidget):
                 if global_idx < 4:
                     if source_idx < len(names):
                         self.toon_names[global_idx] = names[source_idx]
+                        from utils.ttr_dna import parse_dna
+                        _sp, _ = parse_dna(styles[source_idx] if source_idx < len(styles) else "")
                         self._capture_account_toon(
                             wid, names[source_idx],
                             styles[source_idx] if source_idx < len(styles) else "",
+                            laff=laffs[source_idx] if source_idx < len(laffs) else None,
+                            max_laff=max_laffs[source_idx] if source_idx < len(max_laffs) else None,
+                            species=_sp,
+                            accent=colors[source_idx] if source_idx < len(colors) else None,
                         )
                         self.toon_styles[global_idx] = styles[source_idx]
                         self.toon_colors[global_idx] = colors[source_idx]
@@ -3453,7 +3462,10 @@ class MultitoonTab(QWidget):
             # Apply name
             self.toon_names[global_idx] = info.name
             # CC has no TTR-style DNA string; record the name with an empty dna.
-            self._capture_account_toon(wid, info.name, "")
+            from utils.color_math import rgb_floats_to_hex
+            _cc_accent = rgb_floats_to_hex(info.dna_colors[0]) if info.dna_colors else None
+            self._capture_account_toon(wid, info.name, "",
+                                       species=info.species_name, accent=_cc_accent)
 
             # Hide TTR-only widgets for CC slots: CC log data doesn't expose
             # laff/bean stats, and the chat button is not yet integrated for CC.
