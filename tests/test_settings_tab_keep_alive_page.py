@@ -36,17 +36,18 @@ def settings_manager():
 
 
 def _field(tab, label):
-    from tabs.settings_tab import SettingsField
-    for f in tab.pages["features"].findChildren(SettingsField):
+    from utils.widgets.inset_row import InsetRow
+    for f in tab.pages["features"].findChildren(InsetRow):
         if f.label_widget.text() == label:
             return f
     return None
 
 
 def test_keep_alive_page_has_three_fields(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab, SettingsField
+    from tabs.settings_tab import SettingsTab
+    from utils.widgets.inset_row import InsetRow
     tab = SettingsTab(settings_manager)
-    fields = tab.pages["features"].findChildren(SettingsField)
+    fields = tab.pages["features"].findChildren(InsetRow)
     labels = {f.label_widget.text() for f in fields}
     assert {"Enable Keep-Alive", "Action", "Interval"} <= labels
 
@@ -76,17 +77,25 @@ def test_keep_alive_master_toggle_consent_decline_reverts(qapp, settings_manager
 
 def test_keep_alive_action_changes_setting(qapp, settings_manager):
     from tabs.settings_tab import SettingsTab
+    from utils.widgets.pill_controls import SegmentedPill
     tab = SettingsTab(settings_manager)
     field = _field(tab, "Action")
-    field.control_widget.setCurrentIndex(1)  # Open / Close Book
+    assert isinstance(field.control_widget, SegmentedPill)
+    field.control_widget.index_changed.emit(1)  # Open / Close Book
     assert settings_manager.get("keep_alive_action") == "book"
 
 
 def test_keep_alive_interval_changes_setting(qapp, settings_manager):
     from tabs.settings_tab import SettingsTab
+    from utils.widgets.pill_controls import SegmentedPill
     tab = SettingsTab(settings_manager)
     field = _field(tab, "Interval")
+    assert isinstance(field.control_widget, SegmentedPill)
+    # setCurrentIndex + emit mirrors the real click path (mousePressEvent
+    # sets the index, then emits) -- get_keep_alive_delay_seconds() reads
+    # the widget's own currentIndex(), not the persisted setting.
     field.control_widget.setCurrentIndex(0)  # Rapid Fire
+    field.control_widget.index_changed.emit(0)
     assert settings_manager.get("keep_alive_delay") == "Rapid Fire"
     assert tab.get_keep_alive_delay_seconds() == pytest.approx(0.25)
 

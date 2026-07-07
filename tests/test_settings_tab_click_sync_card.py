@@ -60,14 +60,15 @@ def test_features_card_order_keep_alive_click_sync_chat(qapp, settings_manager):
     Chat Handling. Assert against the actual page layout order (what the
     user sees), not findChildren -- findChildren reflects QObject creation
     order, which can diverge from layout order if an insertWidget index is
-    wrong."""
+    wrong. Keep-Alive is a v2 CardSurface; the rest are still SettingsPanel."""
     from tabs.settings_tab import SettingsTab, SettingsPanel
+    from utils.widgets.card_surface import CardSurface
     tab = SettingsTab(settings_manager)
     layout = tab.pages["features"]._panel_layout
     titles = []
     for i in range(layout.count()):
         w = layout.itemAt(i).widget()
-        if isinstance(w, SettingsPanel):
+        if isinstance(w, (SettingsPanel, CardSurface)):
             titles.append(w.title_label.text())
     assert titles == ["Keep-Alive", "Click Sync", "Hotkeys", "Chat Handling"]
 

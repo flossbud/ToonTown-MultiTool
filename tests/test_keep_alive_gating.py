@@ -289,8 +289,8 @@ def test_settings_tab_master_toggle_present(qapp, tmp_path, monkeypatch):
 
     assert hasattr(tab, "_ka_master_switch")
     assert tab._ka_master_switch.isChecked() is False
-    assert tab._ka_action_field.control_widget.isEnabled() is False
-    assert tab._ka_delay_field.control_widget.isEnabled() is False
+    assert tab._ka_action_row.isEnabled() is False
+    assert tab._ka_delay_row.isEnabled() is False
 
 
 def test_settings_tab_master_on_unghosts_rows(qapp, tmp_path, monkeypatch):
@@ -304,8 +304,8 @@ def test_settings_tab_master_on_unghosts_rows(qapp, tmp_path, monkeypatch):
     tab = SettingsTab(settings_manager=sm)
 
     assert tab._ka_master_switch.isChecked() is True
-    assert tab._ka_action_field.control_widget.isEnabled() is True
-    assert tab._ka_delay_field.control_widget.isEnabled() is True
+    assert tab._ka_action_row.isEnabled() is True
+    assert tab._ka_delay_row.isEnabled() is True
 
 
 def test_dialog_cancel_does_not_persist_setting(qapp, tmp_path, monkeypatch):

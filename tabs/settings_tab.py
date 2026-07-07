@@ -1527,30 +1527,26 @@ class SettingsTab(QWidget):
         self._build_chat_handling_card(page)
 
     def _build_keep_alive_card(self, page):
+        from utils.icon_factory import make_lightning_icon
         lay = page._panel_layout
         insert_at = lay.count() - 1
 
-        panel = SettingsPanel(title="Keep-Alive", stripe="orange")
-        self._panels.append(panel)
-        self._keep_alive_panel = panel
+        card = CardSurface("orange", title="Keep-Alive", icon=make_lightning_icon(20))
+        self._cards.append(card)
+        self._keep_alive_panel = card
 
-        # Master toggle
         master_initial = bool(self.settings_manager.get("keep_alive_enabled", False))
-        master_field = SettingsField(
+        master_row = self._v2_row(
             "Enable Keep-Alive",
-            helper=(
-                "Disabled by default. Both games' Terms of Service prohibit "
-                "automation tools. Your previous per-toon Keep-Alive selections "
-                "are preserved."
-            ),
-        )
-        master_switch = Switch(master_initial)
+            helper=("Disabled by default. Both games' Terms of Service prohibit "
+                    "automation tools. Your previous per-toon Keep-Alive selections "
+                    "are preserved."))
+        master_switch = self._v2_switch(master_initial, "orange")
         master_switch.toggled.connect(self._on_keep_alive_master_toggle)
-        master_field.set_control(master_switch)
+        master_row.set_control(master_switch)
         self._ka_master_switch = master_switch
-        panel.add_field(master_field)
+        card.add_row(master_row)
 
-        # Action
         self._ka_actions = [
             ("Jump", "jump"),
             ("Open / Close Book", "book"),
@@ -1558,39 +1554,38 @@ class SettingsTab(QWidget):
         ]
         saved_action = self.settings_manager.get("keep_alive_action", "jump")
         action_idx = next(
-            (i for i, (_, v) in enumerate(self._ka_actions) if v == saved_action), 0,
-        )
-        action_field = SettingsField("Action")
-        action_combo = SettingsComboBox()
-        action_combo.addItems([d for d, _ in self._ka_actions])
-        action_combo.setCurrentIndex(action_idx)
-        action_combo.setFixedWidth(180)
-        action_combo.currentIndexChanged.connect(self._on_keep_alive_action_changed)
-        action_field.set_control(action_combo)
-        self._ka_action_field = action_field
-        panel.add_field(action_field)
+            (i for i, (_, v) in enumerate(self._ka_actions) if v == saved_action), 0)
+        action_row = self._v2_row("Action")
+        action_seg = self._v2_segment([d for d, _ in self._ka_actions], "orange")
+        action_seg.setCurrentIndex(action_idx)
+        action_seg.index_changed.connect(self._on_keep_alive_action_changed)
+        action_row.set_control(action_seg)
+        self._ka_action_row = action_row
+        card.add_row(action_row)
 
-        # Interval
-        delay_options = [
+        # Interval - "10 min" removed 2026-07-06 (product decision); persisted
+        # values migrate to "5 min" on read.
+        self._ka_delay_options = [
             "Rapid Fire", "1 sec", "5 sec", "10 sec", "30 sec",
-            "1 min", "3 min", "5 min", "10 min",
+            "1 min", "3 min", "5 min",
         ]
         saved_delay = self.settings_manager.get("keep_alive_delay", "30 sec")
-        delay_idx = delay_options.index(saved_delay) if saved_delay in delay_options else 4
-        delay_field = SettingsField("Interval")
-        delay_combo = SettingsComboBox()
-        delay_combo.addItems(delay_options)
-        delay_combo.setCurrentIndex(delay_idx)
-        delay_combo.setFixedWidth(180)
-        delay_combo.currentIndexChanged.connect(self._on_keep_alive_delay_changed)
-        delay_field.set_control(delay_combo)
-        self._ka_delay_field = delay_field
-        self._ka_delay_combo = delay_combo
-        panel.add_field(delay_field)
+        if saved_delay == "10 min":
+            saved_delay = "5 min"
+            self.settings_manager.set("keep_alive_delay", saved_delay)
+        delay_idx = (self._ka_delay_options.index(saved_delay)
+                     if saved_delay in self._ka_delay_options else 4)
+        delay_row = self._v2_row("Interval")
+        delay_seg = self._v2_segment(self._ka_delay_options, "orange", stretch=True)
+        delay_seg.setCurrentIndex(delay_idx)
+        delay_seg.index_changed.connect(self._on_keep_alive_delay_changed)
+        delay_row.set_full_width_control(delay_seg)
+        self._ka_delay_row = delay_row
+        self._ka_delay_segment = delay_seg
+        card.add_row(delay_row)
 
         self._refresh_keep_alive_enabled_state(master_initial)
-
-        lay.insertWidget(insert_at, panel)
+        lay.insertWidget(insert_at, card)
 
     def _build_click_sync_card(self, page):
         lay = page._panel_layout
@@ -1971,8 +1966,8 @@ class SettingsTab(QWidget):
     # ── Keep-Alive handlers ───────────────────────────────────────────────
 
     def _refresh_keep_alive_enabled_state(self, enabled: bool):
-        self._ka_action_field.control_widget.setEnabled(enabled)
-        self._ka_delay_field.control_widget.setEnabled(enabled)
+        self._ka_action_row.set_row_disabled(not enabled)
+        self._ka_delay_row.set_row_disabled(not enabled)
 
     def _on_keep_alive_master_toggle(self, checked: bool):
         if not checked:
@@ -2023,8 +2018,8 @@ class SettingsTab(QWidget):
             self.settings_manager.set("keep_alive_action", value)
 
     def _on_keep_alive_delay_changed(self, i: int):
-        delay = self._ka_delay_combo.itemText(i)
-        self.settings_manager.set("keep_alive_delay", delay)
+        if 0 <= i < len(self._ka_delay_options):
+            self.settings_manager.set("keep_alive_delay", self._ka_delay_options[i])
 
     # ── Chat Handling handler ────────────────────────────────────────────
 
@@ -2332,14 +2327,16 @@ class SettingsTab(QWidget):
         anim.start(QPropertyAnimation.DeleteWhenStopped)
         self._keepalive_highlight_anim = anim
 
+    _KA_DELAY_SECONDS = {
+        "Rapid Fire": 0.25, "1 sec": 1, "5 sec": 5, "10 sec": 10,
+        "30 sec": 30, "1 min": 60, "3 min": 180, "5 min": 300,
+    }
+
     def get_keep_alive_delay_seconds(self) -> float:
-        if not hasattr(self, "_ka_delay_combo"):
+        if not hasattr(self, "_ka_delay_segment"):
             return 60.0
-        return {
-            "Rapid Fire": 0.25, "1 sec": 1, "5 sec": 5, "10 sec": 10,
-            "30 sec": 30, "1 min": 60, "3 min": 180, "5 min": 300,
-            "10 min": 600,
-        }.get(self._ka_delay_combo.currentText(), 60.0)
+        label = self._ka_delay_options[self._ka_delay_segment.currentIndex()]
+        return float(self._KA_DELAY_SECONDS.get(label, 60.0))
 
     # ── Theming ───────────────────────────────────────────────────────────
     def refresh_theme(self):
