@@ -147,3 +147,35 @@ def test_coverage_is_full_on_snapped_segment_only(dock, monkeypatch):
     dock.select(3)
     assert dock._coverage(dock.segments[3]) == 1.0
     assert dock._coverage(dock.segments[0]) == 0.0
+
+
+# -- debug overflow visibility + phantom centering (migrated from chip rail) --
+
+def test_overflow_hidden_when_debug_off(qapp):
+    inst = _bare_main(qapp)
+    inst.settings_manager = _StubSettings(hints_enabled=True, show_debug_tab=False)
+    band = inst._build_nav_band()
+    assert inst.overflow_btn.isVisibleTo(band) is False
+
+
+def test_overflow_visible_when_debug_on(qapp):
+    inst = _bare_main(qapp)
+    inst.settings_manager = _StubSettings(hints_enabled=True, show_debug_tab=True)
+    band = inst._build_nav_band()
+    assert inst.overflow_btn.isVisibleTo(band) is True
+
+
+def test_phantom_zero_when_debug_off(qapp):
+    inst = _bare_main(qapp)
+    inst.settings_manager = _StubSettings(hints_enabled=True, show_debug_tab=False)
+    band = inst._build_nav_band()   # hold the band so its QSpacerItem survives
+    assert inst.nav_left_phantom.sizeHint().width() == 0
+    assert band is not None
+
+
+def test_phantom_balances_overflow_when_debug_on(qapp):
+    inst = _bare_main(qapp)
+    inst.settings_manager = _StubSettings(hints_enabled=True, show_debug_tab=True)
+    band = inst._build_nav_band()   # hold the band so its QSpacerItem survives
+    assert inst.nav_left_phantom.sizeHint().width() == 38  # overflow 34 + 4 gap
+    assert band is not None
