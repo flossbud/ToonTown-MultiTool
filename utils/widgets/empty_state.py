@@ -1,22 +1,20 @@
-"""Section empty-state placeholder shown when a game has zero accounts."""
+"""Section empty-state placeholder shown when a game has zero accounts.
+
+v2 pinwheel reskin: a 64x64 ringed portrait (game-accent ring, tinted person
+glyph), a title/sub column using the v2 inset tokens, and a solid game-accent
+CTA pill (replaces the old neutral ghost chip)."""
 from __future__ import annotations
 
 from PySide6.QtCore import QByteArray, Qt, Signal
-from PySide6.QtGui import QPainter, QPixmap
+from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
+from utils.color_math import alpha, lighten_rgb
+from utils.theme_manager import V2_ACCENTS, get_v2_tokens
 
 _SHORT = {"ttr": "TTR", "cc": "CC"}
-
-
-def _rgba(hex_color: str, alpha: float) -> str:
-    """Convert a `#rrggbb` to an `rgba(r,g,b,a)` string."""
-    h = hex_color.lstrip("#")
-    if len(h) != 6:
-        return hex_color
-    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-    return f"rgba({r}, {g}, {b}, {alpha})"
+PORTRAIT_SIZE = 64
 
 
 def _person_pixmap(color: str, size: int = 30) -> QPixmap:
@@ -48,30 +46,30 @@ class EmptyState(QWidget):
         self._game = game
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 30, 20, 30)
+        outer.setContentsMargins(20, 26, 20, 30)
         outer.setSpacing(0)
         outer.setAlignment(Qt.AlignHCenter)
 
         self.icon_label = QLabel()
         self.icon_label.setAlignment(Qt.AlignCenter)
-        self.icon_label.setFixedSize(56, 56)
+        self.icon_label.setFixedSize(PORTRAIT_SIZE, PORTRAIT_SIZE)
         outer.addWidget(self.icon_label, alignment=Qt.AlignCenter)
-        outer.addSpacing(14)
+        outer.addSpacing(13)
 
         self.title_label = QLabel(f"No {_SHORT[game]} accounts yet")
         self.title_label.setAlignment(Qt.AlignCenter)
         outer.addWidget(self.title_label)
-        outer.addSpacing(6)
+        outer.addSpacing(5)
 
         self.subtitle_label = QLabel(
             "Add an account to launch directly into the game, or open the "
             "official launcher above if you just want to update."
         )
         self.subtitle_label.setWordWrap(True)
-        self.subtitle_label.setMaximumWidth(320)
+        self.subtitle_label.setMaximumWidth(330)
         self.subtitle_label.setAlignment(Qt.AlignCenter)
         outer.addWidget(self.subtitle_label, alignment=Qt.AlignCenter)
-        outer.addSpacing(18)
+        outer.addSpacing(16)
 
         self.cta_btn = QPushButton(f"+ Add {_SHORT[game]} Account")
         self.cta_btn.setCursor(Qt.PointingHandCursor)
@@ -81,34 +79,35 @@ class EmptyState(QWidget):
         self.apply_theme(get_theme_colors(True))
 
     def apply_theme(self, c: dict) -> None:
-        """Rebuild every QSS string from the theme dict `c`."""
-        pill_hex = c["game_pill_ttr"] if self._game == "ttr" else c["game_pill_cc"]
-        # Derive low-alpha icon tints from the pill color.
-        tint_bg = _rgba(pill_hex, 0.12)
-        tint_border = _rgba(pill_hex, 0.30)
+        """Rebuild every QSS string from the legacy theme dict `c`."""
+        is_dark = QColor(c["text_primary"]).lightnessF() > 0.5
+        t = get_v2_tokens(is_dark)
+        accent = V2_ACCENTS.get(self._game, V2_ACCENTS["blue"])
 
-        self.icon_label.setPixmap(_person_pixmap(pill_hex))
+        portrait_bg = alpha("#000000", 0.22) if is_dark else alpha("#0f172a", 0.06)
+        glyph_color = lighten_rgb(QColor(accent["c"]), 0.5).name()
+
+        self.icon_label.setPixmap(_person_pixmap(glyph_color))
         self.icon_label.setStyleSheet(
-            f"QLabel {{ background: {tint_bg}; border: 1px solid {tint_border};"
-            f" border-radius: 14px; color: {pill_hex}; }}"
+            f"QLabel {{ background: {portrait_bg}; border: 4px solid {accent['c']};"
+            f" border-radius: {PORTRAIT_SIZE // 2}px; }}"
         )
         self.title_label.setStyleSheet(
-            f"color: {c['text_primary']}; font-weight: 700; font-size: 15px;"
+            f"color: {t['title']}; font-weight: 700; font-size: 15px;"
         )
         self.subtitle_label.setStyleSheet(
-            f"color: {c['text_muted']}; font-size: 12px;"
+            f"color: {t['sub']}; font-size: 12px;"
         )
+        cta_hover = lighten_rgb(QColor(accent["c"]), 0.12).name()
         self.cta_btn.setStyleSheet(
             "QPushButton {"
-            " background: transparent;"
-            f" color: {c['text_secondary']};"
-            f" border: 1px solid {c['border_muted']};"
-            " border-radius: 6px; padding: 8px 18px; font-size: 13px;"
-            " font-weight: 600;"
+            f" background: {accent['c']};"
+            " color: #ffffff;"
+            f" border: 1px solid {accent['b']};"
+            " border-radius: 17px; padding: 9px 20px; font-size: 13px;"
+            " font-weight: 700;"
             "}"
             "QPushButton:hover {"
-            f" background: {c['bg_card_inner_hover']};"
-            f" color: {c['text_primary']};"
-            f" border-color: {c['border_card']};"
+            f" background: {cta_hover};"
             "}"
         )

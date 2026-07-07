@@ -39,30 +39,34 @@ def test_empty_state_uses_text_primary_token(qapp):
     assert c["text_primary"] in title_qss
 
 
-def test_empty_state_cta_is_neutral(qapp):
-    """CTA button is a neutral chip (transparent bg + hairline border +
-    text_secondary color), not a saturated game-accent fill."""
-    from utils.theme_manager import get_theme_colors
+def test_empty_state_cta_is_accent_filled(qapp):
+    """v2 reskin: CTA button is a solid game-accent pill with white text
+    (replaces the old neutral ghost chip)."""
+    from utils.theme_manager import V2_ACCENTS
     from utils.widgets.empty_state import EmptyState
-    c = get_theme_colors(True)
     es = EmptyState(game="cc")
     cta_qss = es.cta_btn.styleSheet()
-    assert "background: transparent" in cta_qss
-    assert c["text_secondary"] in cta_qss
-    assert c["border_muted"] in cta_qss
-    # Regression guard: no saturated game-accent fill on the CTA bg.
-    assert "background: #0077ff" not in cta_qss.lower()
-    assert "background: #f26d21" not in cta_qss.lower()
+    assert V2_ACCENTS["cc"]["c"] in cta_qss
+    assert "color: #ffffff" in cta_qss
 
 
 def test_empty_state_apply_theme_rebuilds(qapp):
-    from utils.theme_manager import get_theme_colors
+    from utils.theme_manager import get_theme_colors, get_v2_tokens
     from utils.widgets.empty_state import EmptyState
     light = get_theme_colors(False)
     es = EmptyState(game="ttr")
     es.apply_theme(light)
     assert light["text_primary"] in es.title_label.styleSheet()
-    assert light["text_muted"] in es.subtitle_label.styleSheet()
+    assert get_v2_tokens(False)["sub"] in es.subtitle_label.styleSheet()
     dark = get_theme_colors(True)
     if dark["text_primary"] != light["text_primary"]:
         assert dark["text_primary"] not in es.title_label.styleSheet()
+
+
+def test_empty_state_emits_add(qapp):
+    from utils.widgets.empty_state import EmptyState
+    e = EmptyState("cc")
+    fired = []
+    e.add_clicked.connect(lambda: fired.append(1))
+    e.cta_btn.click()
+    assert fired == [1]

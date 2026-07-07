@@ -48,11 +48,12 @@ def test_single_page_disables_both_arrows(qapp):
 
 
 def test_apply_theme_paints_current_dot_with_accent(qapp):
+    from utils.theme_manager import V2_ACCENTS
     p = PagePager(game="ttr")
     p.set_state(page=0, page_count=2, activity=[False, False], show_add=True)
     c = get_theme_colors(True)
     p.apply_theme(c)
-    assert c["accent_blue_btn"] in p._dots[0].styleSheet()
+    assert V2_ACCENTS["ttr"]["b"] in p._dots[0].styleSheet()
 
 
 def test_dot_click_emits_page_selected(qapp):
@@ -95,3 +96,16 @@ def test_reorder_button_visibility_and_signal(qapp):
     p.reorder_clicked.connect(lambda: seen.append("x"))
     p.reorder_btn.click()
     assert seen == ["x"]
+
+
+def test_current_dot_uses_game_accent(qapp):
+    from utils.widgets.page_pager import PagePager
+    p = PagePager("cc")
+    p.set_state(page=0, page_count=2, activity=[False, False], show_add=True)
+    assert p._dots[0].property("current") is True
+
+
+def test_has_dot_pill_container(qapp):
+    from utils.widgets.page_pager import PagePager
+    p = PagePager("ttr")
+    assert p.dot_pill is not None
