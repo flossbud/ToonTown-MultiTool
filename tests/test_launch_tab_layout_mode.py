@@ -54,5 +54,5 @@ def test_launch_tab_set_layout_mode_propagates_to_sections(qapp):
     assert tab.ttr_section.maximumWidth() == 860
     assert tab.cc_section.maximumWidth() == 860
     tab.set_layout_mode("compact")
-    assert tab.ttr_section.maximumWidth() == 720
-    assert tab.cc_section.maximumWidth() == 720
+    assert tab.ttr_section.maximumWidth() == 740
+    assert tab.cc_section.maximumWidth() == 740

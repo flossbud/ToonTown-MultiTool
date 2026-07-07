@@ -26,7 +26,10 @@ QWIDGETSIZE_MAX = 16777215
 
 _GAME_NAMES = {"ttr": "Toontown Rewritten", "cc": "Corporate Clash"}
 _GAME_SHORT = {"ttr": "TTR", "cc": "CC"}
-_LAYOUT_MAX_WIDTH = {"compact": 720, "full": 860}
+# Compact cap is 740, not 720: CardSurface reserves EDGE_PAD (10px/side) for its
+# painted drop shadow, so a 740 widget yields a 720-wide VISIBLE card - matching
+# the handoff's 720 content column that holds two fixed 336px tiles side by side.
+_LAYOUT_MAX_WIDTH = {"compact": 740, "full": 860}
 
 # Running-count accent for the sub line (green): brighter in dark mode.
 _RUNNING_GREEN = {True: "#7de392", False: "#15803d"}
@@ -73,7 +76,7 @@ class LaunchSection(QWidget):
         # Compact-mode horizontal cap. Mirrors tabs/multitoon/_compact_layout.py:38-44.
         # In full mode (set via set_layout_mode), the cap is lifted so the
         # two sections can sit side-by-side and each fill ~half the window.
-        self._max_width = 720
+        self._max_width = _LAYOUT_MAX_WIDTH["compact"]
         self.setMaximumWidth(self._max_width)
         # Floor min-height keeps a card from collapsing visually when
         # empty; the actual matched-height enforcement is done at the
@@ -144,7 +147,10 @@ class LaunchSection(QWidget):
         self.grid_container = QWidget()
         self.grid_container.setAttribute(Qt.WA_TranslucentBackground, True)
         gc_lay = QHBoxLayout(self.grid_container)
-        gc_lay.setContentsMargins(14, 14, 14, 14)
+        # Zero horizontal margins: CardSurface already insets its body by 16px, and
+        # two fixed 336px tiles + the 10px grid gap need the full inner width to fit
+        # without clipping. Vertical padding kept.
+        gc_lay.setContentsMargins(0, 14, 0, 14)
         gc_lay.setSpacing(0)
         gc_lay.addStretch(1)
         grid_host = QWidget()

@@ -131,22 +131,24 @@ def test_add_tile_is_chipbutton(qapp):
 
 
 def test_section_has_compact_max_width(qapp):
-    """Sections cap at 720px wide (MultiToon compact-card parity)."""
+    """Sections cap at 740px wide: a 720px VISIBLE card (MultiToon compact-card
+    parity) plus CardSurface's 10px/side painted-shadow reserve, so two fixed
+    336px tiles fit two-up without clipping."""
     from PySide6.QtWidgets import QSizePolicy
     from utils.widgets.launch_section import LaunchSection
     sec = LaunchSection(game="ttr", icon_path="")
-    assert sec.maximumWidth() == 720
+    assert sec.maximumWidth() == 740
     assert sec.sizePolicy().horizontalPolicy() == QSizePolicy.Expanding
 
 
 def test_set_layout_mode_toggles_max_width(qapp):
     from utils.widgets.launch_section import LaunchSection
     sec = LaunchSection(game="ttr", icon_path="")
-    assert sec.maximumWidth() == 720
+    assert sec.maximumWidth() == 740
     sec.set_layout_mode("full")
     assert sec.maximumWidth() == 860
     sec.set_layout_mode("compact")
-    assert sec.maximumWidth() == 720
+    assert sec.maximumWidth() == 740
 
 
 def test_set_layout_mode_unknown_is_noop(qapp):
