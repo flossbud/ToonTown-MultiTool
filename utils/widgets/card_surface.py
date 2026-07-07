@@ -15,11 +15,11 @@ Theme flips may animate (220ms lerp) via apply_theme(animate=True).
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QEasingCurve, QRectF, Qt, QVariantAnimation
+from PySide6.QtCore import QEasingCurve, QRectF, Qt, QVariantAnimation, Signal
 from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget, QFrame
 
-from utils.card_dim import lerp_color
+from utils.card_dim import dim_color, lerp_color
 from utils.color_math import darken_rgb, lighten_rgb, with_alpha
 from utils.theme_manager import V2_ACCENTS, get_v2_tokens
 from utils.widgets.portrait_badge import PortraitBadge
@@ -30,6 +30,11 @@ THEME_FADE_MS = 220
 
 
 class CardSurface(QFrame):
+    # Emitted on a mouse press in the header band (above the body), excluding
+    # header buttons (they accept their own clicks). Consumers like the Launch
+    # section use it to toggle collapse. Settings does not connect it (no-op).
+    header_clicked = Signal()
+
     def __init__(self, accent_key: str, title: str, sub: str | None = None,
                  icon=None, logo_path: str | None = None, parent=None):
         super().__init__(parent)
@@ -38,6 +43,7 @@ class CardSurface(QFrame):
         self._is_dark = True
         self._t = get_v2_tokens(True)
         self._anim = None
+        self._desaturated = False
         self._grad_top, self._grad_bot, self._border_col = self._target_colors(True)
         self.setStyleSheet("background: transparent;")
 
@@ -163,6 +169,30 @@ class CardSurface(QFrame):
         self._pulse_anim = anim
         anim.start()
 
+    def set_desaturated(self, on: bool) -> None:
+        """Toggle the luma-preserving desaturation of the painted surface
+        (used by the Launch section for the collapsed/idle-card treatment).
+        Painted, not a QGraphicsEffect - safe on this custom-painted widget."""
+        on = bool(on)
+        if on == self._desaturated:
+            return
+        self._desaturated = on
+        self.update()
+
+    def mousePressEvent(self, event) -> None:
+        """Emit header_clicked for a press in the header band (above the body).
+        Header buttons accept their own clicks so they never reach here; the
+        title/sub/badge are non-interactive and do propagate here."""
+        if event.button() == Qt.LeftButton and event.position().y() < self._body.y():
+            self.header_clicked.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def _emit_header_click(self) -> None:
+        """Test hook: fire header_clicked without synthesizing a mouse event."""
+        self.header_clicked.emit()
+
     # ── internals ───────────────────────────────────────────────────────
     def _ensure_sub(self) -> QLabel:
         if self.sub_label is None:
@@ -218,11 +248,17 @@ class CardSurface(QFrame):
         self._paint_halo(p, shadow_path, QColor(0, 0, 0), 9,
                          0.40 if self._is_dark else 0.10)
 
+        # Collapsed/idle cards desaturate the whole surface (same luma-preserving
+        # saturate(0.45)*brightness(0.75) the idle pinwheel cards use - card_dim).
+        grad_top = dim_color(self._grad_top) if self._desaturated else self._grad_top
+        grad_bot = dim_color(self._grad_bot) if self._desaturated else self._grad_bot
+        border_col = dim_color(self._border_col) if self._desaturated else self._border_col
+
         # Body gradient (~158deg: down + slightly right, pinwheel convention).
         grad = QLinearGradient(r.topLeft().x(), r.topLeft().y(),
                                r.x() + r.width() * 0.38, r.y() + r.height())
-        grad.setColorAt(0.0, self._grad_top)
-        grad.setColorAt(1.0, self._grad_bot)
+        grad.setColorAt(0.0, grad_top)
+        grad.setColorAt(1.0, grad_bot)
         p.fillPath(path, grad)
 
         # 2px border, stroked at double width clipped to the path (inner half
@@ -230,7 +266,7 @@ class CardSurface(QFrame):
         p.save()
         p.setClipPath(path)
         p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(self._border_col, 4))
+        p.setPen(QPen(border_col, 4))
         p.drawPath(path)
         p.restore()
         p.end()

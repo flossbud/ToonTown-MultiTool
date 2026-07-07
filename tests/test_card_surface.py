@@ -24,6 +24,26 @@ def test_add_row_parents_into_body(app):
     assert row.parent() is card._body
 
 
+def test_header_click_emits(app):
+    card = CardSurface("ttr", title="Toontown Rewritten")
+    fired = []
+    card.header_clicked.connect(lambda: fired.append(1))
+    card._emit_header_click()
+    assert fired == [1]
+
+
+def test_set_desaturated_toggles_and_repaints(app):
+    card = CardSurface("ttr", title="Toontown Rewritten")
+    card.apply_theme(is_dark=True)
+    card.resize(600, 200)
+    assert card._desaturated is False
+    card.set_desaturated(True)
+    assert card._desaturated is True
+    assert not card.grab().isNull()          # desaturated paint path runs
+    card.set_desaturated(False)
+    assert card._desaturated is False
+
+
 def test_header_button_and_sub(app):
     card = CardSurface("ttr", title="Toontown Rewritten", sub=" ")
     btn = QPushButton("Browse")
