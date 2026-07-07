@@ -40,3 +40,10 @@ def test_paints_without_error_both_states(qapp):
     w.grab()
     w.set_toon(species="HORSE", accent=None, slot_number=2)  # accent None -> game accent
     w.grab()
+
+
+def test_set_toon_none_species_is_unset_but_keeps_badge(qapp):
+    w = PrimaryToonSlot(game="ttr")
+    w.set_toon(species=None, accent=None, slot_number=3)
+    assert w.is_set() is False
+    w.grab()  # paints dashed + badge without error

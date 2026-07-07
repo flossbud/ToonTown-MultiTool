@@ -68,10 +68,14 @@ class PrimaryToonSlot(QWidget):
 
     def set_toon(self, *, species: str | None, accent: str | None,
                  slot_number: int | None) -> None:
+        # species=None is the UNSET (dashed) visual while still showing the
+        # slot-number badge - the account tile uses this to render a dashed,
+        # numbered slot before a primary toon has been captured. clear()
+        # remains the fully-empty (no badge) reset.
         self._species = species
         self._accent = accent
         self._slot = slot_number
-        self._set = True
+        self._set = species is not None
         self.update()
 
     def clear(self) -> None:
