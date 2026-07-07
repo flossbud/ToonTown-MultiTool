@@ -797,6 +797,8 @@ class LaunchTab(QWidget):
         section.tile_expand_error.connect(lambda a, g=game: self._on_tile_expand_error(g, a))
         section.page_changed.connect(lambda p, g=game: self._on_page_changed(g, p))
         section.reorder_clicked.connect(lambda g=game: self._on_reorder(g))
+        section.tile_portrait_clicked.connect(
+            lambda a, g=game: self._on_tile_portrait_clicked(g, a))
         # When a section's natural size changes (e.g. resize bumped its
         # content_scale and grew tile min-heights), re-equalize sibling
         # heights in compact mode so the populated card doesn't outgrow
@@ -873,6 +875,49 @@ class LaunchTab(QWidget):
                     flags[p] = True
         return flags
 
+    def _primary_toon_fields(self, account_id: str) -> dict:
+        """Primary-toon display fields for a tile, resolved from the recent-toons
+        store. An account with no captured toon yields ``primary_is_set: False``
+        so the tile shows the dashed numbered slot + "Set a primary toon"."""
+        rec = self._recent_toons.get(account_id)
+        if rec is None:
+            return {"primary_is_set": False}
+        return {
+            "primary_is_set": True,
+            "primary_name": rec.toon_name,
+            "primary_species": rec.species,
+            "primary_accent": rec.accent,
+            "primary_laff": rec.laff,
+            "primary_max_laff": rec.max_laff,
+        }
+
+    def _on_tile_portrait_clicked(self, game: str, account_id: str) -> None:
+        """Open the primary-toon picker under the tile portrait. Picking a toon
+        pins it as the account's primary and re-renders. No-op when the account
+        has no captured toons yet (the dashed slot stays)."""
+        toons = self._recent_toons.list(account_id)
+        if not toons:
+            return
+        tile = self._visible_tiles.get(game, {}).get(account_id)
+        if tile is None or not hasattr(tile, "portrait"):
+            return
+        from utils.widgets.toon_picker_popover import ToonPickerPopover
+        from utils.theme_manager import resolve_theme
+        is_dark = resolve_theme(self.settings_manager) == "dark"
+        pop = ToonPickerPopover(
+            toons, primary_name=self._recent_toons.primary_name(account_id),
+            is_dark=is_dark, parent=self)
+        pop.picked.connect(
+            lambda name, g=game, a=account_id: self._on_primary_picked(g, a, name))
+        self._toon_picker = pop  # hold a reference so the popup is not GC'd
+        anchor = tile.portrait.mapToGlobal(tile.portrait.rect().bottomLeft())
+        pop.open_at(anchor)
+
+    def _on_primary_picked(self, game: str, account_id: str, toon_name: str) -> None:
+        self._recent_toons.set_primary(account_id, toon_name)
+        self._render_section(game)
+        self.refresh_theme()
+
     def _render_section(self, game: str) -> None:
         section = self._sections[game]
         ordered = self._ordered_accounts(game)
@@ -890,8 +935,10 @@ class LaunchTab(QWidget):
                 slot = AccountSlot(account_id=acct.id)
                 self._slots[game][acct.id] = slot
             st, msg, raw = self._effective_state(game, slot)
-            dicts.append({"label": acct.label or "", "username": acct.username or "",
-                          "id": acct.id, "state": st, "message": msg, "raw_error": raw})
+            entry = {"label": acct.label or "", "username": acct.username or "",
+                     "id": acct.id, "state": st, "message": msg, "raw_error": raw}
+            entry.update(self._primary_toon_fields(acct.id))
+            dicts.append(entry)
         activity = self._page_activity(game, ordered, pc)
         section.set_page(dicts, page=page, page_count=pc, base_index=base,
                          activity=activity, show_empty_state=(n == 0),

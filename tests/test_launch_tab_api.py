@@ -127,9 +127,11 @@ def test_later_flip_tiles_inherit_layout_mode(qapp):
     tab.set_layout_mode("full")
     tab._on_page_changed("ttr", 1)   # builds fresh tiles for page 1
     assert tab.ttr_section._layout_mode == "full"
-    # Fresh tiles exist and carry the content-scale floor (>=130 min-height).
+    # Fresh tiles exist and are the fixed v2 size (336x96) - tiles no longer
+    # scale with layout mode (content-scale was removed in the v2 reskin).
     assert tab.ttr_section.tiles
-    assert tab.ttr_section.tiles[0].minimumHeight() >= 130
+    assert tab.ttr_section.tiles[0].height() == 96
+    assert tab.ttr_section.tiles[0].width() == 336
 
 
 class _FakeTimer:
@@ -139,3 +141,49 @@ class _FakeTimer:
         self.stopped = True
     def deleteLater(self):
         pass
+
+
+class _FakeSM:
+    def __init__(self):
+        self.d = {}
+    def get(self, k, dv=None):
+        return self.d.get(k, dv)
+    def set(self, k, v):
+        self.d[k] = v
+
+
+def test_render_section_injects_primary_toon(qapp):
+    # A captured toon for an account -> its tile leads with the toon silhouette + name.
+    from utils.recent_toons import RecentToonsStore
+    tab = _tab(qapp, 2)
+    tab._recent_toons = RecentToonsStore(_FakeSM())
+    aid = tab.cred_manager.get_accounts_metadata()[0].id
+    tab._recent_toons.record(aid, "Moe", "ttr", "dna",
+                             species="HORSE", accent="#4a8fe7", laff=120, max_laff=137)
+    tab._render_section("ttr")
+    tile = tab._visible_tiles["ttr"][aid]
+    assert tile.portrait.is_set() is True
+    assert "Moe" in tile.name_label.text()
+
+
+def test_render_section_unset_when_no_toon(qapp):
+    from utils.recent_toons import RecentToonsStore
+    tab = _tab(qapp, 2)
+    tab._recent_toons = RecentToonsStore(_FakeSM())
+    aid = tab.cred_manager.get_accounts_metadata()[0].id
+    tab._render_section("ttr")
+    tile = tab._visible_tiles["ttr"][aid]
+    assert tile.portrait.is_set() is False
+
+
+def test_primary_picked_sets_and_persists(qapp):
+    from utils.recent_toons import RecentToonsStore
+    tab = _tab(qapp, 2)
+    tab._recent_toons = RecentToonsStore(_FakeSM())
+    aid = tab.cred_manager.get_accounts_metadata()[0].id
+    tab._recent_toons.record(aid, "Moe", "ttr", "d1", species="HORSE")
+    tab._recent_toons.record(aid, "Zed", "ttr", "d2", species="CAT")  # most recent
+    assert tab._recent_toons.get(aid).toon_name == "Zed"     # unset -> most recent
+    tab._on_primary_picked("ttr", aid, "Moe")                # user picks Moe
+    assert tab._recent_toons.primary_name(aid) == "Moe"
+    assert tab._recent_toons.get(aid).toon_name == "Moe"
