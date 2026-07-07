@@ -102,3 +102,21 @@ def test_hotkey_expander_toggles(app):
     assert tab._hotkey_more_toggle.text() == "Show less"
     tab._on_hotkey_more_toggled()
     assert tab._hotkey_more_container.isHidden()
+
+
+def test_advanced_page_teal_and_red_cards(app):
+    tab = SettingsTab(FakeSettings())
+    page = tab.pages["advanced"]
+    keys = [c.accent_key for c in page.findChildren(CardSurface)]
+    assert "teal" in keys and "red" in keys
+
+
+def test_input_backend_segment_writes_setting(app, monkeypatch):
+    import sys
+    if sys.platform == "win32":
+        pytest.skip("linux/darwin backend picker")
+    monkeypatch.delenv("XDG_SESSION_TYPE", raising=False)
+    fake = FakeSettings()
+    tab = SettingsTab(fake)
+    tab._backend_segment.index_changed.emit(1)
+    assert fake.get("input_backend") in ("xdotool", "xlib")  # xlib if warning declined

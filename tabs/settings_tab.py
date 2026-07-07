@@ -19,7 +19,7 @@ from utils.icon_factory import (
 from utils.theme_manager import (
     V2_ACCENTS, apply_theme, get_theme_colors, resolve_theme,
 )
-from utils.shared_widgets import MENU_TEXT_ROLE, SettingsComboBox, Switch
+from utils.shared_widgets import SettingsComboBox, Switch
 from utils.widgets import install_modern_scrollbar
 from utils.widgets.card_surface import CardSurface
 from utils.widgets.inset_row import InsetRow
@@ -896,10 +896,6 @@ class SettingsTab(QWidget):
             page_lay.addWidget(micro)
             page._micro_label = micro          # type: ignore[attr-defined]
             page._panel_layout = page_lay      # type: ignore[attr-defined]
-            # Legacy shims: page builders still reference these until their
-            # tasks rework them (removed in a later task).
-            page._title_label = QLabel()       # type: ignore[attr-defined]
-            page._sub_label = QLabel()         # type: ignore[attr-defined]
             page_lay.addStretch(1)
 
             page.setMaximumWidth(SETTINGS_CONTENT_MAX_W)
@@ -1518,10 +1514,6 @@ class SettingsTab(QWidget):
         )
 
     def _build_features_page(self, page):
-        page._title_label.setText("Features")
-        page._sub_label.setText(
-            "Optional broadcast and automation behaviors."
-        )
         self._build_keep_alive_card(page)
         self._build_click_sync_card(page)
         self._build_hotkeys_card(page)
@@ -2009,25 +2001,22 @@ class SettingsTab(QWidget):
         self.chat_handling_mode_changed.emit(value)
 
     def _build_advanced_page(self, page):
-        page._title_label.setText("Advanced")
-        page._sub_label.setText(
-            "Lower-level controls. Most users should not need to change these."
-        )
-
+        from utils.icon_factory import make_activity_icon, make_database_icon
         lay = page._panel_layout
         insert_at = lay.count() - 1
 
         # ── Diagnostics & input ──────────────────────────────────────────
-        diag = SettingsPanel(title="Diagnostics & input", stripe="green")
-        self._panels.append(diag)
+        diag = CardSurface("teal", title="Diagnostics & input",
+                           icon=make_activity_icon(20))
+        self._cards.append(diag)
 
-        log_field = SettingsField("Enable Logging")
-        log_switch = Switch(self.settings_manager.get("show_debug_tab", False))
+        log_row = self._v2_row("Enable Logging")
+        log_switch = self._v2_switch(
+            self.settings_manager.get("show_debug_tab", False), "teal")
         log_switch.toggled.connect(self._on_logging_toggled)
-        log_field.set_control(log_switch)
-        diag.add_field(log_field)
+        log_row.set_control(log_switch)
+        diag.add_row(log_row)
 
-        # Input backend
         if sys.platform == "win32":
             backend_options = ["Windows API (recommended)"]
             self.settings_manager.set("input_backend", "win32")
@@ -2041,47 +2030,28 @@ class SettingsTab(QWidget):
                 self.settings_manager.set("input_backend", "xlib")
             backend_idx = 0 if current_backend == "xlib" else 1
             backend_helper = "Restart required on change."
-        backend_field = SettingsField("Input Backend", helper=backend_helper)
-        backend_combo = SettingsComboBox()
-        backend_combo.addItems(backend_options)
-        backend_combo.setCurrentIndex(backend_idx)
-        backend_combo.setFixedWidth(220)
-        backend_combo.currentIndexChanged.connect(self._on_input_backend_changed)
-        backend_field.set_control(backend_combo)
-        self._backend_combo = backend_combo
-        diag.add_field(backend_field)
+        backend_row = self._v2_row("Input Backend", helper=backend_helper)
+        backend_seg = self._v2_segment(backend_options, "teal")
+        backend_seg.setCurrentIndex(backend_idx)
+        backend_seg.index_changed.connect(self._on_input_backend_changed)
+        backend_row.set_control(backend_seg)
+        self._backend_segment = backend_seg
+        diag.add_row(backend_row)
 
         lay.insertWidget(insert_at, diag)
         insert_at += 1
 
         # ── Storage ──────────────────────────────────────────────────────
-        maint = SettingsPanel(title="Storage", stripe="red")
-        self._panels.append(maint)
+        maint = CardSurface("red", title="Storage", icon=make_database_icon(20))
+        self._cards.append(maint)
 
-        clr_field = SettingsField(
+        clr_row = self._v2_row(
             "Clear Stored Credentials",
-            helper="Delete all saved TTR and CC passwords from Keyring and session memory.",
-        )
-        clr_btn = QPushButton("Clear")
-        clr_btn.setCursor(Qt.PointingHandCursor)
-        clr_btn.setFixedHeight(28)
+            helper="Delete all saved TTR and CC passwords from Keyring and session memory.")
+        clr_btn = self._v2_button("Clear", tone="danger")
         clr_btn.clicked.connect(self._on_clear_credentials_clicked)
-        # Destructive styling — red outline.
-        clr_btn.setStyleSheet("""
-            QPushButton {
-                color: #ff3b30;
-                font-weight: bold;
-                background: transparent;
-                border: 1px solid #ff3b30;
-                border-radius: 6px;
-                padding: 4px 12px;
-            }
-            QPushButton:hover {
-                background: rgba(255, 59, 48, 0.1);
-            }
-        """)
-        clr_field.set_control(clr_btn)
-        maint.add_field(clr_field)
+        clr_row.set_control(clr_btn)
+        maint.add_row(clr_row)
 
         lay.insertWidget(insert_at, maint)
 
@@ -2110,9 +2080,7 @@ class SettingsTab(QWidget):
             dlg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
             dlg.setDefaultButton(QMessageBox.Cancel)
             if dlg.exec() != QMessageBox.Ok:
-                self._backend_combo.blockSignals(True)
-                self._backend_combo.setCurrentIndex(0)
-                self._backend_combo.blockSignals(False)
+                self._backend_segment.setCurrentIndex(0)   # silent by contract
                 return
         self.settings_manager.set("input_backend", backend)
         self.input_backend_changed.emit()

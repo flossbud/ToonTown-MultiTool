@@ -259,7 +259,7 @@ def test_general_page_theme_control_is_segmented_pill(app, settings_manager):
 
 
 def test_all_settings_combos_are_settings_combobox(app, settings_manager):
-    """All 5 known Settings dropdowns must be SettingsComboBox instances."""
+    """All 4 known Settings dropdowns must be SettingsComboBox instances."""
     from PySide6.QtWidgets import QComboBox
     from utils.shared_widgets import SettingsComboBox
     from tabs.settings_tab import SettingsTab
@@ -274,8 +274,9 @@ def test_all_settings_combos_are_settings_combobox(app, settings_manager):
         f"Found {len(non_settings)} QComboBox(es) that are not SettingsComboBox: "
         f"{[type(c).__name__ for c in non_settings]}"
     )
-    assert len(combos) == 5, (
-        f"Expected exactly 5 dropdowns on the Settings tab, found {len(combos)}"
+    # Advanced's Input Backend moved to a SegmentedPill on the v2 kit (5 -> 4).
+    assert len(combos) == 4, (
+        f"Expected exactly 4 dropdowns on the Settings tab, found {len(combos)}"
     )
 
 

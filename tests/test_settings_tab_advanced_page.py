@@ -36,17 +36,18 @@ def settings_manager():
 
 
 def _field(tab, label):
-    from tabs.settings_tab import SettingsField
-    for f in tab.pages["advanced"].findChildren(SettingsField):
+    from utils.widgets.inset_row import InsetRow
+    for f in tab.pages["advanced"].findChildren(InsetRow):
         if f.label_widget.text() == label:
             return f
     return None
 
 
 def test_advanced_has_logging_input_backend_clear_credentials(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab, SettingsField
+    from tabs.settings_tab import SettingsTab
+    from utils.widgets.inset_row import InsetRow
     tab = SettingsTab(settings_manager)
-    labels = {f.label_widget.text() for f in tab.pages["advanced"].findChildren(SettingsField)}
+    labels = {f.label_widget.text() for f in tab.pages["advanced"].findChildren(InsetRow)}
     assert {"Enable Logging", "Input Backend", "Clear Stored Credentials"} <= labels
 
 
