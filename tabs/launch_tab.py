@@ -17,8 +17,10 @@ from PySide6.QtWidgets import (
     QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt, QObject, Signal, QThread, Slot, QTimer
+from PySide6.QtGui import QColor
 
 from utils.theme_manager import resolve_theme, get_theme_colors
+from utils.color_math import alpha
 from utils.credentials_manager import CredentialsManager, set_debug_log_callback
 from utils.open_url import open_url
 from services.ttr_login_service import (
@@ -133,6 +135,26 @@ def _prompt_inline_picker(parent, installs, settings_manager) -> bool:
 
 # ── Keyring banners ────────────────────────────────────────────────────────
 
+# Launch v2 banner accents: fixed semantic colors, independent of the
+# light/dark theme's own accent tokens.
+INFO_BLUE = "#0077ff"
+WARNING_ORANGE = "#ff9500"
+
+
+def _tinted_card_qss(object_name: str, accent_hex: str, is_dark: bool) -> str:
+    """Tinted-card frame QSS: a translucent accent wash + matching border,
+    no left-border stripe. Used by all three keyring/vault banners."""
+    bg_fraction = 0.14 if is_dark else 0.10
+    border_fraction = 0.45 if is_dark else 0.40
+    return (
+        f"QFrame#{object_name} {{"
+        f" background: {alpha(accent_hex, bg_fraction)};"
+        f" border: 1px solid {alpha(accent_hex, border_fraction)};"
+        " border-radius: 12px;"
+        "}"
+    )
+
+
 class KeyringProbeWorker(QObject):
     probe_complete = Signal(bool)
 
@@ -169,13 +191,9 @@ class KeyringPendingBanner(QFrame):
 
     def apply_theme(self, c: dict) -> None:
         """Rebuild QSS from the theme dict `c`."""
+        is_dark = QColor(c["text_primary"]).lightnessF() > 0.5
         self.setStyleSheet(
-            "QFrame#keyring_pending_banner {"
-            f" background: {c['bg_card']};"
-            f" border: 1px solid {c['border_card']};"
-            f" border-left: 3px solid {c['accent_blue']};"
-            " border-radius: 10px;"
-            "}"
+            _tinted_card_qss("keyring_pending_banner", INFO_BLUE, is_dark)
         )
         self.header_label.setStyleSheet(
             f"font-size: 13px; font-weight: 700; color: {c['text_primary']};"
@@ -254,17 +272,13 @@ class KeyringWarningBanner(QFrame):
 
     def apply_theme(self, c: dict) -> None:
         """Rebuild QSS from the theme dict `c`."""
+        is_dark = QColor(c["text_primary"]).lightnessF() > 0.5
         self.setStyleSheet(
-            "QFrame#keyring_warning_banner {"
-            f" background: {c['bg_card']};"
-            f" border: 1px solid {c['border_card']};"
-            f" border-left: 3px solid {c['accent_orange_border']};"
-            " border-radius: 10px;"
-            "}"
+            _tinted_card_qss("keyring_warning_banner", WARNING_ORANGE, is_dark)
         )
         self.header_label.setStyleSheet(
             f"font-size: 13px; font-weight: 700;"
-            f" color: {c['accent_orange_border']};"
+            f" color: {c['text_primary']};"
             " background: transparent; border: none;"
         )
         self.body_label.setStyleSheet(
@@ -351,18 +365,12 @@ class MacOSVaultLockedBanner(QFrame):
             self._on_unlock()
 
     def apply_theme(self, c: dict) -> None:
-        accent = c["accent_orange_border"] if self._mode == "corrupt" else c["accent_blue"]
+        is_dark = QColor(c["text_primary"]).lightnessF() > 0.5
         self.setStyleSheet(
-            "QFrame#macos_vault_locked_banner {"
-            f" background: {c['bg_card']};"
-            f" border: 1px solid {c['border_card']};"
-            f" border-left: 3px solid {accent};"
-            " border-radius: 10px;"
-            "}"
+            _tinted_card_qss("macos_vault_locked_banner", WARNING_ORANGE, is_dark)
         )
-        header_color = accent if self._mode == "corrupt" else c["text_primary"]
         self.header_label.setStyleSheet(
-            f"font-size: 13px; font-weight: 700; color: {header_color};"
+            f"font-size: 13px; font-weight: 700; color: {c['text_primary']};"
             " background: transparent; border: none;"
         )
         self.body_label.setStyleSheet(
