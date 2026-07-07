@@ -127,6 +127,40 @@ class CardSurface(QFrame):
             self._grad_top, self._grad_bot, self._border_col = top, bot, border
             self.update()
 
+    def pulse_highlight(self) -> None:
+        """One-shot attention pulse: the border lerps to the bright accent
+        and back (600ms triangle). Painted-state animation - QGraphicsEffects
+        conflict with custom paintEvents in this codebase."""
+        import utils.motion as motion
+        if motion.is_reduced():
+            return
+        base = QColor(self._border_col)
+        hot = QColor(self._a["b"])
+        anim = QVariantAnimation(self)
+        anim.setDuration(600)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        def _tick(v):
+            try:
+                tri = 1.0 - abs(2 * float(v) - 1.0)
+                self._border_col = lerp_color(base, hot, tri)
+                self.update()
+            except RuntimeError:
+                pass
+
+        def _done():
+            try:
+                self._border_col = base
+                self.update()
+            except RuntimeError:
+                pass
+        anim.valueChanged.connect(_tick)
+        anim.finished.connect(_done)
+        self._pulse_anim = anim
+        anim.start()
+
     # ── internals ───────────────────────────────────────────────────────
     def _ensure_sub(self) -> QLabel:
         if self.sub_label is None:

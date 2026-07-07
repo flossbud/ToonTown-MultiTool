@@ -38,20 +38,20 @@ def test_highlight_keep_alive_group_does_not_raise(qapp, settings_manager):
     tab.highlight_keep_alive_group()  # should not raise
 
 
-def test_highlight_keep_alive_group_stops_prior_pulse(qapp, settings_manager):
-    """A second call while the first pulse is still running must stop the
-    prior animation. Without this guard, the prior animation's finished
-    handler would fire setGraphicsEffect(None) on the new effect, killing
-    the new pulse before the user sees it."""
+def test_highlight_keep_alive_group_repeated_calls_are_safe(qapp, settings_manager):
+    """Rapid re-invocation (e.g. the user clicking the Launch-tab help
+    affordance twice) must not raise. The attention pulse is now a painted
+    border animation living on the Keep-Alive card (CardSurface.pulse_highlight),
+    so there is no shared QGraphicsEffect a prior finish handler could tear
+    down out from under a fresh pulse -- the failure the old strength-anim
+    guard prevented is impossible by construction here."""
     from tabs.settings_tab import SettingsTab
-    from PySide6.QtCore import QPropertyAnimation
     tab = SettingsTab(settings_manager)
     tab.highlight_keep_alive_group()
-    first = tab._keepalive_highlight_anim
-    assert first.state() == QPropertyAnimation.Running
-    tab.highlight_keep_alive_group()
-    # The prior animation must have been stopped (or be in a non-Running state).
-    assert first.state() != QPropertyAnimation.Running
-    # And a fresh animation is now running.
-    assert tab._keepalive_highlight_anim is not first
-    assert tab._keepalive_highlight_anim.state() == QPropertyAnimation.Running
+    tab.highlight_keep_alive_group()  # must not raise
+    card = tab._keep_alive_panel
+    # When motion is enabled the pulse stores its QVariantAnimation on the
+    # card; under reduced motion (some CI) pulse_highlight no-ops, so only
+    # assert the animation attribute when it was actually created.
+    if hasattr(card, "_pulse_anim"):
+        assert card._pulse_anim is not None

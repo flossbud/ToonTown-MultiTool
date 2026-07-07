@@ -2,7 +2,7 @@
 
 The field appears under the CC panel and is hidden on Windows and when no
 CC install is configured. State lives on SettingsTab as:
-    tab._compat_field        — the SettingsField widget
+    tab._compat_field        — the InsetRow widget
     tab._compat_change_btn   — the Change… QPushButton
     tab._refresh_compat_runtime_row() — rebuild label from settings
     tab._on_compat_change_clicked()   — Change… handler

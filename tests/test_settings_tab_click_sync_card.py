@@ -61,15 +61,15 @@ def test_features_card_order_keep_alive_click_sync_chat(qapp, settings_manager):
     Chat Handling. Assert against the actual page layout order (what the
     user sees), not findChildren -- findChildren reflects QObject creation
     order, which can diverge from layout order if an insertWidget index is
-    wrong. Keep-Alive is a v2 CardSurface; the rest are still SettingsPanel."""
-    from tabs.settings_tab import SettingsTab, SettingsPanel
+    wrong. All four Features cards are v2 CardSurfaces."""
+    from tabs.settings_tab import SettingsTab
     from utils.widgets.card_surface import CardSurface
     tab = SettingsTab(settings_manager)
     layout = tab.pages["features"]._panel_layout
     titles = []
     for i in range(layout.count()):
         w = layout.itemAt(i).widget()
-        if isinstance(w, (SettingsPanel, CardSurface)):
+        if isinstance(w, CardSurface):
             titles.append(w.title_label.text())
     assert titles == ["Keep-Alive", "Click Sync", "Hotkeys", "Chat Handling"]
 
@@ -125,11 +125,12 @@ def test_click_sync_toggle_writes_setting(qapp, settings_manager):
 
 
 def test_ttr_games_panel_no_longer_has_click_sync_field(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab, SettingsField
+    from tabs.settings_tab import SettingsTab
+    from utils.widgets.inset_row import InsetRow
     tab = SettingsTab(settings_manager)
     labels = {
         f.label_widget.text()
-        for f in tab.pages["games"].findChildren(SettingsField)
+        for f in tab.pages["games"].findChildren(InsetRow)
     }
     # Case-insensitive so the guard catches both the old "Click sync (TTR)"
     # label and the new "Click Sync" / "Enable Click Sync" wording.

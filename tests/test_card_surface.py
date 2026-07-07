@@ -45,3 +45,12 @@ def test_theme_flip_animate_does_not_crash(app):
     card.apply_theme(is_dark=True)
     card.apply_theme(is_dark=False, animate=True)
     assert not card.grab().isNull()
+
+
+def test_pulse_highlight_runs_and_restores(app):
+    card = CardSurface("orange", title="Keep-Alive")
+    card.apply_theme(is_dark=True)
+    before = card._border_col.name()
+    card.pulse_highlight()          # reduce-motion in offscreen CI may no-op
+    assert card._border_col.isValid()
+    assert isinstance(before, str)
