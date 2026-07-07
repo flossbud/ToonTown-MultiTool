@@ -85,3 +85,22 @@ def test_bottom_buttons_right_aligned(app):
     assert slot.itemAt(0).spacerItem() is not None
     assert slot.itemAt(1).widget() is a
     assert slot.itemAt(2).widget() is b
+
+
+def test_long_helper_grows_row_instead_of_clipping(app):
+    """Wrapped helper text must grow the row (heightForWidth), never clip -
+    regression for the 2026-07 alignment experiment that froze row heights."""
+    short = InsetRow("Label", helper="One line.")
+    long_ = InsetRow("Label", helper=(
+        "Disabled by default. Both games' Terms of Service prohibit "
+        "automation tools. Your previous per-toon Keep-Alive selections "
+        "are preserved across restarts and upgrades."))
+    for r in (short, long_):
+        r.setFixedWidth(660)
+        r.show()
+    QApplication.processEvents()
+    assert long_.sizeHint().height() > short.sizeHint().height()
+    assert long_.helper_widget.heightForWidth(400) > \
+        long_.helper_widget.heightForWidth(600)
+    for r in (short, long_):
+        r.hide()

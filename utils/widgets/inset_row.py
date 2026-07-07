@@ -44,18 +44,18 @@ class InsetRow(QFrame):
         if helper:
             self.helper_widget = QLabel(helper)
             self.helper_widget.setWordWrap(True)
-            self.helper_widget.setMaximumWidth(470)
+            # NO maximumWidth cap here (the mock's 470px readable-width) -
+            # a box layout's max width is the MINIMUM of its children's, so
+            # capping the helper capped the whole text column and the
+            # surplus space in narrow-control rows CENTERED it (uneven text
+            # indents live, 2026-07). An explicit layout alignment fixes the
+            # indent but breaks wordWrap height-for-width (clipped helpers).
+            # Uncapped, the column stretch-fills and every row aligns.
             self.helper_widget.setStyleSheet("background: transparent; border: none;")
             text_col.addWidget(self.helper_widget)
         else:
             self.helper_widget = None
         top_row.addLayout(text_col, 1)
-        # Left-pin the text column: the helper's 470px readable-width cap
-        # caps the WHOLE column (a box layout's max width is the minimum of
-        # its children's), and without an explicit alignment the surplus
-        # space in rows with narrow controls CENTERS the capped column -
-        # text indented on some rows but not others (live finding, 2026-07).
-        top_row.setAlignment(text_col, Qt.AlignLeft | Qt.AlignVCenter)
         self._top_control_slot = QHBoxLayout()
         self._top_control_slot.setContentsMargins(0, 0, 0, 0)
         self._top_control_slot.setSpacing(6)
