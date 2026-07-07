@@ -68,14 +68,14 @@ def _build_tab(sm):
 
 
 def test_compat_field_hidden_on_windows(qapp, tmp_path, monkeypatch):
-    """On Windows, the compat field is never added to the CC panel."""
+    """On Windows, the compat field is never added to the CC card."""
     monkeypatch.setattr(sys, "platform", "win32")
     sm = _SM()
     tab = _build_tab(sm)
-    # On Windows, _build_games_page never calls cc_panel.add_field(compat_field)
-    # so the field exists but is not parented into the panel.
+    # On Windows, _build_games_page never calls cc_card.add_row(compat_row)
+    # so the row exists but is never parented into the card.
     assert hasattr(tab, "_compat_field")
-    assert tab._compat_field not in tab._cc_panel.fields
+    assert tab._compat_field.parent() is None
 
 
 def test_steam_proton_no_override_shows_default_suffix(qapp, tmp_path, monkeypatch):

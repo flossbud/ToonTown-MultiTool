@@ -1073,66 +1073,46 @@ class SettingsTab(QWidget):
             CC_HIDE_LAUNCH_CONSOLE,
             CC_EXTERNAL_LOG_DIR,
         )
-        page._title_label.setText("Games")
-        page._sub_label.setText("Locations and runtime settings for each game.")
-
         lay = page._panel_layout
         insert_at = lay.count() - 1
 
         # ── TTR ──────────────────────────────────────────────────────────
-        ttr_logo = self._asset_path("ttr.png")
-        ttr_panel = SettingsPanel(
-            title="Toontown Rewritten", stripe="ttr",
-            sub=" ", logo_path=ttr_logo,
-        )
-        self._panels.append(ttr_panel)
-        self._ttr_panel = ttr_panel
+        ttr_card = CardSurface("ttr", title="Toontown Rewritten", sub=" ",
+                               logo_path=self._asset_path("ttr.png"))
+        self._cards.append(ttr_card)
+        self._ttr_panel = ttr_card
 
-        # Header buttons: Browse + Auto-detect (path-row pattern).
-        ttr_browse = QPushButton("Browse")
-        ttr_browse.setCursor(Qt.PointingHandCursor)
-        ttr_browse.setFixedHeight(28)
+        ttr_browse = self._v2_button("Browse")
         ttr_browse.clicked.connect(lambda: self._game_path_browse("ttr"))
-        ttr_panel.add_header_button(ttr_browse)
-
-        ttr_detect = QPushButton("Auto-detect")
-        ttr_detect.setCursor(Qt.PointingHandCursor)
-        ttr_detect.setFixedHeight(28)
+        ttr_card.add_header_button(ttr_browse)
+        ttr_detect = self._v2_button("Auto-detect")
         ttr_detect.clicked.connect(lambda: self._game_path_auto_detect("ttr"))
-        ttr_panel.add_header_button(ttr_detect)
+        ttr_card.add_header_button(ttr_detect)
 
-        # Companion app body row.
-        comp_field = SettingsField(
-            "TTR Companion App",
-            helper="Show toon names and portraits (TTR only).",
-        )
-        comp_switch = Switch(self.settings_manager.get("enable_companion_app", True))
+        comp_row = self._v2_row("TTR Companion App",
+                                helper="Show toon names and portraits (TTR only).")
+        comp_switch = self._v2_switch(
+            self.settings_manager.get("enable_companion_app", True), "ttr")
         comp_switch.toggled.connect(
-            lambda v: self.settings_manager.set("enable_companion_app", v)
-        )
-        comp_field.set_control(comp_switch)
-        ttr_panel.add_field(comp_field)
+            lambda v: self.settings_manager.set("enable_companion_app", v))
+        comp_row.set_control(comp_switch)
+        ttr_card.add_row(comp_row)
 
-        # Strict per-window keyset separation (TTR)
-        strict_field = SettingsField(
+        strict_row = self._v2_row(
             "Strict keyset separation (TTR)",
-            helper=(
-                "Keep each toon controlled by its own assigned keys no matter "
-                "which window is in front. Turn off to control the front window "
-                "with the default keys."
-            ),
-        )
-        strict_switch = Switch(self.settings_manager.get(STRICT_TTR_SEPARATION, True))
+            helper=("Keep each toon controlled by its own assigned keys no matter "
+                    "which window is in front. Turn off to control the front window "
+                    "with the default keys."))
+        strict_switch = self._v2_switch(
+            self.settings_manager.get(STRICT_TTR_SEPARATION, True), "ttr")
         strict_switch.toggled.connect(
-            lambda v: self.settings_manager.set(STRICT_TTR_SEPARATION, v)
-        )
-        strict_field.set_control(strict_switch)
-        ttr_panel.add_field(strict_field)
+            lambda v: self.settings_manager.set(STRICT_TTR_SEPARATION, v))
+        strict_row.set_control(strict_switch)
+        ttr_card.add_row(strict_row)
 
-        lay.insertWidget(insert_at, ttr_panel)
+        lay.insertWidget(insert_at, ttr_card)
         insert_at += 1
 
-        # Resolve TTR path on first display.
         current_ttr = self.settings_manager.get("ttr_engine_dir", "")
         if not current_ttr:
             self._game_path_auto_detect("ttr", silent=True)
@@ -1140,85 +1120,58 @@ class SettingsTab(QWidget):
             self._refresh_game_path_display("ttr", current_ttr)
 
         # ── CC ───────────────────────────────────────────────────────────
-        cc_logo = self._asset_path("cc.png")
-        cc_panel = SettingsPanel(
-            title="Corporate Clash", stripe="cc",
-            sub=" ", logo_path=cc_logo,
-        )
-        self._panels.append(cc_panel)
-        self._cc_panel = cc_panel
+        cc_card = CardSurface("cc", title="Corporate Clash", sub=" ",
+                              logo_path=self._asset_path("cc.png"))
+        self._cards.append(cc_card)
+        self._cc_panel = cc_card
 
-        cc_browse = QPushButton("Browse")
-        cc_browse.setCursor(Qt.PointingHandCursor)
-        cc_browse.setFixedHeight(28)
+        cc_browse = self._v2_button("Browse")
         cc_browse.clicked.connect(lambda: self._game_path_browse("cc"))
-        cc_panel.add_header_button(cc_browse)
-
-        cc_detect = QPushButton("Auto-detect")
-        cc_detect.setCursor(Qt.PointingHandCursor)
-        cc_detect.setFixedHeight(28)
+        cc_card.add_header_button(cc_browse)
+        cc_detect = self._v2_button("Auto-detect")
         cc_detect.clicked.connect(lambda: self._game_path_auto_detect("cc"))
-        cc_panel.add_header_button(cc_detect)
+        cc_card.add_header_button(cc_detect)
 
-        # Compatibility runtime body row.
-        compat_field = SettingsField(
-            "Compatibility runtime", helper=" ",
-        )
-        compat_change_btn = QPushButton("Change…")
-        compat_change_btn.setCursor(Qt.PointingHandCursor)
-        compat_change_btn.setFixedHeight(28)
+        compat_row = self._v2_row("Compatibility runtime", helper=" ")
+        compat_change_btn = self._v2_button("Change...")
         compat_change_btn.clicked.connect(self._on_compat_change_clicked)
-        compat_field.set_control(compat_change_btn)
-        self._compat_field = compat_field
+        compat_row.set_control(compat_change_btn)
+        self._compat_field = compat_row
         self._compat_change_btn = compat_change_btn
         if sys.platform != "win32":
-            cc_panel.add_field(compat_field)
+            cc_card.add_row(compat_row)
             self._refresh_compat_runtime_row()
             self.settings_manager.on_change(self._on_setting_changed_compat)
 
-        # Hide CC launch console
-        hide_field = SettingsField(
+        hide_row = self._v2_row(
             "Hide CC launch console",
-            helper="Turn off to see TTCCLauncher stdout when debugging.",
-        )
-        hide_switch = Switch(self.settings_manager.get(CC_HIDE_LAUNCH_CONSOLE, True))
+            helper="Turn off to see TTCCLauncher stdout when debugging.")
+        hide_switch = self._v2_switch(
+            self.settings_manager.get(CC_HIDE_LAUNCH_CONSOLE, True), "cc")
         hide_switch.toggled.connect(
-            lambda v: self.settings_manager.set(CC_HIDE_LAUNCH_CONSOLE, v)
-        )
-        hide_field.set_control(hide_switch)
-        cc_panel.add_field(hide_field)
+            lambda v: self.settings_manager.set(CC_HIDE_LAUNCH_CONSOLE, v))
+        hide_row.set_control(hide_switch)
+        cc_card.add_row(hide_row)
 
-        # External CC log directory (advanced)
-        ext_field = SettingsField(
-            "External CC log directory (advanced)",
-            helper="Leave blank for auto-detection.",
-        )
-        self._ext_log_field = ext_field
-        # Seed the helper with the current value so users see where logs come from.
+        ext_row = self._v2_row("External CC log directory (advanced)",
+                               helper="Leave blank for auto-detection.")
+        self._ext_log_field = ext_row
         self._set_ext_log_helper_with_path(
-            self.settings_manager.get(CC_EXTERNAL_LOG_DIR, "") or ""
-        )
-        ext_browse = QPushButton("Browse")
-        ext_browse.setFixedHeight(28)
-        ext_browse.setCursor(Qt.PointingHandCursor)
+            self.settings_manager.get(CC_EXTERNAL_LOG_DIR, "") or "")
+        ext_browse = self._v2_button("Browse")
         ext_browse.clicked.connect(self._on_ext_log_browse)
-        ext_clear = QPushButton("Clear")
-        ext_clear.setFixedHeight(28)
-        ext_clear.setCursor(Qt.PointingHandCursor)
+        ext_clear = self._v2_button("Clear")
         ext_clear.clicked.connect(self._on_ext_log_clear)
-        ext_detect = QPushButton("Detect")
-        ext_detect.setFixedHeight(28)
-        ext_detect.setCursor(Qt.PointingHandCursor)
+        ext_detect = self._v2_button("Detect")
         ext_detect.setToolTip(
-            "Walk currently-running CC processes and report what discovery finds."
-        )
+            "Walk currently-running CC processes and report what discovery finds.")
         ext_detect.clicked.connect(self._on_ext_log_detect)
-        ext_field.add_control(ext_browse)
-        ext_field.add_control(ext_clear)
-        ext_field.add_control(ext_detect)
-        cc_panel.add_field(ext_field)
+        ext_row.add_control(ext_browse)
+        ext_row.add_control(ext_clear)
+        ext_row.add_control(ext_detect)
+        cc_card.add_row(ext_row)
 
-        lay.insertWidget(insert_at, cc_panel)
+        lay.insertWidget(insert_at, cc_card)
 
         # Resolve CC path on first display BEFORE populating _cc_installs.
         # Order matters: _game_path_auto_detect opens the install picker when
@@ -1310,7 +1263,10 @@ class SettingsTab(QWidget):
                     subtitle = f"{display}  ·  {chip_html} {inst.display_name}"
                     has_chip = True
                     break
-        panel.set_sub(subtitle, color_override="#56c856", rich_text=has_chip)
+        is_dark = resolve_theme(self.settings_manager) == "dark"
+        ok_green = "#7de392" if is_dark else "#15803d"
+        panel.set_sub(subtitle, color_override=ok_green, rich_text=has_chip,
+                      mono=not has_chip)
 
     def _game_path_browse(self, game: str):
         exe_name = self._exe_name(game)

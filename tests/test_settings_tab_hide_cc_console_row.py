@@ -24,9 +24,9 @@ class _SettingsStub:
 
 
 def _find_field(tab, label_text):
-    """Find a SettingsField on the Games page by its label text."""
-    from tabs.settings_tab import SettingsField
-    for f in tab.pages["games"].findChildren(SettingsField):
+    """Find an InsetRow on the Games page (v2 kit) by its label text."""
+    from utils.widgets.inset_row import InsetRow
+    for f in tab.pages["games"].findChildren(InsetRow):
         if f.label_widget.text() == label_text:
             return f
     return None

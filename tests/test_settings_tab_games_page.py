@@ -36,10 +36,11 @@ def settings_manager():
 
 
 def test_games_page_has_ttr_and_cc_panels(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab, SettingsPanel
+    from tabs.settings_tab import SettingsTab
+    from utils.widgets.card_surface import CardSurface
     tab = SettingsTab(settings_manager)
-    panels = tab.pages["games"].findChildren(SettingsPanel)
-    by_kind = {p.stripe_kind: p for p in panels}
+    cards = tab.pages["games"].findChildren(CardSurface)
+    by_kind = {c.accent_key: c for c in cards}
     assert "ttr" in by_kind
     assert "cc" in by_kind
     assert by_kind["ttr"].title_label.text() == "Toontown Rewritten"
@@ -47,11 +48,12 @@ def test_games_page_has_ttr_and_cc_panels(qapp, settings_manager):
 
 
 def test_ttr_panel_has_companion_app_toggle(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab, SettingsField, Switch
+    from tabs.settings_tab import SettingsTab, Switch
+    from utils.widgets.inset_row import InsetRow
     tab = SettingsTab(settings_manager)
-    # Look for a SettingsField with the Companion App label inside the Games page.
+    # Look for an InsetRow with the Companion App label inside the Games page.
     field = None
-    for f in tab.pages["games"].findChildren(SettingsField):
+    for f in tab.pages["games"].findChildren(InsetRow):
         if f.label_widget.text() == "TTR Companion App":
             field = f
             break
@@ -62,12 +64,13 @@ def test_ttr_panel_has_companion_app_toggle(qapp, settings_manager):
 
 
 def test_cc_panel_has_hide_console_toggle(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab, SettingsField, Switch
+    from tabs.settings_tab import SettingsTab, Switch
+    from utils.widgets.inset_row import InsetRow
     from utils.settings_keys import CC_HIDE_LAUNCH_CONSOLE
     settings_manager.set(CC_HIDE_LAUNCH_CONSOLE, True)
     tab = SettingsTab(settings_manager)
     field = None
-    for f in tab.pages["games"].findChildren(SettingsField):
+    for f in tab.pages["games"].findChildren(InsetRow):
         if f.label_widget.text() == "Hide CC launch console":
             field = f
             break
@@ -95,13 +98,14 @@ def test_cc_panel_external_log_directory_clear(qapp, settings_manager):
 
 def test_cc_panel_external_log_helper_updates_on_browse_and_clear(qapp, settings_manager, monkeypatch):
     """Browse and Clear update the helper text so users see the current value."""
-    from tabs.settings_tab import SettingsTab, SettingsField
+    from tabs.settings_tab import SettingsTab
+    from utils.widgets.inset_row import InsetRow
     from utils.settings_keys import CC_EXTERNAL_LOG_DIR
     from PySide6.QtWidgets import QFileDialog
     settings_manager.set(CC_EXTERNAL_LOG_DIR, "")
     tab = SettingsTab(settings_manager)
     field = None
-    for f in tab.pages["games"].findChildren(SettingsField):
+    for f in tab.pages["games"].findChildren(InsetRow):
         if f.label_widget.text() == "External CC log directory (advanced)":
             field = f
             break
@@ -126,13 +130,14 @@ def test_cc_panel_external_log_helper_updates_on_browse_and_clear(qapp, settings
 
 
 def test_ttr_panel_uses_brand_logo(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab, SettingsPanel
+    from tabs.settings_tab import SettingsTab
+    from utils.widgets.card_surface import CardSurface
     tab = SettingsTab(settings_manager)
-    ttr_panel = next(p for p in tab.pages["games"].findChildren(SettingsPanel)
-                     if p.stripe_kind == "ttr")
-    assert ttr_panel.logo_label is not None
-    pm = ttr_panel.logo_label.pixmap()
-    assert pm is not None and not pm.isNull()
+    ttr_card = next(c for c in tab.pages["games"].findChildren(CardSurface)
+                    if c.accent_key == "ttr")
+    # Logo-variant badges load the bundled brand pixmap into PortraitBadge.
+    assert ttr_card.badge is not None
+    assert not ttr_card.badge._logo.isNull()
 
 
 def test_apply_picked_install_updates_cc_panel(qapp, settings_manager, monkeypatch):

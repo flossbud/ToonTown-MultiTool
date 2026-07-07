@@ -44,3 +44,18 @@ def test_reduce_motion_segment_semantics(app):
     assert fake.get("reduce_motion_set_explicitly") is True
     tab._rm_segment.index_changed.emit(0)                # System
     assert fake.get("reduce_motion_set_explicitly") is False
+
+
+def test_games_page_cards_have_logo_badges(app):
+    tab = SettingsTab(FakeSettings())
+    from utils.widgets.card_surface import CardSurface
+    assert isinstance(tab._ttr_panel, CardSurface)
+    assert isinstance(tab._cc_panel, CardSurface)
+    assert tab._ttr_panel.accent_key == "ttr"
+    assert tab._cc_panel.accent_key == "cc"
+
+
+def test_game_path_display_green_and_mono(app):
+    tab = SettingsTab(FakeSettings())
+    tab._refresh_game_path_display("ttr", "/home/user/ttr")
+    assert tab._ttr_panel.sub_label.text().startswith(("~", "/"))
