@@ -89,6 +89,7 @@ class LaunchSection(QWidget):
         self._is_dark = True
         self.tiles: list[AccountTile] = []
         self.add_tile = None
+        self._customizations = None   # ToonCustomizationsManager (portrait poses)
         self.is_collapsed: bool = False
         self._collapse_anim: QPropertyAnimation | None = None
 
@@ -453,6 +454,14 @@ class LaunchSection(QWidget):
         self.set_collapsed(not self.is_collapsed, animate=True)
         self.collapsed_changed.emit(self.is_collapsed)
 
+    def set_customizations_manager(self, manager) -> None:
+        """Store the ToonCustomizationsManager and forward it to every current
+        tile so primary-toon portraits render the saved pose. New tiles created
+        by set_page pick it up from the stored reference."""
+        self._customizations = manager
+        for tile in self.tiles:
+            tile.set_customizations_manager(manager)
+
     def _wire_tile(self, tile: AccountTile, account_id: str) -> None:
         tile.launch_clicked.connect(lambda a=account_id: self.tile_launch.emit(a))
         tile.quit_clicked.connect(lambda a=account_id: self.tile_quit.emit(a))
@@ -506,6 +515,7 @@ class LaunchSection(QWidget):
             for local, acct in enumerate(accounts):
                 abs_index = base_index + local
                 tile = AccountTile(game=self._game, slot_index=abs_index)
+                tile.set_customizations_manager(self._customizations)
                 tile.set_account(acct.get("label", ""), acct.get("username", ""), abs_index)
                 tile.set_state(acct.get("state", "idle"), acct.get("message", ""),
                                acct.get("raw_error", ""))

@@ -379,6 +379,9 @@ class MultiToonTool(QMainWindow):
         # Bridge resolved in-world toon names to the launching account's
         # recent_toons record (radial-menu last-toon capture).
         self.multitoon_tab.set_toon_capture_sink(self.launch_tab.capture_toon)
+        # Share the Multitoon tab's ToonCustomizationsManager so the Launch tab's
+        # primary-toon portraits render the saved pose (matching the radial menu).
+        self.launch_tab.set_customizations_manager(self.multitoon_tab.customizations)
         self.keymap_tab = KeymapTab(
             self.keymap_manager,
             self.settings_manager,

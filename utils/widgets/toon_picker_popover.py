@@ -55,10 +55,10 @@ def _game_accent(game: str) -> str:
     return V2_ACCENTS.get(game, V2_ACCENTS["ttr"])["c"]
 
 
-def _face_pixmap(rec: ToonRecord, t: dict) -> QPixmap:
+def _face_pixmap(rec: ToonRecord, t: dict, customizations=None) -> QPixmap:
     """Render the 24px circular mini face: the account's real toon portrait
-    (same source as the emblem radial accounts ring) when it is cached, else a
-    tinted race silhouette fallback."""
+    (same source as the emblem radial accounts ring, saved pose included) when it
+    is cached, else a tinted race silhouette fallback."""
     accent_hex = rec.accent or _game_accent(rec.game)
     circle_rect = QRectF(0, 0, FACE_SIZE, FACE_SIZE)
     ring_rect = circle_rect.adjusted(
@@ -69,7 +69,7 @@ def _face_pixmap(rec: ToonRecord, t: dict) -> QPixmap:
         try:
             from utils.overlay.radial_portrait import render_account_portrait
             render = render_account_portrait(
-                rec.game, rec.toon_name, rec.dna, None, FACE_SIZE)
+                rec.game, rec.toon_name, rec.dna, customizations, FACE_SIZE)
             if render.status == "complete":
                 pm = QPixmap(FACE_SIZE, FACE_SIZE)
                 pm.fill(Qt.transparent)
@@ -112,7 +112,7 @@ class _Row(QFrame):
     clicked = Signal(str)
 
     def __init__(self, rec: ToonRecord, *, primary_name: str | None,
-                 is_dark: bool, parent=None):
+                 is_dark: bool, customizations=None, parent=None):
         super().__init__(parent)
         self._name = rec.toon_name
         t = _tokens(is_dark)
@@ -131,7 +131,7 @@ class _Row(QFrame):
         face = QLabel(self)
         face.setFixedSize(FACE_SIZE, FACE_SIZE)
         face.setStyleSheet("background: transparent;")
-        face.setPixmap(_face_pixmap(rec, t))
+        face.setPixmap(_face_pixmap(rec, t, customizations))
         layout.addWidget(face)
 
         name = ElidingLabel(rec.toon_name, parent=self)
@@ -167,7 +167,7 @@ class ToonPickerPopover(QFrame):
     picked = Signal(str)
 
     def __init__(self, toons: list[ToonRecord], *, primary_name: str | None,
-                 is_dark: bool, parent=None):
+                 is_dark: bool, customizations=None, parent=None):
         super().__init__(parent)
         self.setObjectName("toonPickerPopover")
         self.setWindowFlags(Qt.Popup)
@@ -195,7 +195,8 @@ class ToonPickerPopover(QFrame):
 
         self.rows: list[_Row] = []
         for rec in toons:
-            row = _Row(rec, primary_name=primary_name, is_dark=is_dark, parent=self)
+            row = _Row(rec, primary_name=primary_name, is_dark=is_dark,
+                       customizations=customizations, parent=self)
             row.clicked.connect(self.picked.emit)
             layout.addWidget(row)
             self.rows.append(row)

@@ -66,6 +66,7 @@ class PrimaryToonSlot(QWidget):
         self._set = False
         self._is_dark = True
         self._portrait: QPixmap | None = None   # real toon portrait when loaded
+        self._customizations = None             # ToonCustomizationsManager (pose etc.)
         self.setFixedSize(SIZE, SIZE)
         self.setCursor(Qt.PointingHandCursor)
         # Refresh the portrait when a cold-cache Rendition fetch completes, the
@@ -120,6 +121,18 @@ class PrimaryToonSlot(QWidget):
         self._is_dark = is_dark
         self.update()
 
+    def set_customizations_manager(self, manager) -> None:
+        """Inject the ToonCustomizationsManager so the portrait renders the toon's
+        saved pose + customizations, matching the radial menu exactly. Reloads the
+        portrait if one is already showing."""
+        if manager is self._customizations:
+            return
+        self._customizations = manager
+        if self._set and self._dna:
+            self._portrait = None
+            self._load_portrait()
+            self.update()
+
     def _emit_click(self) -> None:
         self.clicked.emit()
 
@@ -140,7 +153,8 @@ class PrimaryToonSlot(QWidget):
         try:
             from utils.overlay.radial_portrait import render_account_portrait
             render = render_account_portrait(
-                self._game, self._toon_name, self._dna, None, SIZE)
+                self._game, self._toon_name, self._dna,
+                self._customizations, SIZE)
             if render.status == "complete":
                 self._portrait = render.pixmap
         except Exception:
@@ -154,7 +168,8 @@ class PrimaryToonSlot(QWidget):
         try:
             from utils.overlay.radial_portrait import render_account_portrait
             render = render_account_portrait(
-                self._game, self._toon_name, self._dna, None, SIZE)
+                self._game, self._toon_name, self._dna,
+                self._customizations, SIZE)
             if render.status == "complete":
                 self._portrait = render.pixmap
                 self.update()

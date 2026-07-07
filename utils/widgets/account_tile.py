@@ -317,6 +317,11 @@ class AccountTile(QFrame):
         }
         self._render_identity()
 
+    def set_customizations_manager(self, manager) -> None:
+        """Forward the ToonCustomizationsManager to the primary-toon portrait so
+        it renders the toon's saved pose (matching the radial menu)."""
+        self.portrait.set_customizations_manager(manager)
+
     def set_state(self, state: str, message: str = "", raw_message: str = "") -> None:
         self._current_state = state
         self._current_status_message = message

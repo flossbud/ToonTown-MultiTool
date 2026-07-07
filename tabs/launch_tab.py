@@ -428,6 +428,9 @@ class LaunchTab(QWidget):
         from utils.toon_capture_bridge import ToonCaptureBridge
         self._recent_toons = RecentToonsStore(self.settings_manager)
         self._toon_bridge = ToonCaptureBridge(self._recent_toons)
+        # ToonCustomizationsManager (shared with the Multitoon tab, injected by
+        # the app shell) so primary-toon portraits render the saved pose.
+        self._customizations = None
         # Predicate set by the app shell so failure dialogs can sit above the
         # transparent-mode overlay. Defaults to "not in overlay mode".
         self._overlay_active = lambda: False
@@ -883,6 +886,14 @@ class LaunchTab(QWidget):
                     flags[p] = True
         return flags
 
+    def set_customizations_manager(self, manager) -> None:
+        """Inject the shared ToonCustomizationsManager (from the Multitoon tab) so
+        primary-toon portraits on the tiles + picker render the saved pose, exactly
+        as the emblem radial accounts ring does. Forwarded to both game sections."""
+        self._customizations = manager
+        for section in self._sections.values():
+            section.set_customizations_manager(manager)
+
     def _primary_toon_fields(self, account_id: str) -> dict:
         """Primary-toon display fields for a tile, resolved from the recent-toons
         store. An account with no captured toon yields ``primary_is_set: False``
@@ -913,7 +924,7 @@ class LaunchTab(QWidget):
         is_dark = resolve_theme(self.settings_manager) == "dark"
         pop = ToonPickerPopover(
             toons, primary_name=self._recent_toons.primary_name(account_id),
-            is_dark=is_dark, parent=self)
+            is_dark=is_dark, customizations=self._customizations, parent=self)
         pop.picked.connect(
             lambda name, g=game, a=account_id: self._on_primary_picked(g, a, name))
         self._toon_picker = pop  # hold a reference so the popup is not GC'd
