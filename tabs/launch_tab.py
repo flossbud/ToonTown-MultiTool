@@ -893,10 +893,9 @@ class LaunchTab(QWidget):
         return {
             "primary_is_set": True,
             "primary_name": rec.toon_name,
+            "primary_dna": rec.dna,
             "primary_species": rec.species,
             "primary_accent": rec.accent,
-            "primary_laff": rec.laff,
-            "primary_max_laff": rec.max_laff,
         }
 
     def _on_tile_portrait_clicked(self, game: str, account_id: str) -> None:

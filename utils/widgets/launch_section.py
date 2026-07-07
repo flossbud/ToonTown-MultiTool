@@ -516,10 +516,9 @@ class LaunchSection(QWidget):
                 tile.set_primary_toon(
                     name=acct.get("primary_name"),
                     username=acct.get("username", ""),
+                    dna=acct.get("primary_dna"),
                     species=acct.get("primary_species"),
                     accent=acct.get("primary_accent"),
-                    laff=acct.get("primary_laff"),
-                    max_laff=acct.get("primary_max_laff"),
                     slot_number=abs_index + 1,
                     is_set=bool(acct.get("primary_is_set")),
                 )

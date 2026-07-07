@@ -56,14 +56,40 @@ def _game_accent(game: str) -> str:
 
 
 def _face_pixmap(rec: ToonRecord, t: dict) -> QPixmap:
-    """Render the 24px circular mini race face for one row's toon."""
+    """Render the 24px circular mini face: the account's real toon portrait
+    (same source as the emblem radial accounts ring) when it is cached, else a
+    tinted race silhouette fallback."""
     accent_hex = rec.accent or _game_accent(rec.game)
+    circle_rect = QRectF(0, 0, FACE_SIZE, FACE_SIZE)
+    ring_rect = circle_rect.adjusted(
+        FACE_RING_W / 2, FACE_RING_W / 2, -FACE_RING_W / 2, -FACE_RING_W / 2)
+
+    # Real toon portrait from the radial-menu source (disk-cache synchronous).
+    if rec.dna:
+        try:
+            from utils.overlay.radial_portrait import render_account_portrait
+            render = render_account_portrait(
+                rec.game, rec.toon_name, rec.dna, None, FACE_SIZE)
+            if render.status == "complete":
+                pm = QPixmap(FACE_SIZE, FACE_SIZE)
+                pm.fill(Qt.transparent)
+                p = QPainter(pm)
+                p.setRenderHint(QPainter.Antialiasing, True)
+                p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+                p.drawPixmap(0, 0, render.pixmap)
+                p.setBrush(Qt.NoBrush)
+                p.setPen(QPen(QColor(accent_hex), FACE_RING_W))
+                p.drawEllipse(ring_rect)
+                p.end()
+                return pm
+        except Exception:
+            pass
+
+    # Fallback: portrait_bg circle + tinted race silhouette + accent ring.
     pm = QPixmap(FACE_SIZE, FACE_SIZE)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing, True)
-    circle_rect = QRectF(0, 0, FACE_SIZE, FACE_SIZE)
-
     p.setPen(Qt.NoPen)
     p.setBrush(t["portrait_bg"])
     p.drawEllipse(circle_rect)
@@ -75,15 +101,13 @@ def _face_pixmap(rec: ToonRecord, t: dict) -> QPixmap:
 
     p.setBrush(Qt.NoBrush)
     p.setPen(QPen(QColor(accent_hex), FACE_RING_W))
-    ring_rect = circle_rect.adjusted(
-        FACE_RING_W / 2, FACE_RING_W / 2, -FACE_RING_W / 2, -FACE_RING_W / 2)
     p.drawEllipse(ring_rect)
     p.end()
     return pm
 
 
 class _Row(QFrame):
-    """One toon row: mini face, name, optional laff, optional check mark."""
+    """One toon row: mini face, name, optional check mark (laff not shown)."""
 
     clicked = Signal(str)
 
@@ -117,20 +141,6 @@ class _Row(QFrame):
             " background: transparent;"
         )
         layout.addWidget(name, 1)
-
-        self.laff_label = QLabel(self)
-        self.laff_label.setStyleSheet("background: transparent;")
-        if rec.laff is not None:
-            # cur/max per the handoff (e.g. "120/137"); bare laff when max unknown.
-            laff_txt = (f"{rec.laff}/{rec.max_laff}"
-                        if rec.max_laff is not None else str(rec.laff))
-            self.laff_label.setTextFormat(Qt.RichText)
-            self.laff_label.setText(
-                f'<span style="font-size:11px; color:{HEART_HEX};">&#9829;</span>'
-                f'<span style="font-size:11px; color:{t["sub"]};"> {laff_txt}</span>'
-            )
-        self.laff_label.setVisible(rec.laff is not None)
-        layout.addWidget(self.laff_label)
 
         accent_hex = rec.accent or _game_accent(rec.game)
         check = QLabel("✓", self)

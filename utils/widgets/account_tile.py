@@ -301,10 +301,12 @@ class AccountTile(QFrame):
         self.portrait.set_toon(species=None, accent=None, slot_number=slot_index + 1)
         self._render_identity()
 
-    def set_primary_toon(self, *, name: str, username: str, species: str | None,
-                         accent: str | None, laff: int | None, max_laff: int | None,
-                         slot_number: int | None, is_set: bool) -> None:
+    def set_primary_toon(self, *, name: str, username: str, dna: str | None = None,
+                         species: str | None = None, accent: str | None = None,
+                         slot_number: int | None = None, is_set: bool = False) -> None:
         self.portrait.set_toon(
+            toon_name=name if is_set else None,
+            dna=dna if is_set else None,
             species=species if is_set else None,
             accent=accent, slot_number=slot_number,
         )
@@ -312,8 +314,6 @@ class AccountTile(QFrame):
             "is_set": is_set,
             "name": name if is_set else username,
             "username": username,
-            "laff": laff if is_set else None,
-            "max_laff": max_laff if is_set else None,
         }
         self._render_identity()
 
@@ -337,19 +337,8 @@ class AccountTile(QFrame):
         if idy is None:
             return
         self.name_label.setText(idy["name"] or "")
-        faint = _alpha("#ffffff" if self._is_dark else "#0f172a", 0.45)
-        if idy["is_set"] and idy["laff"] is not None:
-            user = idy["username"] or ""
-            # cur/max per the handoff (e.g. "120/137"); fall back to bare laff
-            # when max is unknown.
-            laff_txt = (f'{idy["laff"]}/{idy["max_laff"]}'
-                        if idy.get("max_laff") is not None else str(idy["laff"]))
-            self.sub_label.setText(
-                f'{user} <span style="color:{faint}">&middot;</span> '
-                f'<span style="color:#e05252">&#9829;</span> {laff_txt}'
-            )
-        elif idy["is_set"]:
-            # CC / no laff: username only.
+        if idy["is_set"]:
+            # Username under the toon name (laff intentionally not shown).
             self.sub_label.setText(idy["username"] or "")
         else:
             self.sub_label.setText(

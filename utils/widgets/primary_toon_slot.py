@@ -1,11 +1,14 @@
 """PrimaryToonSlot - the Launch tab account tile's 38px primary-toon portrait.
 
-Set state: a filled circle (portraitBg token) with a tinted race silhouette
-inset to the inner 76% of the circle, ringed 3px in the toon's own accent (or
-the game accent when no toon has been captured yet). Unset state: a dashed
-2px ring with a transparent fill and a centered "+" glyph. A 16x16
-slot-number badge rides the top-left corner in both states, drawn only once
-a slot number has been assigned.
+Set state: a filled circle (portraitBg token) showing the account's real toon
+portrait, pulled from the SAME source the emblem radial menu accounts ring uses
+(utils.overlay.radial_portrait.render_account_portrait -> the real Rendition
+portrait via ToonPortraitWidget, disk-cached, with an async pose_ready refresh
+for a cold cache). While a portrait is still loading (or for a Corporate Clash
+toon with no DNA), it falls back to a tinted race silhouette. The circle is
+ringed 3px in the toon's own accent (or the game accent when none is known).
+Unset state: a dashed 2px ring with a centered "+" glyph. A 16x16 slot-number
+badge rides the top-left corner in both states, drawn once a slot number is set.
 
 Pure paintEvent - no QGraphicsEffect (kit law: this widget's paintEvent does
 QPainter(self) directly, and attaching a QGraphicsEffect to it trips Qt's
@@ -14,7 +17,7 @@ QPainter(self) directly, and attaching a QGraphicsEffect to it trips Qt's
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QWidget
 
 from utils.color_math import lighten_rgb, with_alpha
@@ -55,38 +58,63 @@ class PrimaryToonSlot(QWidget):
         super().__init__(parent)
         assert game in ("ttr", "cc")
         self._game = game
+        self._toon_name: str | None = None
+        self._dna: str | None = None
         self._species: str | None = None
         self._accent: str | None = None
         self._slot: int | None = None
         self._set = False
         self._is_dark = True
+        self._portrait: QPixmap | None = None   # real toon portrait when loaded
         self.setFixedSize(SIZE, SIZE)
         self.setCursor(Qt.PointingHandCursor)
+        # Refresh the portrait when a cold-cache Rendition fetch completes, the
+        # same way the radial accounts ring does. Auto-disconnected when this
+        # widget is destroyed (Qt drops connections to a dead QObject receiver).
+        try:
+            from utils.rendition_poses import RenditionPoseFetcher
+            RenditionPoseFetcher.instance().pose_ready.connect(self._on_pose_ready)
+        except Exception:
+            pass
 
     def sizeHint(self) -> QSize:
         return QSize(SIZE, SIZE)
 
-    def set_toon(self, *, species: str | None, accent: str | None,
-                 slot_number: int | None) -> None:
-        # species=None is the UNSET (dashed) visual while still showing the
-        # slot-number badge - the account tile uses this to render a dashed,
-        # numbered slot before a primary toon has been captured. clear()
-        # remains the fully-empty (no badge) reset.
+    def set_toon(self, *, toon_name: str | None = None, dna: str | None = None,
+                 species: str | None = None, accent: str | None = None,
+                 slot_number: int | None = None) -> None:
+        # A toon is "set" once it has a name or a species; passing all of those
+        # as None leaves the UNSET (dashed) visual while still showing the
+        # slot-number badge (the tile uses this for a dashed, numbered slot).
+        # clear() remains the fully-empty (no badge) reset.
+        changed = (toon_name != self._toon_name) or (dna != self._dna)
+        self._toon_name = toon_name
+        self._dna = dna
         self._species = species
         self._accent = accent
         self._slot = slot_number
-        self._set = species is not None
+        self._set = bool(toon_name or species)
+        if changed:
+            self._portrait = None
+            self._load_portrait()
         self.update()
 
     def clear(self) -> None:
         self._set = False
+        self._toon_name = None
+        self._dna = None
         self._species = None
         self._accent = None
         self._slot = None
+        self._portrait = None
         self.update()
 
     def is_set(self) -> bool:
         return self._set
+
+    def has_portrait(self) -> bool:
+        """True when the real toon portrait (not the silhouette fallback) is loaded."""
+        return self._portrait is not None and not self._portrait.isNull()
 
     def set_theme(self, is_dark: bool) -> None:
         self._is_dark = is_dark
@@ -100,9 +128,44 @@ class PrimaryToonSlot(QWidget):
             self.clicked.emit()
         super().mouseReleaseEvent(e)
 
+    # ── portrait loading (radial-menu source) ───────────────────────────────
+    def _load_portrait(self) -> None:
+        """Render the real toon portrait from DNA (disk-cache-synchronous). On a
+        cache miss the fetch is kicked off and _on_pose_ready fills it in later;
+        until then the silhouette fallback shows. No DNA (Corporate Clash) keeps
+        the silhouette."""
+        self._portrait = None
+        if not self._set or not self._dna:
+            return
+        try:
+            from utils.overlay.radial_portrait import render_account_portrait
+            render = render_account_portrait(
+                self._game, self._toon_name, self._dna, None, SIZE)
+            if render.status == "complete":
+                self._portrait = render.pixmap
+        except Exception:
+            self._portrait = None
+
+    def _on_pose_ready(self, dna, pose, pixmap) -> None:
+        # pixmap is None -> fetch failed; do NOT re-render (re-render re-fires the
+        # fetch, which would loop into a retry storm - same guard as the radial).
+        if not self._set or not self._dna or dna != self._dna or pixmap is None:
+            return
+        try:
+            from utils.overlay.radial_portrait import render_account_portrait
+            render = render_account_portrait(
+                self._game, self._toon_name, self._dna, None, SIZE)
+            if render.status == "complete":
+                self._portrait = render.pixmap
+                self.update()
+        except Exception:
+            pass
+
+    # ── painting ─────────────────────────────────────────────────────────────
     def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
         t = _tokens(self._is_dark)
         game_accent = V2_ACCENTS[self._game]
         circle_rect = QRectF(0, 0, SIZE, SIZE)
@@ -124,10 +187,15 @@ class PrimaryToonSlot(QWidget):
         p.drawEllipse(circle_rect)
 
         accent_hex = self._accent or game_accent["c"]
-        inset = SIZE * (1 - SILHOUETTE_FRACTION) / 2
-        sil_rect = circle_rect.adjusted(inset, inset, -inset, -inset).toRect()
-        fill_hex = lighten_rgb(QColor(accent_hex), 0.5).name()
-        paint_race_silhouette(p, sil_rect, self._species, fill_hex)
+        if self.has_portrait():
+            # Real toon portrait - already circular at SIZE from render_account_portrait.
+            p.drawPixmap(0, 0, self._portrait)
+        elif self._species:
+            # Loading / no-DNA fallback: tinted race silhouette.
+            inset = SIZE * (1 - SILHOUETTE_FRACTION) / 2
+            sil_rect = circle_rect.adjusted(inset, inset, -inset, -inset).toRect()
+            fill_hex = lighten_rgb(QColor(accent_hex), 0.5).name()
+            paint_race_silhouette(p, sil_rect, self._species, fill_hex)
 
         p.setBrush(Qt.NoBrush)
         p.setPen(QPen(QColor(accent_hex), RING_W))

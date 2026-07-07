@@ -12,10 +12,10 @@ def test_builds_one_row_per_toon(qapp):
     assert len(p.rows) == 2
 
 
-def test_ttr_row_shows_laff_cc_row_hides_it(qapp):
+def test_rows_do_not_show_laff(qapp):
+    # laff was removed from the picker per product feedback.
     p = ToonPickerPopover(_toons(), primary_name="Moe", is_dark=True)
-    assert p.rows[0].laff_label.isVisibleTo(p) is True     # TTR Moe, laff=120
-    assert p.rows[1].laff_label.isVisibleTo(p) is False    # CC Zed, laff=None
+    assert not hasattr(p.rows[0], "laff_label")
 
 
 def test_click_emits_picked(qapp):

@@ -390,10 +390,13 @@ def test_failed_keeps_expand_and_retry(qapp):
 
 def test_set_primary_toon_marks_slot_and_name(qapp):
     t = AccountTile("ttr", 0)
-    t.set_primary_toon(name="Moe", username="flossbud", species="HORSE",
-                       accent="#4a8fe7", laff=120, max_laff=137, slot_number=1, is_set=True)
+    t.set_primary_toon(name="Moe", username="flossbud", dna="", species="HORSE",
+                       accent="#4a8fe7", slot_number=1, is_set=True)
     assert t.portrait.is_set() is True
     assert "Moe" in t.name_label.text()
+    # laff is intentionally not shown; the sub line is just the username.
+    assert "flossbud" in t.sub_label.text()
+    assert "&#9829;" not in t.sub_label.text() and "♥" not in t.sub_label.text()
 
 
 def test_retry_signal_preserved(qapp):
