@@ -161,9 +161,16 @@ class PrimaryToonSlot(QWidget):
             self._portrait = None
 
     def _on_pose_ready(self, dna, pose, pixmap) -> None:
-        # pixmap is None -> fetch failed; do NOT re-render (re-render re-fires the
-        # fetch, which would loop into a retry storm - same guard as the radial).
-        if not self._set or not self._dna or dna != self._dna or pixmap is None:
+        # Only react while we are still WAITING for this slot's portrait. Once it
+        # is loaded, stop: render_account_portrait re-fires the fetch as a side
+        # effect (set_dna -> fetcher.request), and a warm cache re-emits pose_ready
+        # via singleShot(0) -- so re-rendering here re-arms the signal that called
+        # us, an event-loop-saturating feedback storm (~130% CPU, ~15fps). This is
+        # the same one-shot latch the radial accounts ring uses (its _loading set).
+        # A DNA change resets _portrait to None (set_toon), so a new toon still
+        # refreshes. pixmap is None is the fetcher's failure signal (skip likewise).
+        if (not self._set or not self._dna or dna != self._dna
+                or pixmap is None or self.has_portrait()):
             return
         try:
             from utils.overlay.radial_portrait import render_account_portrait
