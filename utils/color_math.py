@@ -52,3 +52,26 @@ def lighten_rgb(color: QColor, factor: float) -> QColor:
     g = round(color.green() + (255 - color.green()) * f)
     b = round(color.blue() + (255 - color.blue()) * f)
     return QColor(r, g, b, color.alpha())
+
+
+def _coerce(color: "QColor | str") -> QColor:
+    return color if isinstance(color, QColor) else QColor(color)
+
+
+def with_alpha(color: "QColor | str", fraction: float) -> QColor:
+    """Copy of `color` with alpha set to `fraction` (0..1, clamped).
+
+    Mirrors the CSS `alpha(hex, a)` helper used by the Settings/Launch v2
+    design references. RGB channels are untouched.
+    """
+    f = max(0.0, min(1.0, float(fraction)))
+    c = QColor(_coerce(color))
+    c.setAlpha(round(f * 255))
+    return c
+
+
+def alpha(color: "QColor | str", fraction: float) -> str:
+    """QSS `rgba(r, g, b, a)` string form of with_alpha() (alpha 0-255 int,
+    the convention this codebase already uses in stylesheets)."""
+    c = with_alpha(color, fraction)
+    return f"rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()})"
