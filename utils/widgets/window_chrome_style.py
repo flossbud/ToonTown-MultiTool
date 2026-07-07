@@ -69,19 +69,22 @@ def card_qss(object_name: str, bg: str, radius: int, outline) -> str:
     return f"QWidget#{object_name} {{ background: {bg}; }}"
 
 
-def header_top_radius_qss(header_bg: str, border_color: str, radius: int,
+def header_top_radius_qss(header_bg: str, border_color: str | None, radius: int,
                           top_rim: str = None) -> str:
     """Header rounds its own top corners (nested 1px inside the card outline at
-    radius - STROKE_INSET) and keeps its bottom divider. When `top_rim` is given,
-    its `border-top` becomes the window's inner 'lit rim' - it sits 1px inside the
+    radius - STROKE_INSET). When `border_color` is falsy the header draws NO
+    bottom divider - the nav band below it owns the single hairline, so the
+    header and dock read as one continuous surface. When `top_rim` is given, its
+    `border-top` becomes the window's inner 'lit rim' - it sits 1px inside the
     card's top outline because the header is inset by STROKE_INSET."""
     r = max(0, radius - STROKE_INSET) if radius > 0 else 0
     rim = f"    border-top: 1px solid {top_rim};\n" if top_rim else ""
+    bottom = f"    border-bottom: 1px solid {border_color};\n" if border_color else ""
     return (
         f"QFrame#app_header {{\n"
         f"    background: {header_bg};\n"
         f"{rim}"
-        f"    border-bottom: 1px solid {border_color};\n"
+        f"{bottom}"
         f"    border-top-left-radius: {r}px;\n"
         f"    border-top-right-radius: {r}px;\n"
         f"}}"

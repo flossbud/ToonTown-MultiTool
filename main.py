@@ -1096,8 +1096,10 @@ class MultiToonTool(QMainWindow):
                 edge = window_edge_colors(bg)
                 self.container.setStyleSheet(
                     card_qss("app_card", bg, RADIUS_NORMAL, edge["outline"]) + cascade)
+                # No header bottom divider: the nav band below owns the single
+                # hairline, so header + dock read as one continuous surface.
                 self.header.setStyleSheet(
-                    header_top_radius_qss(c["header_bg"], c["sidebar_border"],
+                    header_top_radius_qss(c["header_bg"], None,
                                           RADIUS_NORMAL, top_rim=edge["rim"]))
                 if root is not None:
                     root.setContentsMargins(STROKE_INSET, STROKE_INSET, STROKE_INSET, BOTTOM_INSET)
@@ -1105,7 +1107,7 @@ class MultiToonTool(QMainWindow):
                 self.container.setStyleSheet(
                     card_qss("app_card", bg, RADIUS_MAXIMIZED, None) + cascade)
                 self.header.setStyleSheet(
-                    header_top_radius_qss(c["header_bg"], c["sidebar_border"], RADIUS_MAXIMIZED))
+                    header_top_radius_qss(c["header_bg"], None, RADIUS_MAXIMIZED))
                 if root is not None:
                     root.setContentsMargins(0, 0, 0, 0)
         self._update_window_mask()
@@ -1683,11 +1685,12 @@ class MultiToonTool(QMainWindow):
         self._notify_chrome_theme()
         self._refresh_header_logo()
 
-        # Nav band: flat window body + single hairline BELOW the dock.
+        # Nav band: flat window body, NO divider (no hairline above or below the
+        # dock) - the header, dock, and content below read as one seamless
+        # surface. The dock's own glass border is the only chrome edge.
         self.nav_band.setStyleSheet(f"""
             QFrame#app_nav_band {{
                 background: {c['bg_app']};
-                border-bottom: 1px solid {c['sidebar_border']};
             }}
         """)
         if hasattr(self, "nav_dock"):

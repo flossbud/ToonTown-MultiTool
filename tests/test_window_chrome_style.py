@@ -97,6 +97,15 @@ def test_header_top_radius_no_rim_by_default():
     assert "border-top:" not in qss
 
 
+def test_header_top_radius_omits_divider_when_border_none():
+    # The glass-dock redesign drops the header's bottom hairline: the nav band
+    # below owns the single divider, so header + dock read as one surface.
+    qss = s.header_top_radius_qss("#1a1a1a", None, 16, top_rim="rgba(255,255,255,0.10)")
+    assert "border-bottom" not in qss
+    assert "border-top: 1px solid rgba(255,255,255,0.10)" in qss  # rim still drawn
+    assert "border-top-left-radius: 15px" in qss
+
+
 def test_hover_targets_precedence():
     assert s.hover_targets(pressed=True, hovered=True) == (s.PRESS_SCALE, s.PRESS_BRIGHTNESS)
     assert s.hover_targets(pressed=True, hovered=False) == (s.PRESS_SCALE, s.PRESS_BRIGHTNESS)
