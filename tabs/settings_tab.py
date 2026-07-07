@@ -855,6 +855,7 @@ class SettingsTab(QWidget):
         self._v2_switches: list[tuple[Switch, str]] = []   # (switch, accent key)
         self._v2_segments: list[tuple[SegmentedPill, str]] = []
         self._v2_buttons: list[PillButton] = []
+        self._v2_tile_grids: list = []        # (OptionTileGrid, accent key)
         self._current_page_key: str = "general"
         self._layout_mode: str = "compact"
         self._update_checker = None
@@ -1588,14 +1589,15 @@ class SettingsTab(QWidget):
         lay.insertWidget(insert_at, card)
 
     def _build_click_sync_card(self, page):
+        from utils.icon_factory import make_mouse_icon
         lay = page._panel_layout
         insert_at = lay.count() - 1
 
-        panel = SettingsPanel(title="Click Sync", stripe="pink")
-        self._panels.append(panel)
-        self._click_sync_panel = panel
+        card = CardSurface("pink", title="Click Sync", icon=make_mouse_icon(20))
+        self._cards.append(card)
+        self._click_sync_panel = card
 
-        field = SettingsField(
+        row = self._v2_row(
             "Enable Click Sync",
             helper=(
                 "Mirror your mouse clicks in one Toontown Rewritten window to "
@@ -1604,12 +1606,13 @@ class SettingsTab(QWidget):
                 "matching proportions."
             ),
         )
-        switch = Switch(self.settings_manager.get(CLICK_SYNC_ENABLED, False))
+        switch = self._v2_switch(
+            self.settings_manager.get(CLICK_SYNC_ENABLED, False), "pink")
         switch.toggled.connect(
             lambda v: self.settings_manager.set(CLICK_SYNC_ENABLED, v)
         )
-        field.set_control(switch)
-        panel.add_field(field)
+        row.set_control(switch)
+        card.add_row(row)
         self._click_sync_switch = switch
 
         # External flips (the clicksync.toggle hotkey, another Settings
@@ -1622,47 +1625,48 @@ class SettingsTab(QWidget):
                 if key == CLICK_SYNC_ENABLED and switch.isChecked() != bool(value)
                 else None)
 
-        ghost_field = SettingsField(
+        ghost_row = self._v2_row(
             "Show ghost cursors",
             helper=(
                 "Show each toon's glove cursor on their window while click "
                 "sync mirrors your mouse there."
             ),
         )
-        ghost_switch = Switch(self.settings_manager.get(GHOST_CURSORS_ENABLED, True))
+        ghost_switch = self._v2_switch(
+            self.settings_manager.get(GHOST_CURSORS_ENABLED, True), "pink")
         ghost_switch.toggled.connect(
             lambda v: self.settings_manager.set(GHOST_CURSORS_ENABLED, v)
         )
-        ghost_field.set_control(ghost_switch)
-        panel.add_field(ghost_field)
+        ghost_row.set_control(ghost_switch)
+        card.add_row(ghost_row)
 
-        control_field = SettingsField(
+        control_row = self._v2_row(
             "Ghost cursors can use card controls",
             helper=(
                 "When click sync moves a toon's ghost cursor over its card, let "
                 "it press the card's buttons, just like your own cursor can."
             ),
         )
-        control_switch = Switch(
-            self.settings_manager.get(GHOST_CURSORS_CONTROL_CARDS, True))
+        control_switch = self._v2_switch(
+            self.settings_manager.get(GHOST_CURSORS_CONTROL_CARDS, True), "pink")
         control_switch.toggled.connect(
             lambda v: self.settings_manager.set(GHOST_CURSORS_CONTROL_CARDS, v)
         )
-        control_field.set_control(control_switch)
-        panel.add_field(control_field)
-        self._ghost_control_field = control_field
+        control_row.set_control(control_switch)
+        card.add_row(control_row)
+        self._ghost_control_field = control_row
         self._ghost_switch = ghost_switch
 
         # Grey out the control-cards row whenever ghost cursors are off: the
         # feature is meaningless without ghosts, and the runtime gate ANDs the two.
         def _sync_ghost_control_enabled(on):
-            control_field.setEnabled(bool(on))
+            control_row.set_row_disabled(not bool(on))
         self._sync_ghost_control_enabled = _sync_ghost_control_enabled
         ghost_switch.toggled.connect(_sync_ghost_control_enabled)
         _sync_ghost_control_enabled(
             self.settings_manager.get(GHOST_CURSORS_ENABLED, True))
 
-        lay.insertWidget(insert_at, panel)
+        lay.insertWidget(insert_at, card)
 
     def _build_hotkeys_card(self, page):
         from utils.hotkey_actions import ACTIONS
@@ -1926,14 +1930,17 @@ class SettingsTab(QWidget):
             CHAT_HANDLING_KEYSET_DYNAMIC, CHAT_HANDLING_PER_TOON,
             normalize_chat_handling_mode,
         )
-        from utils.shared_widgets import SettingsRadioList
+        from utils.icon_factory import make_chat_icon
+        from utils.widgets.option_tiles import OptionTileGrid
 
         lay = page._panel_layout
         insert_at = lay.count() - 1
 
-        panel = SettingsPanel(title="Chat Handling", stripe="blue")
-        self._panels.append(panel)
-        self._chat_handling_panel = panel
+        card = CardSurface("blue", title="Chat Handling",
+                           sub="How chat input is forwarded to your toons.",
+                           icon=make_chat_icon(20))
+        self._cards.append(card)
+        self._chat_handling_panel = card
 
         items = [
             (CHAT_HANDLING_FOCUSED_ONLY, "Focused Toon Only",
@@ -1945,23 +1952,19 @@ class SettingsTab(QWidget):
             (CHAT_HANDLING_PER_TOON, "Per-Toon (manual)",
              "Pick per toon with a chat button on each card"),
         ]
-
-        field = SettingsField("Forwarding Logic")
-        radio_list = SettingsRadioList(items)
+        tiles = OptionTileGrid(items)
         # Initial selection BEFORE connecting: building the card must never
-        # write the setting (set_value is silent by contract anyway; the
-        # ordering is belt-and-braces, matching the old dropdown pattern).
-        radio_list.set_value(normalize_chat_handling_mode(
+        # write the setting (set_value is silent by contract).
+        tiles.set_value(normalize_chat_handling_mode(
             self.settings_manager.get(CHAT_HANDLING_MODE,
-                                      CHAT_HANDLING_MODE_DEFAULT)
-        ))
-        radio_list.value_changed.connect(self._on_chat_handling_mode_changed)
-        field.set_full_width_control(radio_list)
-        self._chat_handling_radio_list = radio_list
-        self._chat_handling_field = field
-        panel.add_field(field)
+                                      CHAT_HANDLING_MODE_DEFAULT)))
+        tiles.value_changed.connect(self._on_chat_handling_mode_changed)
+        card.add_row(tiles)
+        self._chat_handling_tiles = tiles
+        self._v2_tile_grids = getattr(self, "_v2_tile_grids", [])
+        self._v2_tile_grids.append((tiles, "blue"))
 
-        lay.insertWidget(insert_at, panel)
+        lay.insertWidget(insert_at, card)
 
     # ── Keep-Alive handlers ───────────────────────────────────────────────
 
@@ -2383,6 +2386,8 @@ class SettingsTab(QWidget):
             seg.apply_theme(is_dark, accent_key=key)
         for btn in self._v2_buttons:
             btn.apply_theme(is_dark)
+        for grid, key in getattr(self, "_v2_tile_grids", []):
+            grid.apply_theme(is_dark, accent_key=key)
         # SettingsComboBox dropdowns — propagate accent + theme polarity so
         # the menu's current-value dot and the chevron color follow the
         # active theme (matches the Switch propagation right above).
@@ -2391,10 +2396,6 @@ class SettingsTab(QWidget):
                 accent=c["accent_blue_btn"],
                 is_dark=is_dark,
             )
-        # SettingsRadioList option lists — same token propagation as combos.
-        from utils.shared_widgets import SettingsRadioList
-        for rl in self.findChildren(SettingsRadioList):
-            rl.set_theme_colors(c, is_dark)
         # Hotkeys card "Show more" expander — link-styled flat button.
         toggle = getattr(self, "_hotkey_more_toggle", None)
         if toggle is not None:

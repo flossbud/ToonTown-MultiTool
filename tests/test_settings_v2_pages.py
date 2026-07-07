@@ -59,3 +59,22 @@ def test_game_path_display_green_and_mono(app):
     tab = SettingsTab(FakeSettings())
     tab._refresh_game_path_display("ttr", "/home/user/ttr")
     assert tab._ttr_panel.sub_label.text().startswith(("~", "/"))
+
+
+def test_ghost_control_row_gates_on_ghost_switch(app):
+    tab = SettingsTab(FakeSettings())
+    tab._ghost_switch.setChecked(False)
+    assert not tab._ghost_control_field.isEnabled()
+    tab._ghost_switch.setChecked(True)
+    assert tab._ghost_control_field.isEnabled()
+
+
+def test_chat_handling_tiles_same_key_same_values(app):
+    from utils.settings_keys import CHAT_HANDLING_MODE, CHAT_HANDLING_ALL_TOONS
+    fake = FakeSettings()
+    tab = SettingsTab(fake)
+    fired = []
+    tab.chat_handling_mode_changed.connect(fired.append)
+    tab._chat_handling_tiles._on_tile_clicked(CHAT_HANDLING_ALL_TOONS)
+    assert fake.get(CHAT_HANDLING_MODE) == CHAT_HANDLING_ALL_TOONS
+    assert fired == [CHAT_HANDLING_ALL_TOONS]

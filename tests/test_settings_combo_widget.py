@@ -348,32 +348,32 @@ def test_reduce_motion_segment_uses_short_option_text(app, settings_manager):
     )
 
 
-def test_chat_handling_radio_list_exists_with_forwarding_logic_label(app, settings_manager):
-    from utils.shared_widgets import SettingsRadioList
+def test_chat_handling_tiles_exist_with_expected_values(app, settings_manager):
+    from utils.widgets.option_tiles import OptionTileGrid
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
     try:
-        rl = tab._chat_handling_radio_list
-        assert isinstance(rl, SettingsRadioList)
-        assert [r.value for r in rl._rows] == [
+        tiles = tab._chat_handling_tiles
+        assert isinstance(tiles, OptionTileGrid)
+        assert [t.value for t in tiles._tiles] == [
             "focused_only", "all_toons", "keyset_dynamic", "per_toon",
         ]
-        assert tab._chat_handling_field.label_widget.text() == "Forwarding Logic"
+        assert tab._chat_handling_panel.title_label.text() == "Chat Handling"
     finally:
         tab.deleteLater()
 
 
-def test_chat_handling_radio_normalizes_legacy_advanced(app, settings_manager):
+def test_chat_handling_tiles_normalizes_legacy_advanced(app, settings_manager):
     from tabs.settings_tab import SettingsTab
     settings_manager.set("chat_handling_mode", "advanced")
     tab = SettingsTab(settings_manager)
     try:
-        assert tab._chat_handling_radio_list.value() == "per_toon"
+        assert tab._chat_handling_tiles.value() == "per_toon"
     finally:
         tab.deleteLater()
 
 
-def test_chat_handling_radio_resets_legacy_simple_to_default(app, settings_manager):
+def test_chat_handling_tiles_resets_legacy_simple_to_default(app, settings_manager):
     """A persisted legacy 'simple' (the old implicit default) selects
     Focused Toon Only: only a choice made in the new control counts as an
     explicit mode selection."""
@@ -381,16 +381,16 @@ def test_chat_handling_radio_resets_legacy_simple_to_default(app, settings_manag
     settings_manager.set("chat_handling_mode", "simple")
     tab = SettingsTab(settings_manager)
     try:
-        assert tab._chat_handling_radio_list.value() == "focused_only"
+        assert tab._chat_handling_tiles.value() == "focused_only"
     finally:
         tab.deleteLater()
 
 
-def test_chat_handling_radio_default_focused_only(app, settings_manager):
+def test_chat_handling_tiles_default_focused_only(app, settings_manager):
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
     try:
-        assert tab._chat_handling_radio_list.value() == "focused_only"
+        assert tab._chat_handling_tiles.value() == "focused_only"
     finally:
         tab.deleteLater()
 
@@ -414,7 +414,7 @@ def test_chat_handling_build_never_writes_setting(app, settings_manager):
         tab.deleteLater()
 
 
-def test_chat_handling_radio_change_persists_and_emits(app, settings_manager):
+def test_chat_handling_tiles_change_persists_and_emits(app, settings_manager):
     """User selection writes the canonical value AND emits the signal
     carrying that value (matches the old dropdown test's coverage)."""
     from PySide6.QtCore import Qt
@@ -424,10 +424,10 @@ def test_chat_handling_radio_change_persists_and_emits(app, settings_manager):
     received = []
     tab.chat_handling_mode_changed.connect(received.append)
     try:
-        rl = tab._chat_handling_radio_list
-        rl.show()
+        tiles = tab._chat_handling_tiles
+        tiles.show()
         app.processEvents()
-        QTest.mouseClick(rl._rows[3].radio, Qt.LeftButton)  # Per-Toon (manual)
+        QTest.mouseClick(tiles._tiles[3], Qt.LeftButton)  # Per-Toon (manual)
         app.processEvents()
         assert settings_manager.get("chat_handling_mode") == "per_toon"
         assert received == ["per_toon"]
@@ -435,8 +435,8 @@ def test_chat_handling_radio_change_persists_and_emits(app, settings_manager):
         tab.deleteLater()
 
 
-def test_chat_handling_radio_list_fits_compact_width(app, settings_manager):
-    """The radio list must never demand more horizontal room than the real
+def test_chat_handling_tiles_fit_compact_width(app, settings_manager):
+    """The tile grid must never demand more horizontal room than the real
     usable panel width (~349px), so the card cannot overflow at compact
     window sizes. Promotes the smoke probe's tab-level assertion into the
     committed suite."""
@@ -445,27 +445,28 @@ def test_chat_handling_radio_list_fits_compact_width(app, settings_manager):
     try:
         tab.resize(420, 700)
         app.processEvents()
-        assert tab._chat_handling_radio_list.minimumSizeHint().width() <= 349
+        assert tab._chat_handling_tiles.minimumSizeHint().width() <= 349
     finally:
         tab.deleteLater()
 
 
-def test_chat_handling_theme_pass_reaches_radio_list(app, settings_manager, monkeypatch):
-    """refresh_theme() must propagate tokens to the radio list (spying on
+def test_chat_handling_theme_pass_reaches_tiles(app, settings_manager, monkeypatch):
+    """refresh_theme() must propagate tokens to the tile grid (spying on
     the method catches a missing findChildren loop, which direct
-    set_theme_colors calls in widget tests would not)."""
-    from utils.shared_widgets import SettingsRadioList
+    apply_theme calls in widget tests would not)."""
+    from utils.widgets.option_tiles import OptionTileGrid
     from tabs.settings_tab import SettingsTab
     calls = []
-    orig = SettingsRadioList.set_theme_colors
+    orig = OptionTileGrid.apply_theme
     monkeypatch.setattr(
-        SettingsRadioList, "set_theme_colors",
-        lambda self, c, is_dark=True: (calls.append(self), orig(self, c, is_dark)),
+        OptionTileGrid, "apply_theme",
+        lambda self, is_dark, accent_key="blue": (
+            calls.append(self), orig(self, is_dark, accent_key))[-1],
     )
     tab = SettingsTab(settings_manager)
     try:
         calls.clear()  # ignore constructor-time default application
         tab.refresh_theme()
-        assert tab._chat_handling_radio_list in calls
+        assert tab._chat_handling_tiles in calls
     finally:
         tab.deleteLater()

@@ -39,18 +39,19 @@ def settings_manager():
 
 
 def _features_field(tab, label):
-    from tabs.settings_tab import SettingsField
-    for f in tab.pages["features"].findChildren(SettingsField):
+    from utils.widgets.inset_row import InsetRow
+    for f in tab.pages["features"].findChildren(InsetRow):
         if f.label_widget.text() == label:
             return f
     return None
 
 
 def test_features_page_has_pink_click_sync_card(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab, SettingsPanel
+    from tabs.settings_tab import SettingsTab
+    from utils.widgets.card_surface import CardSurface
     tab = SettingsTab(settings_manager)
-    panels = tab.pages["features"].findChildren(SettingsPanel)
-    pink = [p for p in panels if p.stripe_kind == "pink"]
+    cards = tab.pages["features"].findChildren(CardSurface)
+    pink = [c for c in cards if c.accent_key == "pink"]
     assert len(pink) == 1
     assert pink[0].title_label.text() == "Click Sync"
 
@@ -76,19 +77,22 @@ def test_features_card_order_keep_alive_click_sync_chat(qapp, settings_manager):
 def test_click_sync_toggle_lives_inside_the_pink_card(qapp, settings_manager):
     """The toggle must live INSIDE the pink Click Sync card, not merely
     somewhere on the Features page."""
-    from tabs.settings_tab import SettingsTab, SettingsPanel, Switch
+    from tabs.settings_tab import SettingsTab, Switch
+    from utils.widgets.card_surface import CardSurface
+    from utils.widgets.inset_row import InsetRow
     tab = SettingsTab(settings_manager)
     pink = next(
-        p for p in tab.pages["features"].findChildren(SettingsPanel)
-        if p.stripe_kind == "pink"
+        c for c in tab.pages["features"].findChildren(CardSurface)
+        if c.accent_key == "pink"
     )
-    labels = [f.label_widget.text() for f in pink.fields]
+    rows = pink.findChildren(InsetRow)
+    labels = [r.label_widget.text() for r in rows]
     assert labels == [
         "Enable Click Sync",
         "Show ghost cursors",
         "Ghost cursors can use card controls",
     ]
-    assert all(isinstance(f.control_widget, Switch) for f in pink.fields)
+    assert all(isinstance(r.control_widget, Switch) for r in rows)
 
 
 def test_click_sync_toggle_default_off(qapp, settings_manager):
