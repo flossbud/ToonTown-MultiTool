@@ -1,4 +1,4 @@
-"""Integration tests for the rewritten SettingsTab shell — sidebar + pages."""
+"""Integration tests for the rewritten SettingsTab shell - pill rail + pages."""
 
 import os
 import sys
@@ -37,11 +37,12 @@ def settings_manager(tmp_path):
     return _Stub()
 
 
-def test_settings_tab_has_sidebar_and_four_pages(qapp, settings_manager):
+def test_settings_tab_has_rail_and_four_pages(qapp, settings_manager):
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
-    assert tab.sidebar is not None
-    assert [item.key for item in tab.sidebar.items] == [
+    assert not hasattr(tab, "sidebar")
+    assert tab.rail is not None
+    assert [pill.key for pill in tab.rail.pills] == [
         "general", "games", "features", "advanced",
     ]
     # Each category has a page widget mounted in the content-pane stack.
@@ -57,15 +58,15 @@ def test_settings_tab_initial_page_persisted(qapp, settings_manager):
     settings_manager.set("settings_active_category", "keep_alive")
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
-    assert tab.sidebar.active_key == "features"
+    assert tab.rail.active_key == "features"
     assert tab._current_page_key == "features"
 
 
-def test_settings_tab_clicking_sidebar_swaps_page_and_persists(qapp, settings_manager):
+def test_settings_tab_clicking_rail_swaps_page_and_persists(qapp, settings_manager):
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
     # Click "games"
-    tab.sidebar._on_item_clicked("games")
+    tab.rail._on_pill_clicked("games")
     assert tab._current_page_key == "games"
     assert settings_manager.get("settings_active_category") == "games"
 
@@ -99,4 +100,4 @@ def test_settings_tab_unknown_persisted_category_falls_back_to_general(qapp, set
     settings_manager.set("settings_active_category", "garbage_value")
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
-    assert tab.sidebar.active_key == "general"
+    assert tab.rail.active_key == "general"

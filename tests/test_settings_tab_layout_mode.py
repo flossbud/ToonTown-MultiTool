@@ -105,8 +105,9 @@ def test_every_scroll_area_centers_its_page(qapp, settings_manager):
 
 
 def test_wide_tab_centers_content_column(qapp, settings_manager):
-    """At a maximized-like width the page sits centered between the rail
-    and the right edge, not glued to the rail."""
+    """At a maximized-like width the page sits centered in the content
+    column, not glued to the left edge. The pill rail sits above the
+    content, so horizontally the page centers in the full tab width."""
     from PySide6.QtCore import QPoint
     from tabs.settings_tab import SettingsTab, SETTINGS_CONTENT_MAX_W
     tab = SettingsTab(settings_manager)
@@ -116,20 +117,24 @@ def test_wide_tab_centers_content_column(qapp, settings_manager):
     page = tab.pages["general"]
     assert page.width() == SETTINGS_CONTENT_MAX_W
     x = page.mapTo(tab, QPoint(0, 0)).x()
-    rail_w = tab.sidebar.width()
-    expected = rail_w + (2000 - rail_w - SETTINGS_CONTENT_MAX_W) // 2
+    expected = (2000 - SETTINGS_CONTENT_MAX_W) // 2
     assert abs(x - expected) <= 30  # scrollbar gutter tolerance
     tab.hide()
 
 
-def test_set_layout_mode_drives_sidebar_expansion(qapp, settings_manager):
+def test_set_layout_mode_stores_mode_without_reshaping_shell(qapp, settings_manager):
+    """The v2 shell is identical in both modes: set_layout_mode just records
+    the mode (contract kept for main.py); the pill rail stays mounted and the
+    content column stays width-capped."""
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
-    assert tab.sidebar.width() == 130  # constructs compact
+    assert tab._layout_mode == "compact"  # constructs compact
     tab.set_layout_mode("full")
-    assert tab.sidebar.width() == 200
+    assert tab._layout_mode == "full"
+    assert tab.rail is not None
     tab.set_layout_mode("compact")
-    assert tab.sidebar.width() == 130
+    assert tab._layout_mode == "compact"
+    assert tab.rail is not None
 
 
 def test_set_layout_mode_ignores_unknown_modes(qapp, settings_manager):
@@ -137,22 +142,17 @@ def test_set_layout_mode_ignores_unknown_modes(qapp, settings_manager):
     tab = SettingsTab(settings_manager)
     tab.set_layout_mode("full")
     tab.set_layout_mode("banana")
-    assert tab.sidebar.width() == 200
+    assert tab._layout_mode == "full"
 
 
-def test_set_layout_mode_is_idempotent(qapp, settings_manager):
-    """Re-applying the current mode must short-circuit at the tab level,
-    not just rely on Sidebar.set_expanded's own no-op guard."""
-    from unittest.mock import patch
+def test_set_layout_mode_reapply_keeps_mode(qapp, settings_manager):
+    """Re-applying the current mode is harmless: the v2 shell has no per-mode
+    reshaping to short-circuit."""
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
     tab.set_layout_mode("full")
-    with patch.object(tab.sidebar, "set_expanded") as spy:
-        tab.set_layout_mode("full")
-        spy.assert_not_called()
-    assert tab.sidebar.width() == 200
+    tab.set_layout_mode("full")
+    assert tab._layout_mode == "full"
     tab.set_layout_mode("compact")
-    with patch.object(tab.sidebar, "set_expanded") as spy:
-        tab.set_layout_mode("compact")
-        spy.assert_not_called()
-    assert tab.sidebar.width() == 130
+    tab.set_layout_mode("compact")
+    assert tab._layout_mode == "compact"

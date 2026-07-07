@@ -33,13 +33,9 @@ from utils.settings_keys import (
 )
 
 
-# Full-UI content cap: pages stop growing at this width and center in the
-# scroll viewport (QScrollArea.widgetResizable bounds the resize by the
-# widget's maximumWidth, then positions it by alignment()). 880px panels
-# + 2 x 28px page margins. Unconditional by design: it engages whenever the
-# content area exceeds it, including wide-but-short windows that stay compact
-# by height; ordinary compact sizes (~445px content area) never reach it.
-SETTINGS_CONTENT_MAX_W = 936
+# v2 content column: 720px card column + 2 x 24px page padding, centered by
+# the scroll area's alignment. Engages whenever the content area is wider.
+SETTINGS_CONTENT_MAX_W = 768
 
 # ── New primitives (Settings tab redesign 2026-05-23) ─────────────────────────
 
@@ -665,6 +661,162 @@ class Sidebar(QFrame):
             item.apply_theme(c, is_dark)
 
 
+# ── Category pill rail (v2 shell, replaces Sidebar) ───────────────────────────
+
+CATEGORY_META = {
+    # key: (accent fill, bright border, icon maker name, micro sub)
+    "general":  ("#0077ff", "#3399ff", "make_nav_gear",     "App-wide preferences"),
+    "games":    ("#3da343", "#56d66a", "make_nav_gamepad",  "Locations and runtime settings for each game"),
+    "features": ("#ff9500", "#ffb04d", "make_radio_waves_icon", "Optional broadcast and automation behaviors"),
+    "advanced": ("#b34848", "#e05252", "make_wrench_icon",  "Lower-level controls - most users should not need these"),
+}
+
+
+class _CategoryPill(QWidget):
+    """One identity pill: 15px line icon + 13px label. Active = identity fill
+    + bright 1px border + painted glow; idle = translucent neutral."""
+
+    clicked = Signal(str)
+    H = 36
+    PAD_X = 16
+    GLOW = 6              # painted halo budget per side
+
+    def __init__(self, key: str, label: str, parent=None):
+        super().__init__(parent)
+        self.key = key
+        self.label = label
+        self.fill, self.border, icon_name, _sub = CATEGORY_META[key]
+        self._active = False
+        self._hovered = False
+        self._is_dark = True
+        import utils.icon_factory as icon_factory
+        self._icon_maker = getattr(icon_factory, icon_name)
+        self.setAttribute(Qt.WA_Hover)
+        self.setCursor(Qt.PointingHandCursor)
+        from PySide6.QtGui import QFont, QFontMetrics
+        f = QFont()
+        f.setPixelSize(13)
+        f.setWeight(QFont.Bold)
+        w = (2 * self.PAD_X + 15 + 8 + QFontMetrics(f).horizontalAdvance(label)
+             + 2 * self.GLOW)
+        self.setFixedSize(w, self.H + 2 * self.GLOW)
+
+    def set_active(self, active: bool) -> None:
+        self._active = bool(active)
+        self.update()
+
+    def apply_theme(self, is_dark: bool) -> None:
+        self._is_dark = is_dark
+        self.update()
+
+    def enterEvent(self, e):
+        self._hovered = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hovered = False
+        self.update()
+
+    def _activate(self) -> None:
+        self.clicked.emit(self.key)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._activate()
+            e.accept()
+            return
+        super().mousePressEvent(e)
+
+    def paintEvent(self, e):
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QFont
+        from utils.theme_manager import get_v2_tokens
+        from utils.widgets.portrait_badge import _qcolor_from_rgba
+        t = get_v2_tokens(self._is_dark)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        r = QRectF(self.rect()).adjusted(self.GLOW, self.GLOW, -self.GLOW, -self.GLOW)
+        radius = r.height() / 2
+
+        if self._active:
+            glow = QColor(self.border)
+            for w, a in ((10, 0.06), (6, 0.12), (3, 0.20)):
+                glow.setAlphaF(a)
+                p.setPen(QPen(glow, w))
+                p.setBrush(Qt.NoBrush)
+                p.drawRoundedRect(r, radius, radius)
+            p.setPen(QPen(QColor(self.border), 1))
+            p.setBrush(QColor(self.fill))
+            text_col = QColor("#ffffff")
+        else:
+            bg = _qcolor_from_rgba(
+                t["nav_hover"] if self._hovered else t["nav_idle_bg"])
+            p.setPen(QPen(_qcolor_from_rgba(t["nav_idle_border"]), 1))
+            p.setBrush(bg)
+            text_col = QColor(t["nav_idle_text"])
+        p.drawRoundedRect(r, radius, radius)
+
+        icon = self._icon_maker(15, text_col)
+        p.drawPixmap(int(r.x() + self.PAD_X), int(r.center().y() - 7.5),
+                     icon.pixmap(15, 15))
+        f = QFont()
+        f.setPixelSize(13)
+        f.setWeight(QFont.Bold if self._active else QFont.Medium)
+        p.setFont(f)
+        p.setPen(text_col)
+        p.drawText(r.adjusted(self.PAD_X + 15 + 8, 0, -self.PAD_X, 0),
+                   Qt.AlignVCenter | Qt.AlignLeft, self.label)
+        p.end()
+
+
+class CategoryPillRail(QFrame):
+    """Centered horizontal identity-pill row. Same signal contract as the
+    old Sidebar (category_selected on user click)."""
+
+    category_selected = Signal(str)
+
+    def __init__(self, categories: list[tuple[str, str]], parent=None):
+        super().__init__(parent)
+        self.setObjectName("settings_pill_rail")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.pills: list[_CategoryPill] = []
+        self.active_key = categories[0][0] if categories else ""
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(24, 10, 24, 0)     # pill GLOW pads the rest
+        lay.setSpacing(0)
+        lay.addStretch(1)
+        for key, label in categories:
+            pill = _CategoryPill(key, label, self)
+            pill.clicked.connect(self._on_pill_clicked)
+            self.pills.append(pill)
+            lay.addWidget(pill)
+        lay.addStretch(1)
+        if self.pills:
+            self.pills[0].set_active(True)
+
+    def set_active_category(self, key: str) -> None:
+        keys = [p.key for p in self.pills]
+        if key not in keys:
+            key = "general"
+            if key not in keys:
+                return
+        self.active_key = key
+        for p in self.pills:
+            p.set_active(p.key == key)
+
+    def _on_pill_clicked(self, key: str) -> None:
+        if key == self.active_key:
+            return
+        self.set_active_category(key)
+        self.category_selected.emit(key)
+
+    def apply_theme(self, c, is_dark: bool) -> None:
+        self.setStyleSheet(
+            "QFrame#settings_pill_rail { background: transparent; border: none; }")
+        for p in self.pills:
+            p.apply_theme(is_dark)
+
+
 # ── Main Settings Tab ──────────────────────────────────────────────────────────
 
 class SettingsTab(QWidget):
@@ -693,18 +845,17 @@ class SettingsTab(QWidget):
         self._check_now_field = None
         self._check_now_btn = None
 
-        outer = QHBoxLayout(self)
+        outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        self.sidebar = Sidebar(self.CATEGORIES)
-        outer.addWidget(self.sidebar)
+        self.rail = CategoryPillRail(self.CATEGORIES)
+        outer.addWidget(self.rail)
 
-        # Content stack: a single QStackedWidget holding one scroll-area per page.
         self._stack = QStackedWidget(self)
         outer.addWidget(self._stack, 1)
 
-        for key, _label in self.CATEGORIES:
+        for key, label in self.CATEGORIES:
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setFrameShape(QFrame.NoFrame)
@@ -716,23 +867,22 @@ class SettingsTab(QWidget):
 
             page = QWidget()
             page_lay = QVBoxLayout(page)
-            page_lay.setContentsMargins(28, 22, 28, 28)
-            page_lay.setSpacing(14)
+            page_lay.setContentsMargins(24, 12, 24, 28)
+            page_lay.setSpacing(16)
             page_lay.setAlignment(Qt.AlignTop)
 
-            # Page title + subtitle scaffolding (text filled by category builder).
-            title = QLabel()
-            title.setObjectName("settings_page_title")
-            page_lay.addWidget(title)
-            sub = QLabel()
-            sub.setObjectName("settings_page_subtitle")
-            sub.setWordWrap(True)
-            page_lay.addWidget(sub)
-            # Builder methods populate panels below the subtitle; we expose
-            # the layout via attribute so they can append to it.
-            page._title_label = title  # type: ignore[attr-defined]
-            page._sub_label = sub      # type: ignore[attr-defined]
-            page._panel_layout = page_lay  # type: ignore[attr-defined]
+            # Micro section label: "GENERAL - APP-WIDE PREFERENCES" (10px/600,
+            # letter-spacing, uppercase; hyphen by project rule, never an
+            # em-dash).
+            micro = QLabel(f"{label} - {CATEGORY_META[key][3]}".upper())
+            micro.setObjectName("settings_micro_label")
+            page_lay.addWidget(micro)
+            page._micro_label = micro          # type: ignore[attr-defined]
+            page._panel_layout = page_lay      # type: ignore[attr-defined]
+            # Legacy shims: page builders still reference these until their
+            # tasks rework them (removed in a later task).
+            page._title_label = QLabel()       # type: ignore[attr-defined]
+            page._sub_label = QLabel()         # type: ignore[attr-defined]
             page_lay.addStretch(1)
 
             page.setMaximumWidth(SETTINGS_CONTENT_MAX_W)
@@ -741,17 +891,14 @@ class SettingsTab(QWidget):
             self.pages[key] = page
             self._stack.addWidget(scroll)
 
-        # Builder methods fill each page in. (Stubs in this task — Tasks 5-8 fill
-        # the real content.)
         self._build_general_page(self.pages["general"])
         self._build_games_page(self.pages["games"])
         self._build_features_page(self.pages["features"])
         self._build_advanced_page(self.pages["advanced"])
 
-        # Restore persisted category.
         persisted = self.settings_manager.get(SETTINGS_ACTIVE_CATEGORY, "general")
-        self._show_category(persisted)
-        self.sidebar.category_selected.connect(self._on_category_selected)
+        self._show_category(persisted, animate=False)
+        self.rail.category_selected.connect(self._on_category_selected)
 
         self.refresh_theme()
 
@@ -2066,19 +2213,62 @@ class SettingsTab(QWidget):
         self._show_category(key)
         self.settings_manager.set(SETTINGS_ACTIVE_CATEGORY, key)
 
-    def _show_category(self, key: str):
+    def _show_category(self, key: str, animate: bool = True):
         # Back-compat: the "Keep-Alive" sidebar category was renamed to
-        # "Features" on 2026-05-26. Users with the old key persisted in
-        # SETTINGS_ACTIVE_CATEGORY get silently rewritten on read.
+        # "Features" on 2026-05-26; old persisted keys rewrite on read.
         if key == "keep_alive":
             key = "features"
         keys = [k for k, _ in self.CATEGORIES]
         if key not in keys:
             key = "general"
         self._current_page_key = key
-        self.sidebar.set_active_category(key)
+        self.rail.set_active_category(key)
         idx = keys.index(key)
         self._stack.setCurrentIndex(idx)
+        if animate:
+            self._animate_page_in(self.pages[key])
+
+    def _animate_page_in(self, page) -> None:
+        """200ms fade + 6px upward slide on category switch (cubic-out).
+        Pages are plain QSS-painted QWidgets, so QGraphicsOpacityEffect is
+        safe here (the painter-conflict law only bites custom paintEvents)."""
+        import utils.motion as motion
+        if motion.is_reduced():
+            return
+        from PySide6.QtCore import QEasingCurve, QVariantAnimation
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+        effect = QGraphicsOpacityEffect(page)
+        effect.setOpacity(0.0)
+        page.setGraphicsEffect(effect)
+        lay = page._panel_layout
+        base = lay.contentsMargins()
+        anim = QVariantAnimation(page)
+        anim.setDuration(200)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        def _tick(v):
+            try:
+                effect.setOpacity(v)
+                lay.setContentsMargins(base.left(), base.top() + round(6 * (1 - v)),
+                                       base.right(), base.bottom())
+            except RuntimeError:
+                # Page/effect torn down mid-animation (e.g. the tab was
+                # destroyed while this switch was still running). Nothing left
+                # to animate. Mirrors motion.push_slide_pages._finalize.
+                pass
+
+        def _done():
+            try:
+                page.setGraphicsEffect(None)
+                lay.setContentsMargins(base)
+            except RuntimeError:
+                pass
+        anim.valueChanged.connect(_tick)
+        anim.finished.connect(_done)
+        self._page_anim = anim          # keep a ref; restarts replace it
+        anim.start()
 
     # ── General handlers ──────────────────────────────────────────────────
     def _on_theme_changed(self, idx):
@@ -2141,16 +2331,12 @@ class SettingsTab(QWidget):
 
     # ── Public API ────────────────────────────────────────────────────────
     def set_layout_mode(self, mode: str) -> None:
-        """Participate in the app-wide compact<->full layout swap (same
-        contract as MultitoonTab/LaunchTab). Full mode widens the category
-        rail; the content width cap is unconditional. Cheap no-op when the
-        mode is unchanged."""
+        """Compact<->full swap participant (contract kept for main.py). The
+        v2 shell is identical in both modes - the rail centers itself and the
+        content column is width-capped unconditionally."""
         if mode not in ("compact", "full"):
             return
-        if mode == self._layout_mode:
-            return
         self._layout_mode = mode
-        self.sidebar.set_expanded(mode == "full")
 
     def set_update_checker(self, checker):
         self._update_checker = checker
@@ -2215,17 +2401,14 @@ class SettingsTab(QWidget):
             bar = getattr(child, "_auto_hide_scrollbar", None)
             if bar is not None:
                 bar.set_theme(is_dark)
-        # Sidebar
-        self.sidebar.apply_theme(c, is_dark)
-        # Page headers (title + subtitle for every page)
+        # Category pill rail
+        self.rail.apply_theme(c, is_dark)
+        # Micro section label (per page)
         for page in self.pages.values():
-            page._title_label.setStyleSheet(
-                f"font-size: 18px; font-weight: 700; color: {c['text_primary']}; "
-                "background: transparent;"
-            )
-            page._sub_label.setStyleSheet(
-                f"font-size: 12px; color: {c['text_muted']}; "
-                "background: transparent; margin-bottom: 6px;"
+            page._micro_label.setStyleSheet(
+                f"font-size: 10px; font-weight: 600; letter-spacing: 0.8px; "
+                f"color: {c['text_muted']}; background: transparent; "
+                "margin-bottom: 2px;"
             )
         # Panels
         for panel in self._panels:
