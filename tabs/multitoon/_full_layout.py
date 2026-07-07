@@ -745,7 +745,7 @@ class _FullContent(QWidget):
         # mutated. Restore the *original* constraints from each widget's
         # __init__ so the cards stay at their compact-clone reference
         # sizing.
-        self._tab.set_selectors[i].setFixedHeight(28)
+        self._tab.set_selectors[i].setFixedHeight(38)
         self._tab.set_selectors[i].setMinimumWidth(130)
         self._tab.set_selectors[i].setMaximumWidth(16777215)
         if hasattr(self._tab.set_selectors[i], "set_paint_scale"):

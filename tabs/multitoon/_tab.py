@@ -29,7 +29,7 @@ from utils.game_registry import GameRegistry
 from utils import logical_actions
 from utils.toon_customizations_manager import ToonCustomizationsManager
 from utils.settings_keys import CLICK_SYNC_ENABLED
-from utils.color_math import lighten_rgb
+from utils.color_math import lighten_rgb, with_alpha
 from utils.widgets.scale_press import ScalePushButton
 from tabs.multitoon._keep_alive_help_button import KeepAliveHelpButton
 from utils.card_dim import dim_color, dim_pixmap, lerp_color
@@ -841,7 +841,7 @@ class SetSelectorWidget(QWidget):
     """Horizontal movement-set selector — custom-painted rounded rect with edge arrows."""
     index_changed = Signal(int)
 
-    ARROW_ZONE = 24  # px width of each clickable arrow zone
+    ARROW_ZONE = 26  # px width/diameter of each clickable (and drawn) arrow zone
 
     def __init__(self, keymap_manager, parent=None):
         super().__init__(parent)
@@ -859,7 +859,7 @@ class SetSelectorWidget(QWidget):
         self._has_conflict: bool = False
         self._conflict_tooltip: str = ""
 
-        self.setFixedHeight(32)
+        self.setFixedHeight(38)
         self.setMinimumWidth(130)
         self.setCursor(Qt.ArrowCursor)
         self.setMouseTracking(True)
@@ -917,50 +917,76 @@ class SetSelectorWidget(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         from PySide6.QtGui import QFont
+        # _resolved_colors() already lerps bg/text/border toward the muted
+        # color by _dim_progress, so building the glass from these three
+        # keeps set_dim_progress()/set_dimmed() working for free.
         bg_c, text_c, border_c = self._resolved_colors()
 
         rect = QRectF(1, 1, self.width() - 2, self.height() - 2)
+        radius = rect.height() / 2  # true capsule; tracks height (incl. paint_scale)
         show_arrows = self._enabled and self._count() > 1
         s = self._paint_scale
-        az = max(16, int(self.ARROW_ZONE * s))
-        radius = max(4, int(6 * s))
+        az = max(20, int(self.ARROW_ZONE * s))
 
-        # Fill
+        # Painted color-bleed halo (kit-law: painted strokes, no QGraphicsEffect).
+        bleed = QColor(bg_c)
+        for bleed_w, bleed_a in ((10, 0.10), (6, 0.20), (3, 0.28)):
+            bleed.setAlphaF(bleed_a)
+            p.setPen(QPen(bleed, max(1, int(bleed_w * s))))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(rect, radius, radius)
+
+        # Glass fill: the movement-set identity color at 0.68 alpha, so the
+        # toon card's tinted surface reads through underneath.
+        fill = QColor(bg_c)
+        fill.setAlphaF(0.68)
         p.setPen(Qt.NoPen)
-        p.setBrush(bg_c)
+        p.setBrush(fill)
         p.drawRoundedRect(rect, radius, radius)
 
-        # Arrow zone hover highlights
+        # Arrow zone hover highlights: round targets, clipped to the capsule.
         if show_arrows and self._hover_zone:
-            highlight = QColor(255, 255, 255, 35)
-            p.setBrush(highlight)
+            clip = QPainterPath()
+            clip.addRoundedRect(rect, radius, radius)
+            p.setClipPath(clip)
             p.setPen(Qt.NoPen)
+            p.setBrush(with_alpha("#ffffff", 0.16))
+            cy = rect.center().y()
             if self._hover_zone == "left":
-                clip = QPainterPath()
-                clip.addRoundedRect(rect, radius, radius)
-                p.setClipPath(clip)
-                p.drawRect(QRectF(1, 1, az, self.height() - 2))
-                p.setClipping(False)
+                p.drawEllipse(QPointF(az / 2, cy), az / 2, az / 2)
             elif self._hover_zone == "right":
-                clip = QPainterPath()
-                clip.addRoundedRect(rect, radius, radius)
-                p.setClipPath(clip)
-                p.drawRect(QRectF(self.width() - az - 1, 1, az, self.height() - 2))
-                p.setClipping(False)
+                p.drawEllipse(QPointF(self.width() - az / 2, cy), az / 2, az / 2)
+            p.setClipping(False)
 
-        # Border
-        pen = QPen(border_c, max(1, int(2 * s)))
-        p.setPen(pen)
+        # Outer border: the bright movement-set color at 0.8 alpha.
+        p.setPen(QPen(with_alpha(border_c, 0.8), max(1, int(1 * s))))
         p.setBrush(Qt.NoBrush)
         p.drawRoundedRect(rect, radius, radius)
 
-        # Center text (name only, no arrows in string)
+        # Inner light ring: a thin white hairline just inside the border.
+        inset = max(1.0, 1.2 * s)
+        inner = rect.adjusted(inset, inset, -inset, -inset)
+        p.setPen(QPen(with_alpha("#ffffff", 0.15), 1))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(inner, inner.height() / 2, inner.height() / 2)
+
+        # Center text (name only, no arrows in string). The glass recipe
+        # reads white with a soft drop-shadow so the label stays legible over
+        # any identity color; a disabled selector keeps the theme's muted
+        # disabled color (unchanged from before the reskin).
         font = QFont()
-        font.setPixelSize(max(10, int(12 * s)))
+        font.setPixelSize(max(10, int(13 * s)))
         font.setBold(True)
         p.setFont(font)
-        p.setPen(text_c)
         text_rect = QRectF(az, 0, self.width() - az * 2, self.height())
+        if self._enabled:
+            white = QColor("#ffffff")
+            label_color = lerp_color(white, dim_color(white), self._dim_progress)
+        else:
+            label_color = text_c
+        p.setPen(with_alpha("#000000", 0.4))
+        p.drawText(text_rect.translated(0, 1), Qt.AlignCenter, self._display_text)
+        p.setPen(label_color)
         p.drawText(text_rect, Qt.AlignCenter, self._display_text)
 
         # Draw arrows pinned to edges
@@ -970,16 +996,11 @@ class SetSelectorWidget(QWidget):
             arrow_font.setBold(True)
             p.setFont(arrow_font)
 
-            # Arrow opacity: brighter on hover
-            left_alpha = 220 if self._hover_zone == "left" else 100
-            right_alpha = 220 if self._hover_zone == "right" else 100
-
-            if self._text_color == "#ffffff":
-                left_color = QColor(255, 255, 255, left_alpha)
-                right_color = QColor(255, 255, 255, right_alpha)
-            else:
-                left_color = QColor(0, 0, 0, left_alpha)
-                right_color = QColor(0, 0, 0, right_alpha)
+            # Glyph is white per the glass recipe; brighter on hover.
+            left_alpha = 0.9 if self._hover_zone == "left" else 0.39
+            right_alpha = 0.9 if self._hover_zone == "right" else 0.39
+            left_color = with_alpha("#ffffff", left_alpha)
+            right_color = with_alpha("#ffffff", right_alpha)
 
             pad = max(4, int(4 * s))
             left_rect = QRectF(pad, 0, az - pad, self.height())
@@ -1020,7 +1041,7 @@ class SetSelectorWidget(QWidget):
         if not self._enabled or self._count() <= 1:
             return
         x = event.position().x() if hasattr(event, 'position') else event.x()
-        arrow_zone = max(16, int(self.ARROW_ZONE * self._paint_scale))
+        arrow_zone = max(20, int(self.ARROW_ZONE * self._paint_scale))
         if x < arrow_zone:
             self._prev()
         elif x > self.width() - arrow_zone:
@@ -1039,7 +1060,7 @@ class SetSelectorWidget(QWidget):
 
         x = event.position().x() if hasattr(event, 'position') else event.x()
         old = self._hover_zone
-        arrow_zone = max(16, int(self.ARROW_ZONE * self._paint_scale))
+        arrow_zone = max(20, int(self.ARROW_ZONE * self._paint_scale))
         if x < arrow_zone:
             self._hover_zone = "left"
             self.setCursor(Qt.PointingHandCursor)
