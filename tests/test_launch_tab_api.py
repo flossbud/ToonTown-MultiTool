@@ -187,3 +187,53 @@ def test_primary_picked_sets_and_persists(qapp):
     tab._on_primary_picked("ttr", aid, "Moe")                # user picks Moe
     assert tab._recent_toons.primary_name(aid) == "Moe"
     assert tab._recent_toons.get(aid).toon_name == "Moe"
+
+
+def test_pinned_primary_survives_new_toon_in_radial_ring(qapp):
+    # The exact scenario: pin a primary via the picker, then play a DIFFERENT
+    # toon. The radial ring (recent_account_ring_model) must keep showing the
+    # pinned toon, not the newly-played one.
+    from utils.recent_toons import RecentToonsStore
+    tab = _tab(qapp, 2)
+    tab._recent_toons = RecentToonsStore(_FakeSM())
+    # the ring builder resolves accounts via get_accounts_basic - wire it
+    tab.cred_manager.get_accounts_basic.return_value = [("t0", "ttr", "t0"), ("t1", "ttr", "t1")]
+    aid = tab.cred_manager.get_accounts_metadata()[0].id
+    tab._recent_toons.record(aid, "Flossbud", "ttr", "", species="DOG")
+    # user pins Flossbud via the popover
+    tab._on_primary_picked("ttr", aid, "Flossbud")
+    # ...then plays a different toon (Fat Soupy) - the drift scenario
+    tab._recent_toons.record(aid, "Fat Soupy", "ttr", "", species="CAT")
+    assert tab._recent_toons.get(aid).toon_name == "Flossbud"       # store still pinned
+    # the radial ring model resolves the SAME store, so its toon_for(aid) is pinned
+    tab._recent_launches.record(aid)   # make it appear in the MRU ring
+    ring = tab.recent_account_ring_model(limit=8)
+    entry = next((a for a in ring if a.account_id == aid), None)
+    assert entry is not None and entry.toon_name == "Flossbud"      # ring shows pinned, not Fat Soupy
+
+
+def test_unpinned_account_follows_most_recent(qapp):
+    # Un-pinned (option-2 default): the header follows the most-recently played toon.
+    from utils.recent_toons import RecentToonsStore
+    tab = _tab(qapp, 2)
+    tab._recent_toons = RecentToonsStore(_FakeSM())
+    aid = tab.cred_manager.get_accounts_metadata()[0].id
+    tab._recent_toons.record(aid, "Flossbud", "ttr", "", species="DOG")
+    tab._recent_toons.record(aid, "Fat Soupy", "ttr", "", species="CAT")
+    assert tab._recent_toons.get(aid).toon_name == "Fat Soupy"      # drifts until pinned
+
+
+def test_portrait_click_opens_picker_with_account_toons(qapp):
+    # Clicking a tile portrait opens the picker popover listing that account's
+    # toons - the mechanism the user uses to pin a primary.
+    from utils.recent_toons import RecentToonsStore
+    tab = _tab(qapp, 2)
+    tab._recent_toons = RecentToonsStore(_FakeSM())
+    aid = tab.cred_manager.get_accounts_metadata()[0].id
+    tab._recent_toons.record(aid, "Flossbud", "ttr", "", species="DOG")
+    tab._recent_toons.record(aid, "Fat Soupy", "ttr", "", species="CAT")
+    tab._render_section("ttr")           # builds the visible tile
+    tab._on_tile_portrait_clicked("ttr", aid)
+    pop = getattr(tab, "_toon_picker", None)
+    assert pop is not None
+    assert [r._name for r in pop.rows] == ["Fat Soupy", "Flossbud"]   # both pickable
