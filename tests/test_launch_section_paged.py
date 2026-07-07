@@ -19,8 +19,9 @@ def test_set_page_renders_slice_with_absolute_badges(qapp):
     sec.set_page(page2, page=1, page_count=2, base_index=4,
                  activity=[False, False], show_empty_state=False, at_ceiling=False)
     assert len(sec.tiles) == 2
-    assert sec.tiles[0].badge.text() == "5"
-    assert sec.tiles[1].badge.text() == "6"
+    # The slot number moved onto the portrait slot (was a standalone `badge`).
+    assert sec.tiles[0].portrait._slot == 5
+    assert sec.tiles[1].portrait._slot == 6
 
 
 def test_tile_signals_carry_account_id(qapp):
@@ -130,17 +131,18 @@ def test_compact_height_stable_one_vs_four_tiles(qapp):
     assert one >= 2 * 130  # at least two tile rows
 
 
-def test_grid_is_uniform_2x2(qapp):
-    # Both columns and both rows carry equal, positive stretch so every cell is
-    # always 1/4 of the grid area (a lone tile cannot expand to fill the row).
+def test_grid_columns_do_not_stretch(qapp):
+    # Tiles are a fixed 336px width now, so the grid columns must NOT stretch
+    # (a stretched column would strand the fixed tile in an over-wide cell).
+    # The 2-column block is centered horizontally via outer stretch instead.
     sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
-    assert sec.grid.columnStretch(0) == sec.grid.columnStretch(1) > 0
-    assert sec.grid.rowStretch(0) == sec.grid.rowStretch(1) > 0
+    assert sec.grid.columnStretch(0) == 0
+    assert sec.grid.columnStretch(1) == 0
 
 
 def test_single_tile_occupies_one_quadrant_not_full_row(qapp):
-    # A page with one account: the tile must stay ~half width (top-left quadrant),
-    # not stretch across the whole row.
+    # A page with one account: the fixed-width tile must stay 336px (one
+    # quadrant), never stretch across the whole row.
     sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
     sec.set_page([_acct(1, "a")], page=0, page_count=1, base_index=0,
                  activity=[False], show_empty_state=False, at_ceiling=False)
@@ -148,10 +150,7 @@ def test_single_tile_occupies_one_quadrant_not_full_row(qapp):
     sec.show()
     QApplication.processEvents()
     tile = sec.tiles[0]
-    grid_w = sec.grid_container.width()
-    assert grid_w > 0
-    # The tile sits in column 0 of a 2-column grid -> well under full width.
-    assert tile.width() < grid_w * 0.6, (tile.width(), grid_w)
+    assert tile.width() == 336, tile.width()
 
 
 def test_section_reexposes_reorder_and_threads_show_reorder(qapp):

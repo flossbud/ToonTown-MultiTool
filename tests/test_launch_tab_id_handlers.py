@@ -42,7 +42,7 @@ def test_update_status_offpage_updates_slot_only(qapp):
     assert tab._slots["ttr"]["t5"].state == LoginState.FAILED
     assert "t5" not in tab._visible_tiles["ttr"]
     tab._on_page_changed("ttr", 1)
-    assert tab.ttr_section.tiles[1].badge.text() == "6"
+    assert tab.ttr_section.tiles[1].portrait._slot == 6
 
 
 def test_stale_worker_state_signal_is_ignored(qapp):

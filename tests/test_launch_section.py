@@ -1,6 +1,6 @@
 """LaunchSection: section header + 2-col grid of AccountTiles + empty state."""
 import pytest
-from PySide6.QtWidgets import QApplication, QFrame
+from PySide6.QtWidgets import QApplication
 from utils.widgets.launch_section import LaunchSection
 
 
@@ -72,82 +72,45 @@ def test_max_accounts_hides_add_tile(qapp):
     assert not sec.pager.add_btn.isVisible()
 
 
-def test_section_card_is_flat_with_ttr_top_stripe(qapp):
-    """Section card is a flat bg_card surface with a 2 px coloured stripe
-    along the top edge (replaces the gradient wash). TTR uses the
-    game_pill_ttr violet."""
-    from utils.theme_manager import get_theme_colors
+def test_section_uses_card_surface_ttr(qapp):
+    """The section surface is now a CardSurface keyed to the game accent
+    (replaces the hand-rolled flat card + 2px top stripe)."""
+    from utils.widgets.card_surface import CardSurface
     sec = LaunchSection(game="ttr", icon_path="")
-    card = sec.findChild(QFrame, "section_card")
-    assert card is not None
-    qss = card.styleSheet()
-    c = get_theme_colors(True)  # widget builds against dark by default
-
-    # Regression guard: no gradient wash anywhere on the card.
-    assert "qlineargradient" not in qss, "card must be flat, not a gradient"
-    # Flat bg + hairline border + 2 px coloured top stripe.
-    assert c["bg_card"] in qss
-    assert c["border_card"] in qss
-    assert "border-top: 2px" in qss
-    assert c["game_pill_ttr"] in qss
+    assert isinstance(sec.card, CardSurface)
+    assert sec.card.accent_key == "ttr"
 
 
-def test_section_card_is_flat_with_cc_top_stripe(qapp):
-    from utils.theme_manager import get_theme_colors
+def test_section_uses_card_surface_cc(qapp):
+    from utils.widgets.card_surface import CardSurface
     sec = LaunchSection(game="cc", icon_path="")
-    card = sec.findChild(QFrame, "section_card")
-    assert card is not None
-    qss = card.styleSheet()
-    c = get_theme_colors(True)
-    assert "qlineargradient" not in qss
-    assert c["bg_card"] in qss
-    assert c["border_card"] in qss
-    assert "border-top: 2px" in qss
-    assert c["game_pill_cc"] in qss
+    assert isinstance(sec.card, CardSurface)
+    assert sec.card.accent_key == "cc"
 
 
-def test_section_header_keeps_hairline_divider(qapp):
-    """Header still has the hairline below it, but the divider color now
-    comes from the border_muted theme token (was a hardcoded rgba literal)."""
+def test_apply_theme_flips_card_polarity(qapp):
+    """apply_theme(light_dict) must flip the CardSurface to its light path
+    (the surface paints its gradient/border, so we assert the polarity flag
+    the paint reads rather than a QSS string)."""
     from utils.theme_manager import get_theme_colors
     sec = LaunchSection(game="ttr", icon_path="")
-    header_frame = sec.findChild(QFrame, "section_header")
-    assert header_frame is not None
-    qss = header_frame.styleSheet()
-    assert "border-bottom" in qss
-    # Header itself is transparent; the bottom divider is the only QSS rule.
-    assert "qlineargradient" not in qss
-    c = get_theme_colors(True)
-    assert c["border_muted"] in qss
-
-
-def test_apply_theme_rebuilds_card_qss(qapp):
-    """apply_theme(light_dict) must swap the card QSS to use light tokens."""
-    from utils.theme_manager import get_theme_colors
-    sec = LaunchSection(game="ttr", icon_path="")
-    light = get_theme_colors(False)
-    sec.apply_theme(light)
-    card = sec.findChild(QFrame, "section_card")
-    qss = card.styleSheet()
-    assert light["bg_card"] in qss
-    assert light["border_card"] in qss
-    # Dark bg_card (#252525) must no longer appear if it differs from light.
-    dark = get_theme_colors(True)
-    if dark["bg_card"] != light["bg_card"]:
-        assert dark["bg_card"] not in qss
+    sec.apply_theme(get_theme_colors(True))
+    assert sec.card._is_dark is True
+    sec.apply_theme(get_theme_colors(False))
+    assert sec.card._is_dark is False
 
 
 def test_empty_state_lives_inside_card(qapp):
-    """Empty state must be a descendant of section_card so it can't float
+    """Empty state must be a descendant of the section card so it can't float
     outside the card bounds (the bug from the screenshot)."""
     sec = LaunchSection(game="cc", icon_path="")
-    card = sec.findChild(QFrame, "section_card")
+    card = sec.card
     assert sec.empty_state is not None
     # Walk up the parent chain; we should pass through the card.
     parent = sec.empty_state.parentWidget()
     while parent is not None and parent is not card:
         parent = parent.parentWidget()
-    assert parent is card, "empty_state must be a descendant of section_card"
+    assert parent is card, "empty_state must be a descendant of the section card"
 
 
 def test_section_launcher_button_is_chipbutton(qapp):
@@ -194,47 +157,21 @@ def test_set_layout_mode_unknown_is_noop(qapp):
     assert sec.maximumWidth() == before
 
 
-def test_section_resize_scales_tile_minheight(qapp):
-    """At wider widths, tile min-height grows proportionally (within clamps)."""
+def test_tiles_are_fixed_336x96(qapp):
+    """Tiles are a fixed 336x96 (no content-scaling). A window resize must
+    NOT change a tile's size - the old _content_scale path is gone."""
     from utils.widgets.launch_section import LaunchSection
     sec = LaunchSection(game="ttr", icon_path="")
     sec.set_accounts([{"label": "a", "username": "u"}])
     tile = sec.tile_at(0)
-    base_h = tile.minimumHeight()
-    # Full-mode reference is 720px; max-width is 860. Resize to 860 gives
-    # scale=860/720~=1.19>1.0 (well within the 1.4 clamp). Widget must be
-    # shown so that subsequent resize() calls trigger resizeEvent.
+    assert tile.width() == 336
+    assert tile.height() == 96
     sec.show()
     sec.set_layout_mode("full")
     sec.resize(860, sec.height())
-    # After resize, the scale factor should be > 1.0, so min-height bumps.
-    assert tile.minimumHeight() > base_h
-
-
-def test_section_resize_scale_factor_clamped(qapp):
-    """Resize-driven scale clamps at 1.4 even on absurdly wide screens."""
-    from utils.widgets.launch_section import LaunchSection
-    sec = LaunchSection(game="ttr", icon_path="")
-    sec.show()
-    sec.set_layout_mode("full")
-    sec.resize(4000, sec.height())
-    assert sec._content_scale <= 1.4
-    assert sec._content_scale >= 1.0
-
-
-def test_set_accounts_after_scale_applies_to_new_tiles(qapp):
-    """If accounts are (re)loaded after a window resize has bumped scale
-    above 1.0, the fresh tiles must inherit the current scaled min-height
-    rather than the AccountTile default of 130."""
-    from utils.widgets.launch_section import LaunchSection
-    sec = LaunchSection(game="ttr", icon_path="")
-    sec.show()
-    sec.set_layout_mode("full")
-    sec.resize(860, sec.height())  # bumps scale to ~1.19
-    assert sec._content_scale > 1.0
-    sec.set_accounts([{"label": "a", "username": "u"}])
-    tile = sec.tile_at(0)
-    assert tile.minimumHeight() == int(130 * sec._content_scale)
+    QApplication.processEvents()
+    assert tile.width() == 336
+    assert tile.height() == 96
 
 
 def test_set_layout_mode_runs_reveal_animation(qapp, monkeypatch):

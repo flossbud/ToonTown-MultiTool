@@ -67,29 +67,19 @@ def test_chevron_text_reflects_state(qapp):
 
 
 def test_header_click_toggles_state_and_emits_signal(qapp):
-    from PySide6.QtCore import QEvent, QPoint
-    from PySide6.QtGui import QMouseEvent
-
     sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
     sec.show()
     received = []
     sec.collapsed_changed.connect(lambda v: received.append(v))
 
-    # Simulate a left-click on the header frame itself (not on a child).
-    # Click well to the left of where the launcher button sits so the
-    # event resolves to the QFrame, not the QToolButton.
-    pos = QPoint(80, sec._header_frame.height() // 2)
-    press = QMouseEvent(QEvent.MouseButtonPress, pos, Qt.LeftButton,
-                        Qt.LeftButton, Qt.NoModifier)
-    QApplication.sendEvent(sec._header_frame, press)
-
+    # A header-band press fires the CardSurface's header_clicked. Drive it via
+    # the surface's test hook (the old _header_frame QFrame is gone).
+    sec.card._emit_header_click()
     assert sec.is_collapsed is True
     assert received == [True]
 
     # Second click toggles back.
-    QApplication.sendEvent(sec._header_frame, QMouseEvent(
-        QEvent.MouseButtonPress, pos, Qt.LeftButton, Qt.LeftButton,
-        Qt.NoModifier))
+    sec.card._emit_header_click()
     assert sec.is_collapsed is False
     assert received == [True, False]
 
@@ -111,16 +101,17 @@ def test_launcher_button_click_does_not_toggle(qapp):
 
 def test_right_click_does_not_toggle(qapp):
     """Only left-click toggles. Right-click is ignored (Qt context-menu
-    convention)."""
-    from PySide6.QtCore import QEvent, QPoint
+    convention). The CardSurface header only emits on a left-button press."""
+    from PySide6.QtCore import QEvent, QPointF
     from PySide6.QtGui import QMouseEvent
 
     sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
     sec.show()
     received = []
     sec.collapsed_changed.connect(lambda v: received.append(v))
-    pos = QPoint(80, sec._header_frame.height() // 2)
-    QApplication.sendEvent(sec._header_frame, QMouseEvent(
+    # Right-press in the card's header band: must not emit header_clicked.
+    pos = QPointF(80, 20)
+    QApplication.sendEvent(sec.card, QMouseEvent(
         QEvent.MouseButtonPress, pos, Qt.RightButton, Qt.RightButton,
         Qt.NoModifier))
     assert sec.is_collapsed is False

@@ -45,7 +45,7 @@ def test_running_game_survives_page_flip(qapp):
     st, _, _ = tab._effective_state("ttr", tab._slots["ttr"]["t0"])
     assert st == LoginState.RUNNING
     tile = tab._visible_tiles["ttr"]["t0"]
-    assert tile.badge.text() == "1"
+    assert tile.portrait._slot == 1
 
 
 def test_activity_ring_marks_page_with_running_game(qapp):

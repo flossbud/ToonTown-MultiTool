@@ -1,12 +1,14 @@
-"""Section in the Launch tab: header strip (game icon + title + launcher
-button) + 2-column tile grid + empty-state fallback. Owns the per-tile
-widgets and re-emits their signals with the account_id attached."""
+"""Section in the Launch tab: an identity-tinted CardSurface (game logo +
+title + running-count sub + a launcher pill + a collapse chevron) over a
+paged, centered grid of fixed 336x96 account tiles, an empty state, and a
+footer pager. Owns the per-tile widgets and re-emits their signals with the
+account_id attached."""
 from __future__ import annotations
 
 from PySide6.QtCore import QPropertyAnimation, QTimer, Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
+    QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from utils.widgets.page_pager import PagePager
@@ -14,6 +16,7 @@ from utils.widgets.page_pager import PagePager
 import utils.motion as motion
 from utils.theme_manager import get_theme_colors
 from utils.widgets.account_tile import AccountTile
+from utils.widgets.card_surface import CardSurface
 from utils.widgets.chip_button import QuietChipButton
 from utils.widgets.empty_state import EmptyState
 
@@ -24,14 +27,9 @@ QWIDGETSIZE_MAX = 16777215
 _GAME_NAMES = {"ttr": "Toontown Rewritten", "cc": "Corporate Clash"}
 _GAME_SHORT = {"ttr": "TTR", "cc": "CC"}
 _LAYOUT_MAX_WIDTH = {"compact": 720, "full": 860}
-# Reference widths for content-scale calc. At reference width, scale=1.0.
-# Below reference, scale=1.0 (we never shrink content). Above reference,
-# scale grows linearly with width, clamped to [1.0, 1.4] so that fonts
-# don't grow absurdly on 4K monitors.
-# Reference is lower than the mode's max-width so there is headroom for
-# the scale to exceed 1.0 before the widget hits its maximum-width cap.
-_REF_WIDTH = {"compact": 540, "full": 720}
-_SCALE_CLAMP_MAX = 1.4
+
+# Running-count accent for the sub line (green): brighter in dark mode.
+_RUNNING_GREEN = {True: "#7de392", False: "#15803d"}
 
 PAGE_SIZE = 4
 MAX_PAGES = 4
@@ -41,22 +39,6 @@ def page_count(n: int) -> int:
     """Pages for n accounts, reserving one landing page for the next account
     until the 16 ceiling. min(4, ceil((n+1)/4))."""
     return min(MAX_PAGES, max(1, (n + 4) // PAGE_SIZE))
-
-
-class _ClickableFrame(QFrame):
-    """A QFrame that emits `clicked` on left mouse press. Used as the
-    LaunchSection header so the user can click anywhere on the bar to
-    toggle collapse. Children that consume their own mouse events
-    (e.g. the QToolButton launcher_btn) are not affected — Qt only
-    forwards a press to the parent when no child accepts it."""
-    clicked = Signal()
-
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit()
-            event.accept()
-            return
-        super().mousePressEvent(event)
 
 
 class LaunchSection(QWidget):
@@ -74,9 +56,10 @@ class LaunchSection(QWidget):
     tile_edit              = Signal(str)
     tile_delete            = Signal(str)
     tile_expand_error      = Signal(str)
-    # Fires when the section's natural sizeHint changes (content scale
-    # bump on resize, account list change). LaunchTab listens so it can
-    # re-equalize sibling section heights in compact mode.
+    tile_portrait_clicked  = Signal(str)
+    # Fires when the section's natural sizeHint changes (account list change).
+    # LaunchTab listens so it can re-equalize sibling section heights in
+    # compact mode.
     content_size_changed   = Signal()
     # Emitted when the user toggles via a header click. Programmatic
     # set_collapsed(...) calls do NOT emit. Keeps the persistence write
@@ -98,9 +81,9 @@ class LaunchSection(QWidget):
         self.setMinimumHeight(380)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._layout_mode = "compact"
-        self._content_scale = 1.0
         assert game in ("ttr", "cc")
         self._game = game
+        self._is_dark = True
         self.tiles: list[AccountTile] = []
         self.add_tile = None
         self.is_collapsed: bool = False
@@ -110,110 +93,70 @@ class LaunchSection(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # Per-game card: a flat neutral container that wraps the header AND
-        # the tile grid (or empty state) so the section reads as a unified
-        # region. A 2 px coloured top stripe identifies the game without a
-        # gradient wash competing with per-tile accent borders inside.
-        self.card = QFrame()
-        self.card.setObjectName("section_card")
-        self.card.setAttribute(Qt.WA_StyledBackground, True)
-        # Vertical Expanding so the card fills the section's allocated
-        # height instead of shrinking to content. Without this the card
-        # border ends just below the empty-state content, leaving the
-        # bottom of the section bare and producing visibly uneven cards
-        # when one section is populated and another is empty.
+        # Per-game card: the v2 kit's identity-tinted CardSurface. The game
+        # accent drives its gradient body + border; the badge carries the
+        # game logo. Collapse desaturates the whole surface.
+        self.card = CardSurface(accent_key=game, title=_GAME_NAMES[game],
+                                logo_path=icon_path)
+        # Vertical Expanding so the card fills the section's allocated height
+        # instead of shrinking to content (keeps a populated and an empty
+        # sibling card visually the same height).
         self.card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        # QSS applied via apply_theme(...) below so theme switches work.
-        card_lay = QVBoxLayout(self.card)
-        # 1px inset prevents children from overpainting the card's
-        # rounded corners + border. The card's QSS bg fills the inset
-        # gap so the border is visible all the way around.
-        card_lay.setContentsMargins(1, 1, 1, 1)
-        card_lay.setSpacing(0)
+        self.card.header_clicked.connect(self._on_header_clicked)
         outer.addWidget(self.card)
+        # Expose the card's title label under the legacy attribute name so
+        # existing callers/tests keep reading sec.title_label.
+        self.title_label = self.card.title_label
 
-        # Header strip — sits inside the card. Transparent background with
-        # a hairline below to separate it from the tile region. QSS applied
-        # via apply_theme so theme switches work.
-        header = _ClickableFrame()
-        header.setCursor(Qt.PointingHandCursor)
-        header.clicked.connect(self._on_header_clicked)
-        header.setObjectName("section_header")
-        header.setAttribute(Qt.WA_StyledBackground, True)
-        # QSS applied via apply_theme.
-        self._header_frame = header  # save reference for re-styling
-        head_lay = QHBoxLayout(header)
-        head_lay.setContentsMargins(18, 14, 18, 14)
-        head_lay.setSpacing(12)
-
-        icon_box = QLabel()
-        icon_box.setFixedSize(40, 40)
-        # background: transparent so the flat card surface shows through
-        # behind the icon (without it, Qt paints QLabel's default opaque
-        # bg as soon as ANY QSS is applied, cutting out a rectangle).
-        icon_box.setStyleSheet("background: transparent; border-radius: 8px;")
-        pm = QPixmap(icon_path)
-        if not pm.isNull():
-            icon_box.setPixmap(pm.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        head_lay.addWidget(icon_box)
-
-        title_col = QVBoxLayout()
-        title_col.setSpacing(0)
-        self.title_label = QLabel(_GAME_NAMES[game])
-        # QSS applied via apply_theme.
-        title_col.addWidget(self.title_label)
-        self.subline = QLabel("No accounts yet")
-        # QSS applied via apply_theme.
-        title_col.addWidget(self.subline)
-        head_lay.addLayout(title_col)
-        head_lay.addStretch()
-
+        # Launcher pill + collapse chevron ride the card header's button row.
+        # A QToolButton absorbs its own click so the launcher never toggles
+        # collapse; the QLabel chevron propagates its press up to the card,
+        # so clicking it (or anywhere in the header band) toggles collapse.
         self.launcher_btn = QuietChipButton()
         self.launcher_btn.setText(f"↗ Launch {_GAME_SHORT[game]} Launcher")
         self.launcher_btn.setCursor(Qt.PointingHandCursor)
-        # QSS applied via apply_theme.
         self.launcher_btn.clicked.connect(self.launcher_clicked.emit)
-        head_lay.addWidget(self.launcher_btn)
+        self.card.add_header_button(self.launcher_btn)
 
         # Chevron state indicator. Text is swapped between ▾ (expanded)
-        # and ▸ (collapsed); no rotation animation — the height tween
+        # and ▸ (collapsed); no rotation animation - the height tween
         # carries the motion. Styled in apply_theme.
         self._chev = QLabel("▾")
         self._chev.setObjectName("section_chev")
         self._chev.setAlignment(Qt.AlignCenter)
         self._chev.setFixedWidth(22)
-        head_lay.addWidget(self._chev)
+        self.card.add_header_button(self._chev)
 
-        card_lay.addWidget(header)
-
-        # _body_wrap holds everything that collapses (grid + empty state).
-        # Lives between the header and the bottom stretch. Transparent so the
-        # card surface paints through; otherwise QWidget's default opaque
-        # background would cover the card's bg_card fill.
+        # _body_wrap holds everything that collapses (grid + empty state +
+        # reserved-page hint + pager). Lives inside the card body. Transparent
+        # so the card surface paints through.
         self._body_wrap = QWidget()
         self._body_wrap.setAttribute(Qt.WA_TranslucentBackground, True)
         body_lay = QVBoxLayout(self._body_wrap)
         body_lay.setContentsMargins(0, 0, 0, 0)
         body_lay.setSpacing(0)
 
-        # Make grid_container transparent so the flat card surface shows
-        # through behind the tiles (otherwise QWidget paints its default
-        # solid bg and covers the card's bg_card fill).
+        # grid_container centers a block of fixed 336x96 tiles. The tiles are
+        # a fixed size, so the grid columns must NOT stretch (that would leave
+        # the tiles marooned in over-wide cells); instead the whole 2-column
+        # block is centered horizontally via outer stretches. A lone tile sits
+        # at 336px (one quadrant), two tiles sit adjacent and centered.
         self.grid_container = QWidget()
         self.grid_container.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.grid = QGridLayout(self.grid_container)
-        self.grid.setContentsMargins(14, 14, 14, 14)
+        gc_lay = QHBoxLayout(self.grid_container)
+        gc_lay.setContentsMargins(14, 14, 14, 14)
+        gc_lay.setSpacing(0)
+        gc_lay.addStretch(1)
+        grid_host = QWidget()
+        grid_host.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.grid = QGridLayout(grid_host)
+        self.grid.setContentsMargins(0, 0, 0, 0)
         self.grid.setSpacing(10)
-        # Fixed, uniform 2x2: equal stretch on BOTH columns and BOTH rows so every
-        # cell is always 1/4 of the grid area. Without this, a page with fewer than
-        # 4 tiles lets the populated column/row expand to fill the space (a lone
-        # tile would stretch to full width). The empty cells now reserve their
-        # quarter, keeping each account tile at a consistent quarter size and the
-        # page a stable 2x2 grid regardless of how many accounts are on it.
-        for i in (0, 1):
-            self.grid.setColumnStretch(i, 1)
-            self.grid.setRowStretch(i, 1)
-        self.grid_container.setMinimumHeight(2 * 130 + 10 + 28)  # 2 tile rows + gap + footer headroom
+        gc_lay.addWidget(grid_host)
+        gc_lay.addStretch(1)
+        # Reserve two tile rows + gap + footer headroom so a short page (one
+        # tile) does not collapse the card height.
+        self.grid_container.setMinimumHeight(2 * 130 + 10 + 28)
         body_lay.addWidget(self.grid_container)
 
         self.empty_state = EmptyState(game=game)
@@ -227,9 +170,8 @@ class LaunchSection(QWidget):
         self.empty_page_hint.setObjectName("empty_page_hint")
         self.empty_page_hint.setAlignment(Qt.AlignCenter)
         self.empty_page_hint.setVisible(False)
-        # Reserve the SAME area grid_container reserves (2 tile rows + gap +
-        # footer headroom) so a reserved (empty) landing page keeps the section
-        # height stable instead of shrinking when grid_container is hidden.
+        # Reserve the SAME area grid_container reserves so flipping to a
+        # reserved (empty) page keeps the section height stable.
         self.empty_page_hint.setMinimumHeight(2 * 130 + 10 + 28)
         body_lay.addWidget(self.empty_page_hint)
 
@@ -240,16 +182,19 @@ class LaunchSection(QWidget):
         self.pager.reorder_clicked.connect(self.reorder_clicked.emit)
         body_lay.addWidget(self.pager)
 
-        card_lay.addWidget(self._body_wrap)
+        self.card.add_row(self._body_wrap)
+        # A bottom stretch in the card body absorbs slack so the header +
+        # content stay at the TOP and any extra vertical space (a taller
+        # sibling card in full mode) becomes empty card area at the bottom
+        # rather than vertically stretching the content.
+        self.card._body_layout.addStretch(1)
 
-        # A bottom stretch absorbs slack so the card keeps the header +
-        # content at the TOP and any extra vertical space (e.g. when a
-        # sibling card in full mode is taller) becomes empty card area
-        # at the bottom rather than vertically-stretching the content.
-        card_lay.addStretch(1)
+        # Seed the sub line and expose it under the legacy `subline` attribute.
+        self.card.set_sub("No accounts yet")
+        self.subline = self.card.sub_label
 
-        # Cache dark default before apply_theme so _current_theme exists
-        # even if anything triggers a recompute before apply_theme runs.
+        # Cache dark default before apply_theme so _current_theme exists even
+        # if anything triggers a restyle before apply_theme runs.
         self._current_theme = get_theme_colors(True)
         # Initial styling: dark default. LaunchTab.apply_theme() overrides
         # immediately with the user's actual theme.
@@ -259,32 +204,20 @@ class LaunchSection(QWidget):
 
     def apply_theme(self, c: dict) -> None:
         """Rebuild every QSS string against the theme dict `c`.
-        Called on construction (dark default) and on every theme switch."""
+        Called on construction (dark default) and on every theme switch.
+        The card surface flips via its own is_dark path; the chevron, launcher
+        pill and page hint restyle from the legacy theme tokens."""
         self._current_theme = c
-        stripe = c["game_pill_ttr"] if self._game == "ttr" else c["game_pill_cc"]
-        self.card.setStyleSheet(
-            "QFrame#section_card {"
-            f" background: {c['bg_card']};"
-            f" border-left: 1px solid {c['border_card']};"
-            f" border-right: 1px solid {c['border_card']};"
-            f" border-bottom: 1px solid {c['border_card']};"
-            f" border-top: 2px solid {stripe};"
-            " border-radius: 10px;"
-            "}"
-        )
-        self._header_frame.setStyleSheet(
-            "QFrame#section_header {"
+        is_dark = QColor(c["text_primary"]).lightnessF() > 0.5
+        self._is_dark = is_dark
+        self.card.apply_theme(is_dark)
+        self._chev.setStyleSheet(
+            "QLabel#section_chev {"
             " background: transparent;"
-            f" border-bottom: 1px solid {c['border_muted']};"
+            f" color: {c['text_secondary']};"
+            " font-size: 14px;"
+            " padding: 4px 6px;"
             "}"
-        )
-        base_font_px = int(15 * self._content_scale)
-        self.title_label.setStyleSheet(
-            f"background: transparent; color: {c['text_primary']};"
-            f" font-weight: 700; font-size: {base_font_px}px;"
-        )
-        self.subline.setStyleSheet(
-            f"background: transparent; color: {c['text_muted']}; font-size: 12px;"
         )
         self.launcher_btn.setStyleSheet(
             "QToolButton {"
@@ -297,14 +230,6 @@ class LaunchSection(QWidget):
             "QToolButton:hover {"
             f" background: {c['bg_card_inner_hover']};"
             f" border-color: {c['border_card']};"
-            "}"
-        )
-        self._chev.setStyleSheet(
-            "QLabel#section_chev {"
-            " background: transparent;"
-            f" color: {c['text_secondary']};"
-            " font-size: 14px;"
-            " padding: 4px 6px;"
             "}"
         )
         # Propagate to children that own their own QSS.
@@ -321,6 +246,23 @@ class LaunchSection(QWidget):
         if hasattr(self, "pager"):
             self.pager.apply_theme(c)
 
+    def _set_sub_count(self, count: int, running: int = 0) -> None:
+        """Render the card sub line: "N accounts" (or "No accounts yet"),
+        with an optional green " · N running" suffix. The running count is
+        dormant until LaunchTab wires real running data through set_page."""
+        if count <= 0:
+            self.card.set_sub("No accounts yet")
+        else:
+            text = f"{count} account" + ("s" if count != 1 else "")
+            if running > 0:
+                green = _RUNNING_GREEN[self._is_dark]
+                text = (f'{text} · '
+                        f'<span style="color:{green}">{running} running</span>')
+                self.card.set_sub(text, rich_text=True)
+            else:
+                self.card.set_sub(text)
+        self.subline = self.card.sub_label
+
     def set_accounts(self, accounts: list[dict]) -> None:
         """Back-compat shim: render the given accounts as page 0 (no pagination).
         New code uses set_page(). Demo mode and a few legacy tests use this."""
@@ -334,57 +276,22 @@ class LaunchSection(QWidget):
         self.set_page(slice_, page=0, page_count=pc, base_index=0,
                       activity=[False] * pc, show_empty_state=(len(accounts) == 0),
                       at_ceiling=(len(accounts) >= 16))
-        self.subline.setText(
-            (f"{len(accounts)} account" + ("s" if len(accounts) != 1 else ""))
-            if accounts else "No accounts yet")
+        self._set_sub_count(len(accounts))
 
     def tile_at(self, section_index: int) -> AccountTile | None:
         if 0 <= section_index < len(self.tiles):
             return self.tiles[section_index]
         return None
 
-    def _recompute_content_scale(self) -> None:
-        """Compute scale factor from current width vs. the mode's reference width.
-        Update tile min-heights and section-header font sizes in lockstep.
-        """
-        ref = _REF_WIDTH.get(self._layout_mode, 720)
-        if ref <= 0:
-            return
-        raw = self.width() / ref
-        scale = max(1.0, min(raw, _SCALE_CLAMP_MAX))
-        if abs(scale - self._content_scale) < 0.01:
-            return
-        self._content_scale = scale
-        self._apply_content_scale_to_tiles()
-        # Tile min-heights just changed, so the section's sizeHint did
-        # too. Notify any listener (LaunchTab) that may need to re-sync
-        # sibling-section heights.
-        self.content_size_changed.emit()
-        # Title font size baked into apply_theme(...) via self._content_scale.
-        self.apply_theme(self._current_theme)
-
-    def _apply_content_scale_to_tiles(self) -> None:
-        """Apply the current _content_scale to every tile.
-        Called from _recompute_content_scale and from set_page (after
-        new tiles are constructed at their default 130 minHeight)."""
-        scaled_h = int(130 * self._content_scale)
-        for tile in self.tiles:
-            tile.setMinimumHeight(scaled_h)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._recompute_content_scale()
-
     def set_layout_mode(self, mode: str) -> None:
         """Apply per-section sizing for the app-wide layout mode.
 
         Compact: capped at 720px so the section fills-then-centers.
         Full: capped at 860px so two sections sit side-by-side comfortably
-        on a 1280-1720 wide window without each tile growing absurdly.
+        on a 1280-1720 wide window.
 
-        No-op if the mode is unknown or already current — same-mode calls
-        avoid both a redundant reveal flash and a redundant content-scale
-        recompute.
+        No-op if the mode is unknown or already current - same-mode calls
+        avoid a redundant reveal flash.
         """
         if mode not in _LAYOUT_MAX_WIDTH:
             return
@@ -394,13 +301,12 @@ class LaunchSection(QWidget):
         self.setMaximumWidth(self._max_width)
         self._layout_mode = mode
         self._refresh_vertical_size_policy()
-        self._recompute_content_scale()
         self._run_reveal_animation()
 
     def _run_reveal_animation(self) -> None:
         """Stagger-fade each tile from 0.0 to 1.0 opacity. Honors
         motion.is_reduced(): under reduced motion, opacities snap to 1.0.
-        Per-tile animation via QPropertyAnimation on tile_opacity — does NOT
+        Per-tile animation via QPropertyAnimation on tile_opacity - does NOT
         use QGraphicsOpacityEffect (see main.py:819-825 for why)."""
         tiles = list(self.tiles)
         if not tiles:
@@ -410,7 +316,7 @@ class LaunchSection(QWidget):
                 t.tile_opacity = 1.0
             return
         # Stop any in-flight reveal animations from a prior set_layout_mode
-        # call BEFORE replacing the list — QPropertyAnimation has no C++
+        # call BEFORE replacing the list - QPropertyAnimation has no C++
         # parent here, so its only liveness anchor is _reveal_anims. Drop
         # the list without stopping and PySide6 will GC running animations
         # mid-flight, leaving tiles stuck at partial opacity.
@@ -442,8 +348,9 @@ class LaunchSection(QWidget):
 
         animate=False snaps instantly; used by LaunchTab on startup to
         restore persisted state without a flash. animate=True runs a
-        height tween — unless reduce-motion is enabled, in which case
-        the animated path also snaps.
+        height tween - unless reduce-motion is enabled, in which case
+        the animated path also snaps. Either way the card surface is
+        desaturated when collapsed.
 
         No-op when `value` already matches `is_collapsed`. Programmatic
         calls do NOT emit `collapsed_changed`; only user header clicks
@@ -453,6 +360,8 @@ class LaunchSection(QWidget):
             return
         self.is_collapsed = value
         self._chev.setText("▸" if value else "▾")
+        # Collapsed/idle cards desaturate the whole painted surface.
+        self.card.set_desaturated(value)
         self._refresh_vertical_size_policy()
 
         if not animate or motion.is_reduced():
@@ -506,7 +415,7 @@ class LaunchSection(QWidget):
         """In full layout mode, vertical policy depends on collapse state:
         Expanding when expanded (stretch to fill), Preferred when collapsed
         (anchor to top with empty space below). In compact mode, vertical
-        policy is always Preferred — sections stack with natural heights."""
+        policy is always Preferred - sections stack with natural heights."""
         if self._layout_mode == "full" and not self.is_collapsed:
             self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         else:
@@ -517,10 +426,10 @@ class LaunchSection(QWidget):
     ) -> None:
         """After-animation cleanup: hide _body_wrap when collapsed, reset
         maximumHeight to unlimited when expanded so future content
-        (new tiles, scale bumps) isn't capped at the snapshot value.
+        (new tiles) isn't capped at the snapshot value.
 
         The `anim` argument is the specific animation object that fired.
-        Compare against `self._collapse_anim` directly — `self.sender()`
+        Compare against `self._collapse_anim` directly - `self.sender()`
         returns None when the slot is reached through a Python lambda,
         so we cannot use it for the stale-signal guard.
         """
@@ -533,7 +442,7 @@ class LaunchSection(QWidget):
         self._collapse_anim = None
 
     def _on_header_clicked(self) -> None:
-        """Slot for the header frame's `clicked` signal. Toggles state
+        """Slot for the card's `header_clicked` signal. Toggles state
         and emits `collapsed_changed` so LaunchTab can persist."""
         self.set_collapsed(not self.is_collapsed, animate=True)
         self.collapsed_changed.emit(self.is_collapsed)
@@ -547,13 +456,15 @@ class LaunchSection(QWidget):
         tile.edit_clicked.connect(lambda a=account_id: self.tile_edit.emit(a))
         tile.delete_clicked.connect(lambda a=account_id: self.tile_delete.emit(a))
         tile.expand_error_clicked.connect(lambda a=account_id: self.tile_expand_error.emit(a))
+        tile.portrait_clicked.connect(lambda a=account_id: self.tile_portrait_clicked.emit(a))
 
     def set_page(self, accounts: list[dict], *, page: int, page_count: int,
                  base_index: int, activity: list[bool], show_empty_state: bool,
                  at_ceiling: bool, show_reorder: bool = False) -> None:
         """Render one page. `accounts` is this page's slice; each dict has
-        label/username/id/state/message/raw_error. base_index is the absolute
-        index of the first tile (for badges). Tile signals carry account_id."""
+        label/username/id/state/message/raw_error plus optional primary_*
+        keys. base_index is the absolute index of the first tile (for slot
+        numbers). Tile signals carry account_id."""
         # Paged-view contract: render at most one page. Defensive slice so a
         # caller passing more than a page slice can't overflow the 2-row grid.
         accounts = accounts[:PAGE_SIZE]
@@ -575,7 +486,7 @@ class LaunchSection(QWidget):
             self.grid_container.setVisible(False)
             self.empty_page_hint.setVisible(False)
             self.pager.setVisible(False)
-            self.subline.setText("No accounts yet")
+            self.card.set_sub("No accounts yet")
             return
 
         self.empty_state.setVisible(False)
@@ -592,6 +503,20 @@ class LaunchSection(QWidget):
                 tile.set_account(acct.get("label", ""), acct.get("username", ""), abs_index)
                 tile.set_state(acct.get("state", "idle"), acct.get("message", ""),
                                acct.get("raw_error", ""))
+                # Primary-toon identity. Absent keys (today's callers) leave
+                # is_set False, so the tile shows the dashed numbered slot +
+                # "Set a primary toon" until the LaunchTab wiring task injects
+                # real data.
+                tile.set_primary_toon(
+                    name=acct.get("primary_name"),
+                    username=acct.get("username", ""),
+                    species=acct.get("primary_species"),
+                    accent=acct.get("primary_accent"),
+                    laff=acct.get("primary_laff"),
+                    max_laff=acct.get("primary_max_laff"),
+                    slot_number=abs_index + 1,
+                    is_set=bool(acct.get("primary_is_set")),
+                )
                 row, col = divmod(local, 2)
                 self.grid.addWidget(tile, row, col)
                 self.tiles.append(tile)
@@ -599,7 +524,6 @@ class LaunchSection(QWidget):
 
         self.pager.set_state(page=page, page_count=page_count, activity=activity,
                              show_add=not at_ceiling, show_reorder=show_reorder)
-        self._apply_content_scale_to_tiles()
         self.apply_theme(self._current_theme)
 
     def set_activity(self, activity: list[bool]) -> None:

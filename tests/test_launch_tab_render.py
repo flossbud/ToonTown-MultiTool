@@ -29,7 +29,7 @@ def test_five_accounts_show_two_pages_first_page_four_tiles(qapp):
     tab._build_ui()
     assert tab._page["ttr"] == 0
     assert len(tab.ttr_section.tiles) == 4
-    assert tab.ttr_section.tiles[0].badge.text() == "1"
+    assert tab.ttr_section.tiles[0].portrait._slot == 1
 
 
 def test_flip_to_page_two_shows_remaining(qapp):
@@ -38,7 +38,7 @@ def test_flip_to_page_two_shows_remaining(qapp):
     tab._on_page_changed("ttr", 1)
     assert tab._page["ttr"] == 1
     assert len(tab.ttr_section.tiles) == 1
-    assert tab.ttr_section.tiles[0].badge.text() == "5"
+    assert tab.ttr_section.tiles[0].portrait._slot == 5
 
 
 def test_four_accounts_reserve_landing_page(qapp):
@@ -57,8 +57,8 @@ def test_per_section_paging_is_independent(qapp):
     assert tab._page["cc"] == 0  # CC page unaffected
     # CC's rendered content must still be page 0 (badges 1-4), not just the int.
     assert len(tab.cc_section.tiles) == 4
-    assert tab.cc_section.tiles[0].badge.text() == "1"
-    assert tab.cc_section.tiles[3].badge.text() == "4"
+    assert tab.cc_section.tiles[0].portrait._slot == 1
+    assert tab.cc_section.tiles[3].portrait._slot == 4
 
 
 def test_clamps_page_after_shrink(qapp):
