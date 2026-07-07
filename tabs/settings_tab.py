@@ -321,7 +321,7 @@ class SettingsTab(QWidget):
         theme_value = self.settings_manager.get("theme", "system")
         theme_idx = (["system", "light", "dark"].index(theme_value)
                      if theme_value in ("system", "light", "dark") else 0)
-        theme_row = self._v2_row("Appearance")
+        theme_row = self._v2_row("Theme")
         self._theme_segment = self._v2_segment(["System", "Light", "Dark"], "blue")
         self._theme_segment.setCurrentIndex(theme_idx)
         self._theme_segment.index_changed.connect(self._on_theme_changed)
