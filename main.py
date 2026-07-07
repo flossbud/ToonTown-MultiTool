@@ -148,7 +148,6 @@ from services.window_manager import WindowManager
 from utils.game_registry import GameRegistry
 from utils.theme_manager import (
     apply_theme, resolve_theme, get_theme_colors,
-    make_nav_gamepad, make_nav_power, make_nav_keyboard, make_nav_gear,
     make_hint_icon, font_role,
     SystemThemeWatcher,
 )
@@ -174,7 +173,7 @@ from utils.widgets.window_chrome_style import (
 #
 # H_FULL=800 matches the pre-chip-rail trigger threshold so users who used
 # to enter Full at ~860 height (1280+80, 800+60) still can. At the trigger,
-# content area = 860 - HEADER_H(112) - CHIP_RAIL_H(64) = 684, which renders
+# content area = 860 - HEADER_H(112) - NAV_BAND_H(60) = 688, which renders
 # the 2x2 card grid at ~99.5% of its 632x360 reference (744-design). As
 # the window grows, cards scale up to 100% and then cap at _MAX_CARD.
 # The earlier bump to 852/864 preserved cards-at-100% at the trigger
@@ -194,14 +193,12 @@ DEADBAND_W = 80
 DEADBAND_H = 60
 
 # Chrome heights — used by H_FULL math, prewarm hint, and the header /
-# chip rail QFrames so the value lives in one place. CHIP_RAIL_H is the
-# minimum that lets a chip with text-under-icon at the configured 10pt
-# label font render its label without Qt clipping it under layout
-# pressure; if the chip sizeHint ever grows past 52px, bump this in
-# lockstep or `tests/test_chip_rail.py::test_chip_rail_height_accommodates_chip_sizeHint`
-# will fail.
+# nav band QFrames so the value lives in one place.
 HEADER_H = 112
-CHIP_RAIL_H = 64
+# Nav band height. The glass dock is 58px tall (segment 36 + container pad 6 +
+# glow margin 16); the band adds 1px top/bottom so its total is <= the old
+# 64px chip rail, which keeps the Full-UI height threshold math (above) valid.
+NAV_BAND_H = 60
 APP_DESKTOP_ID = "io.github.flossbud.ToonTownMultiTool"
 BETA_DESKTOP_ID = "io.github.flossbud.ToonTownMultiTool-beta"
 LEGACY_DESKTOP_ID = "toontown-multitool"
@@ -321,7 +318,7 @@ class MultiToonTool(QMainWindow):
         # The Multitoon pinwheel needs room for two cards side by side (each a
         # 172px portrait + a 158px control column + padding), so the window is
         # ~880px wide by default and clamps to a 820px minimum - the design
-        # reference is 820x840. Height (~862) fits header 112 + chip rail 64 +
+        # reference is 820x840. Height (~862) fits header 112 + nav band 60 +
         # the pinwheel grid + status bar without clipping. Clamp height to the
         # usable screen so small/scaled displays are not over-sized.
         from utils.window_layout import clamp_window_height
@@ -336,7 +333,7 @@ class MultiToonTool(QMainWindow):
         GameRegistry.instance()  # warm up before any launchers
         self.settings_manager = SettingsManager()
         # Hover-hints flag is read by the global tooltip eventFilter, which is
-        # installed before the chip rail builds — initialize it here so it
+        # installed before the nav band builds — initialize it here so it
         # always exists regardless of where the hint toggle is constructed.
         self._hints_enabled = bool(self.settings_manager.get("hints_enabled", True))
         from utils.update_defaults import apply_first_launch_defaults
@@ -446,7 +443,7 @@ class MultiToonTool(QMainWindow):
         initial_mode = self.settings_manager.get(CHAT_HANDLING_MODE, CHAT_HANDLING_MODE_DEFAULT)
         self.multitoon_tab.apply_chat_handling_mode(initial_mode)
 
-        # ── Build layout: header + banner + chip_rail + stacked content ────
+        # ── Build layout: header + banner + nav_band + stacked content ────
         root = QVBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -470,8 +467,8 @@ class MultiToonTool(QMainWindow):
         root.addWidget(self.update_banner)
         root.addWidget(self.admin_notice_banner)
 
-        self.chip_rail = self._build_chip_rail()
-        root.addWidget(self.chip_rail)
+        self.nav_band = self._build_nav_band()
+        root.addWidget(self.nav_band)
 
         self.stack = QStackedWidget()
         self.stack.addWidget(self.multitoon_tab)   # 0
@@ -1161,191 +1158,70 @@ class MultiToonTool(QMainWindow):
             if mt is not None:
                 mt._update_glow_timer()
 
-    # ── Chip Rail ──────────────────────────────────────────────────────────
+    # ── Nav band ────────────────────────────────────────────────────────────
 
-    def _build_chip_rail(self) -> QFrame:
-        rail = QFrame()
-        rail.setMinimumHeight(CHIP_RAIL_H)
-        rail.setObjectName("app_chip_rail")
+    def _build_nav_band(self) -> QFrame:
+        band = QFrame()
+        band.setMinimumHeight(NAV_BAND_H)
+        band.setObjectName("app_nav_band")
 
-        from utils.widgets.pill_indicator import PillIndicator
-        self.chip_pill = PillIndicator(rail)
-        self.chip_pill.lower()
-        # Install a lightweight QObject event filter (parented to rail so it
-        # is garbage-collected with the rail). Using a dedicated QObject
-        # rather than `self` keeps the test harness working — tests build via
-        # __new__, which doesn't call QMainWindow.__init__, so `self` is not
-        # a valid QObject for installEventFilter.
-        chip_pill_ref = self.chip_pill
-        outer_self = self  # captured for the nested class to access chip_buttons/stack
+        from utils.theme_manager import resolve_theme
+        is_dark = resolve_theme(self.settings_manager) == "dark"
+        from utils.widgets.glass_dock import GlassDock
+        nav_items = [
+            ("Multitoon", "make_nav_gamepad", "multitoon"),
+            ("Launcher", "make_nav_power", "launcher"),
+            ("Keysets", "make_nav_keyboard", "keysets"),
+            ("Settings", "make_nav_gear", "settings"),
+        ]
+        self.nav_dock = GlassDock(nav_items, is_dark=is_dark)
+        self.nav_dock.selected.connect(self.nav_select)
 
-        class _RailResizeFilter(QObject):
-            def eventFilter(self_, watched, event):  # noqa: N805
-                if event.type() == QEvent.Resize:
-                    chip_pill_ref.resize(watched.size())
-                    # Place the pill on the currently-selected chip whenever
-                    # the rail re-lays-out (initial show after __init__,
-                    # window resize, compact↔full layout swap). nav_select
-                    # runs during __init__ before chip geometries are
-                    # computed, so this filter is the source of truth for
-                    # initial placement and resize tracking.
-                    if not hasattr(outer_self, "chip_buttons"):
-                        return False
-                    # Use isChecked() — NOT stack.currentIndex() — because
-                    # during an in-flight push_slide_pages animation,
-                    # currentIndex is still the OUTGOING page (setCurrentIndex
-                    # is deferred to _finalize). chip.setChecked is applied
-                    # synchronously in nav_select so it reflects the truth.
-                    checked_idx = None
-                    for i, c in enumerate(outer_self.chip_buttons):
-                        if c.isChecked():
-                            checked_idx = i
-                            break
-                    if checked_idx is None:
-                        # No chip checked (e.g., user is on Credits via the
-                        # brand-click path) — leave the pill where it is.
-                        return False
-                    target_geom = outer_self.chip_buttons[checked_idx].geometry()
-                    if target_geom.isEmpty():
-                        return False
-                    # Cancel any in-flight slide_to — its end value points
-                    # at the chip's pre-resize geometry and is now stale.
-                    chip_pill_ref.cancel_animation()
-                    chip_pill_ref.set_pill_rect(QRectF(target_geom))
-                return False
-
-        self._chip_rail_resize_filter = _RailResizeFilter(rail)
-        rail.installEventFilter(self._chip_rail_resize_filter)
-
-        layout = QHBoxLayout(rail)
-        layout.setContentsMargins(12, 6, 12, 6)
+        layout = QHBoxLayout(band)
+        layout.setContentsMargins(12, 1, 12, 1)
         layout.setSpacing(4)
 
-        # Left phantom: invisible spacer whose width mirrors the right
-        # utility cluster (divider + hint + optional overflow). Without
-        # this counterbalance, the two addStretch() items around the chips
-        # only center them in the rail width minus the utility cluster —
-        # which appears visibly off-center. QSpacerItem (not QWidget) so
-        # there's nothing to paint. Sized in _update_chip_rail_phantom_width
-        # after the utility widgets exist.
-        self.chip_rail_left_phantom = QSpacerItem(
-            0, 0, QSizePolicy.Fixed, QSizePolicy.Minimum
-        )
-        layout.addSpacerItem(self.chip_rail_left_phantom)
-
-        self.chip_buttons = []
-        nav_items = [
-            ("Multitoon", 0),
-            ("Launcher",  1),
-            ("Keysets",   2),
-            ("Settings",  3),
-        ]
-        # 10pt explicitly so chips fit in CHIP_RAIL_H without Qt clipping the
-        # label. Inheriting the global 12pt makes chip sizeHint ~63px, which
-        # the chip rail's minimum cannot accommodate under window pressure —
-        # the result is icon-only chips, which the design rejects.
-        # QApplication.font() (not self.font()) so tests that build via
-        # __new__ — bypassing QMainWindow.__init__ — still work.
-        chip_font = QApplication.font()
-        chip_font.setPointSize(10)
-        from utils.widgets.chip_button import ChipButton
+        # Left phantom balances the right overflow cluster so the dock stays
+        # optically centered when the (debug-only) overflow button is visible.
+        self.nav_left_phantom = QSpacerItem(0, 0, QSizePolicy.Fixed, QSizePolicy.Minimum)
+        layout.addSpacerItem(self.nav_left_phantom)
         layout.addStretch()
-        for label, idx in nav_items:
-            chip = ChipButton()
-            chip.setObjectName(f"chip_{label.lower()}")
-            chip.setText(label)
-            chip.setFont(chip_font)
-            chip.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
-            chip.setIconSize(QSize(22, 22))
-            chip.setCheckable(True)
-            chip.setMinimumWidth(60)
-            # StrongFocus so mouse clicks transfer keyboard focus to the
-            # clicked chip. QToolButton defaults to TabFocus (Tab-only),
-            # which leaves focus stranded on whichever chip Qt assigned
-            # initial focus to — and the QSS `:focus` rule then paints a
-            # stale focus ring on a now-unselected chip.
-            chip.setFocusPolicy(Qt.StrongFocus)
-            chip.clicked.connect(lambda _checked, i=idx: self.nav_select(i))
-            # Hover and press animations are handled by ChipButton itself
-            # (paint_scale state machine driven by enterEvent/leaveEvent and
-            # the pressed/released signals). No external wiring needed.
-            layout.addWidget(chip)
-            self.chip_buttons.append(chip)
-
+        layout.addWidget(self.nav_dock, 0, Qt.AlignVCenter)
         layout.addStretch()
 
-        # No right phantom: with the app icon gone the rail has a single fixed
-        # cluster (hint + optional overflow) on the right. Centering is handled
-        # by sizing the left phantom in _update_chip_rail_phantom_width; a
-        # zero-width right spacer would be inert (Qt adds no spacing around a
-        # zero-size spacer item), so it is simply omitted.
-
-        # Overflow menu — visible only when debug logging is enabled.
-        # Uses a custom OverflowPopup (replaces Qt's QMenu so we can
-        # animate the open/close).
+        # Debug overflow (View Logs) — visible only when debug logging is on.
         from utils.widgets.overflow_popup import OverflowPopup
-        self.overflow_btn = QToolButton(rail)
+        self.overflow_btn = QToolButton(band)
         self.overflow_btn.setObjectName("rail_overflow")
         self.overflow_btn.setText("⋯")
         self.overflow_btn.setFixedSize(34, 34)
         self.overflow_btn.setToolTip("More")
         self.overflow_btn.setVisible(self.settings_manager.get("show_debug_tab", False))
-
         self.overflow_popup = OverflowPopup()
         self.overflow_popup.add_action("View Logs", lambda: self.nav_select(4))
 
         def _toggle_popup():
             from utils.motion import pop_menu
-            if self.overflow_popup.isVisible():
-                pop_menu(self.overflow_popup, self.overflow_btn, show=False)
-            else:
-                pop_menu(self.overflow_popup, self.overflow_btn, show=True)
+            pop_menu(self.overflow_popup, self.overflow_btn,
+                     show=not self.overflow_popup.isVisible())
         self.overflow_btn.clicked.connect(_toggle_popup)
         layout.addWidget(self.overflow_btn)
 
-        # Hint toggle far-right (moved here from the header). _hints_enabled is
-        # initialized in __init__; do not re-read it here.
-        self.hint_btn = QToolButton(rail)
-        self.hint_btn.setObjectName("hint_toggle")
-        self.hint_btn.setFixedSize(34, 34)
-        self.hint_btn.setIconSize(QSize(20, 20))
-        self.hint_btn.setCursor(Qt.PointingHandCursor)
-        self.hint_btn.setFocusPolicy(Qt.NoFocus)
-        self.hint_btn.clicked.connect(self._toggle_hints)
-        layout.addWidget(self.hint_btn)
+        self._update_nav_phantom_width()
+        return band
 
-        # Phantom width matches the now-built utility cluster.
-        self._update_chip_rail_phantom_width()
-
-        return rail
-
-    def _update_chip_rail_phantom_width(self):
-        """Keep the four chips at the geometric center of the rail. The only
-        fixed cluster sits on the right, in layout order: the debug overflow
-        button (34, present-but-hidden when debug is off) then the hint toggle
-        (34). The left end is empty (the app icon moved to the header corner).
-        Size the left phantom to the right cluster's width PLUS one layout-
-        spacing gap: the right cluster carries an extra leading spacing slot
-        (from the always-present overflow item) that the corner-flush left
-        phantom has no mirror for. Without the extra gap the chips drift ~2px
-        left; with it they center exactly (verified by
-        test_chip_rail_chips_are_visually_centered, matching the prior
-        icon-based layout)."""
-        if not hasattr(self, "chip_rail_left_phantom"):
+    def _update_nav_phantom_width(self):
+        """Balance the right overflow cluster so the dock stays centered. The
+        overflow button (34) is present-but-hidden when debug is off; only add
+        the phantom when it is actually visible."""
+        if not hasattr(self, "nav_left_phantom"):
             return
-        right = 34  # hint toggle
+        right = 0
         if self.settings_manager.get("show_debug_tab", False):
-            right += 34 + 4  # overflow button (34) + its leading spacing gap (4)
-        # self.chip_rail is not yet assigned on the first call (from inside
-        # _build_chip_rail), so fall back to 4 — which matches the setSpacing(4)
-        # set on that layout.
-        spacing = (self.chip_rail.layout().spacing()
-                   if hasattr(self, "chip_rail") else 4)
-        self.chip_rail_left_phantom.changeSize(
-            right + spacing, 0, QSizePolicy.Fixed, QSizePolicy.Minimum
-        )
-        if hasattr(self, "chip_rail"):
-            self.chip_rail.layout().invalidate()
+            right = 34 + 4  # overflow button + its leading spacing gap
+        self.nav_left_phantom.changeSize(right, 0, QSizePolicy.Fixed, QSizePolicy.Minimum)
+        if hasattr(self, "nav_band"):
+            self.nav_band.layout().invalidate()
 
     def _on_active_page_changed(self, index: int):
         """Fired by stack.currentChanged on every page switch. Lights the header
@@ -1406,9 +1282,8 @@ class MultiToonTool(QMainWindow):
                 push_slide_pages(self.stack, prev_index, 5, axis="v")
             )
 
-        for chip in self.chip_buttons:
-            chip.setChecked(False)
-        self._apply_chip_styles()
+        # Credits (index 5) has no dock segment; leave the dock's selection as
+        # it is so returning from Credits restores the prior tab's tint.
 
     def _on_app_icon_clicked(self):
         """Header app icon: open Credits, or (if already on Credits) return to
@@ -1431,15 +1306,10 @@ class MultiToonTool(QMainWindow):
         self._begin_credits_transition(
             push_slide_pages(self.stack, 5, target, axis="v", reverse=True)
         )
-        for i, chip in enumerate(self.chip_buttons):
-            chip.setChecked(i == target)
-        self._apply_chip_styles()
-        # Move the pill to the target chip, mirroring nav_select. Targets 0-3
-        # are chips; target 4 (debug) is overflow-only, so no pill move (the
-        # range guard handles it).
-        if 0 <= target < len(self.chip_buttons) and hasattr(self, "chip_pill"):
-            from PySide6.QtCore import QRectF
-            self.chip_pill.slide_to(QRectF(self.chip_buttons[target].geometry()))
+        # Drive the dock back to the tab we return to. Targets 0-3 are dock
+        # segments; target 4 (debug) has no segment, so the range guard skips it.
+        if hasattr(self, "nav_dock") and 0 <= target < len(self.nav_dock.segments):
+            self.nav_dock.select(target, animate=True)
 
     def _begin_credits_transition(self, group):
         """Lower the in-flight guard when the given slide finishes (immediately
@@ -1653,21 +1523,10 @@ class MultiToonTool(QMainWindow):
             from utils.motion import push_slide_pages
             push_slide_pages(self.stack, prev_index, index, axis="h")
 
-        for i, chip in enumerate(self.chip_buttons):
-            chip.setChecked(i == index)
-        self._apply_chip_styles()
-
-        # Slide the pill to the new chip's geometry (in rail coordinates).
-        # Skip on the first call: chip geometries aren't yet computed at this
-        # point in __init__, and the chip rail's resize event filter places
-        # the pill correctly on first layout activation.
-        if (
-            was_initialized
-            and 0 <= index < len(self.chip_buttons)
-            and hasattr(self, "chip_pill")
-        ):
-            target = self.chip_buttons[index].geometry()
-            self.chip_pill.slide_to(QRectF(target))
+        # Drive the dock's selected segment (0..3 are the dock tabs; index 4/5
+        # are Logs/Credits, which have no segment — leave the dock as-is).
+        if hasattr(self, "nav_dock") and 0 <= index < len(self.nav_dock.segments):
+            self.nav_dock.select(index, animate=was_initialized)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1794,55 +1653,6 @@ class MultiToonTool(QMainWindow):
             settings=tab.settings_manager,
         )
 
-    def _apply_chip_styles(self):
-        """Apply theme-aware QSS + icon rendering to the chip rail's nav chips.
-
-        Selection is rendered entirely by the PillIndicator (a hollow accent
-        border that slides between chips on nav change). The chips themselves
-        are transparent buttons — they only carry hover-tint feedback and an
-        icon/text color tweak for the selected one.
-        """
-        c = self._theme_colors()
-        icon_factories = [
-            make_nav_gamepad, make_nav_power,
-            make_nav_keyboard, make_nav_gear,
-        ]
-        # Update the pill border color from the current theme accent.
-        if hasattr(self, "chip_pill"):
-            self.chip_pill.set_colors(c['header_accent'])
-        # Fixed icon size for ALL chips. Selection is indicated by:
-        #   - the PillIndicator (animated border around the selected chip)
-        #   - icon color (accent for selected, muted for default)
-        #   - text color (sidebar_text_sel vs sidebar_text)
-        # Animated hover/press scaling is uniform across the whole chip and
-        # is owned by ChipButton.paint_scale — so the icon size must stay
-        # constant or the per-frame iconSize change fights the paint_scale
-        # animation.
-        ICON_SIZE = 22
-        for i, chip in enumerate(self.chip_buttons):
-            is_sel = chip.isChecked()
-            chip.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
-            color = QColor(c['header_accent'] if is_sel else c['sidebar_text'])
-            if i < len(icon_factories):
-                chip.setIcon(icon_factories[i](ICON_SIZE + 4, color))
-            text_color = c['sidebar_text_sel'] if is_sel else c['sidebar_text']
-            chip.setStyleSheet(f"""
-                QToolButton#{chip.objectName()} {{
-                    background: transparent;
-                    color: {text_color};
-                    border: 1px solid transparent;
-                    border-radius: 8px;
-                    font-size: 10pt;
-                    padding: 4px 10px;
-                }}
-                QToolButton#{chip.objectName()}:hover {{
-                    background: {c['sidebar_btn_sel']};
-                }}
-                QToolButton#{chip.objectName()}:focus {{
-                    outline: none;
-                }}
-            """)
-
     # ── Theme ──────────────────────────────────────────────────────────────
 
     def _theme_colors(self):
@@ -1870,16 +1680,17 @@ class MultiToonTool(QMainWindow):
         self._notify_chrome_theme()
         self._refresh_header_logo()
 
-        # Chip rail
-        self.chip_rail.setStyleSheet(f"""
-            QFrame#app_chip_rail {{
-                background: {c['sidebar_bg']};
+        # Nav band: flat window body + single hairline BELOW the dock.
+        self.nav_band.setStyleSheet(f"""
+            QFrame#app_nav_band {{
+                background: {c['bg_app']};
                 border-bottom: 1px solid {c['sidebar_border']};
             }}
         """)
+        if hasattr(self, "nav_dock"):
+            self.nav_dock.apply_theme(resolve_theme(self.settings_manager) == "dark")
         self.update_banner.apply_theme(c)
         self.admin_notice_banner.apply_theme(c)
-        self._apply_chip_styles()
         if hasattr(self, "overflow_popup"):
             self.overflow_popup.set_theme_colors(
                 bg_hex=c['bg_card'],
@@ -1922,8 +1733,8 @@ class MultiToonTool(QMainWindow):
         self.multitoon_tab.input_service.logging_enabled = show
         self.overflow_btn.setVisible(show)
         # Right utility cluster width changed — re-mirror it on the left
-        # phantom so chips stay geometrically centered.
-        self._update_chip_rail_phantom_width()
+        # phantom so the dock stays geometrically centered.
+        self._update_nav_phantom_width()
         ttr_api.set_debug(show)
         if not show and self.stack.currentIndex() == 4:
             self.nav_select(0)
