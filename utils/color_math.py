@@ -66,7 +66,7 @@ def with_alpha(color: "QColor | str", fraction: float) -> QColor:
     """
     f = max(0.0, min(1.0, float(fraction)))
     c = QColor(_coerce(color))
-    c.setAlpha(round(f * 255))
+    c.setAlpha(int(f * 255 + 0.5))
     return c
 
 
