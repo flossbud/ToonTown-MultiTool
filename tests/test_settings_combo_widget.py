@@ -245,17 +245,16 @@ def settings_manager():
     return _Stub()
 
 
-def test_general_page_theme_dropdown_is_settings_combobox(app, settings_manager):
-    """The Appearance (theme) dropdown on the General page must be a SettingsComboBox
-    (not a plain QComboBox), so it gets the custom chevron + current-value
-    dot via inheritance."""
-    from utils.shared_widgets import SettingsComboBox
+def test_general_page_theme_control_is_segmented_pill(app, settings_manager):
+    """The Appearance (theme) control on the General page is a v2 SegmentedPill
+    (System/Light/Dark), not a dropdown."""
+    from utils.widgets.pill_controls import SegmentedPill
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
-    combo = _find_combo_by_label(tab, "Appearance")
+    seg = tab._theme_segment
     tab.deleteLater()
-    assert isinstance(combo, SettingsComboBox), (
-        f"Appearance dropdown is {type(combo).__name__}, expected SettingsComboBox"
+    assert isinstance(seg, SegmentedPill), (
+        f"Appearance control is {type(seg).__name__}, expected SegmentedPill"
     )
 
 
@@ -331,28 +330,21 @@ def test_menu_text_role_overrides_painted_menu_item_text(app):
     )
 
 
-def test_reduce_motion_combo_uses_short_closed_text(app, settings_manager):
-    """The Reduce motion dropdown's first option must show "System" in the
-    closed state (not the truncated "System d") while still offering
-    "System default" in the open menu."""
-    from utils.shared_widgets import SettingsComboBox, MENU_TEXT_ROLE
+def test_reduce_motion_segment_uses_short_option_text(app, settings_manager):
+    """The Reduce motion SegmentedPill's first option reads "System" (the
+    fuller explanation lives in the row's helper text below the control,
+    not a truncated dropdown item)."""
     from tabs.settings_tab import SettingsTab
 
     tab = SettingsTab(settings_manager)
-    combo = _find_combo_by_label(tab, "Reduce motion")
-    assert combo is not None, "could not find Reduce motion dropdown"
+    seg = tab._rm_segment
+    assert seg is not None, "could not find Reduce motion segment"
 
-    # itemText(0) reflects what's drawn in the closed state.
-    short_text = combo.itemText(0)
-    # itemData with MENU_TEXT_ROLE is what the menu shows.
-    long_text = combo.itemData(0, MENU_TEXT_ROLE)
+    short_text = seg._options[0]
     tab.deleteLater()
 
     assert short_text == "System", (
-        f"closed-state text must be 'System' (no truncation); got {short_text!r}"
-    )
-    assert long_text == "System default", (
-        f"menu text must remain descriptive; got {long_text!r}"
+        f"first option must be 'System'; got {short_text!r}"
     )
 
 

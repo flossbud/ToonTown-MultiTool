@@ -4,7 +4,8 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from utils.settings_manager import SettingsManager
-from tabs.settings_tab import SettingsTab, SettingsField, Switch
+from tabs.settings_tab import SettingsTab, Switch
+from utils.widgets.inset_row import InsetRow
 
 
 @pytest.fixture(scope="session")
@@ -14,7 +15,7 @@ def qapp():
 
 
 def _find_field(tab, label_text):
-    for f in tab.pages["general"].findChildren(SettingsField):
+    for f in tab.pages["general"].findChildren(InsetRow):
         if f.label_widget.text() == label_text:
             return f
     return None

@@ -13,9 +13,20 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
-from utils.theme_manager import apply_theme, get_theme_colors, resolve_theme
+from utils.icon_factory import (
+    make_download_icon, make_sliders_icon,
+)
+from utils.theme_manager import (
+    V2_ACCENTS, apply_theme, get_theme_colors, resolve_theme,
+)
 from utils.shared_widgets import MENU_TEXT_ROLE, SettingsComboBox, Switch
 from utils.widgets import install_modern_scrollbar
+from utils.widgets.card_surface import CardSurface
+from utils.widgets.inset_row import InsetRow
+from utils.widgets.pill_controls import (
+    DropdownPill, GhostExpander, PillButton, SegmentedPill,
+)
+from utils.widgets.portrait_badge import _qcolor_from_rgba
 from services.ttr_login_service import (
     engine_binary_path,
     find_engine_path,
@@ -839,6 +850,11 @@ class SettingsTab(QWidget):
         self.settings_manager = settings_manager
         self.pages: dict[str, QWidget] = {}
         self._panels: list[SettingsPanel] = []
+        self._cards: list[CardSurface] = []          # v2 cards
+        self._v2_rows: list[InsetRow] = []           # v2 inset rows
+        self._v2_switches: list[tuple[Switch, str]] = []   # (switch, accent key)
+        self._v2_segments: list[tuple[SegmentedPill, str]] = []
+        self._v2_buttons: list[PillButton] = []
         self._current_page_key: str = "general"
         self._layout_mode: str = "compact"
         self._update_checker = None
@@ -902,157 +918,140 @@ class SettingsTab(QWidget):
 
         self.refresh_theme()
 
+    # ── v2 kit factories (register for theme propagation) ────────────────
+    def _v2_switch(self, checked: bool, accent_key: str) -> Switch:
+        sw = Switch(checked)
+        self._v2_switches.append((sw, accent_key))
+        return sw
+
+    def _v2_row(self, label: str, helper: str | None = None) -> InsetRow:
+        row = InsetRow(label, helper)
+        self._v2_rows.append(row)
+        return row
+
+    def _v2_button(self, text: str, tone: str = "neutral") -> PillButton:
+        btn = PillButton(text, tone)
+        self._v2_buttons.append(btn)
+        return btn
+
+    def _v2_segment(self, options, accent_key: str, stretch: bool = False) -> SegmentedPill:
+        seg = SegmentedPill(options, stretch=stretch)
+        self._v2_segments.append((seg, accent_key))
+        return seg
+
     # ── Page builders ─────────────────────────────────────────────────────
     def _build_general_page(self, page):
         from utils import build_info
-        page._title_label.setText("General")
-        page._sub_label.setText("App-wide preferences.")
-
-        # Insertion point: the page layout currently has [title, sub, <stretch>].
-        # Insert panels at index 2 (just before the stretch).
         lay = page._panel_layout
-        insert_at = lay.count() - 1  # before the stretch
+        insert_at = lay.count() - 1
 
         # ── Appearance & behavior ────────────────────────────────────────
-        appearance = SettingsPanel(title="Appearance & behavior", stripe="blue")
-        self._panels.append(appearance)
+        appearance = CardSurface("blue", title="Appearance & behavior",
+                                 icon=make_sliders_icon(20))
+        self._cards.append(appearance)
 
-        # Theme
         theme_value = self.settings_manager.get("theme", "system")
-        theme_idx = (
-            ["system", "light", "dark"].index(theme_value)
-            if theme_value in ("system", "light", "dark")
-            else 0
-        )
-        theme_field = SettingsField("Appearance")
-        theme_combo = SettingsComboBox()
-        theme_combo.addItems(["System", "Light", "Dark"])
-        theme_combo.setCurrentIndex(theme_idx)
-        theme_combo.setFixedWidth(150)
-        theme_combo.currentIndexChanged.connect(self._on_theme_changed)
-        theme_field.set_control(theme_combo)
-        appearance.add_field(theme_field)
+        theme_idx = (["system", "light", "dark"].index(theme_value)
+                     if theme_value in ("system", "light", "dark") else 0)
+        theme_row = self._v2_row("Appearance")
+        self._theme_segment = self._v2_segment(["System", "Light", "Dark"], "blue")
+        self._theme_segment.setCurrentIndex(theme_idx)
+        self._theme_segment.index_changed.connect(self._on_theme_changed)
+        theme_row.set_control(self._theme_segment)
+        appearance.add_row(theme_row)
 
-        # Reduce motion (tri-state)
         import utils.motion as motion
         motion.set_settings_manager(self.settings_manager)
         explicit = self.settings_manager.get("reduce_motion_set_explicitly", False)
-        if not explicit:
-            rm_idx = 0
-        elif self.settings_manager.get("reduce_motion", False):
-            rm_idx = 1
-        else:
-            rm_idx = 2
-        rm_field = SettingsField(
+        rm_idx = 0 if not explicit else (
+            1 if self.settings_manager.get("reduce_motion", False) else 2)
+        rm_row = self._v2_row(
             "Reduce motion",
-            helper=(
-                "System default follows your desktop's reduce-motion setting. "
-                "Choose On or Off to override."
-            ),
-        )
-        rm_combo = SettingsComboBox()
-        rm_combo.addItems(["System", "On", "Off"])
-        # Menu shows the descriptive "System default"; closed state keeps
-        # the terser "System" so the 150px fixed width doesn't truncate.
-        rm_combo.setItemData(0, "System default", MENU_TEXT_ROLE)
-        rm_combo.setCurrentIndex(rm_idx)
-        rm_combo.setFixedWidth(150)
-        rm_combo.currentIndexChanged.connect(self._on_reduce_motion_changed)
-        rm_field.set_control(rm_combo)
-        appearance.add_field(rm_field)
+            helper=("System default follows your desktop's reduce-motion "
+                    "setting. Choose On or Off to override."))
+        self._rm_segment = self._v2_segment(["System", "On", "Off"], "blue")
+        self._rm_segment.setCurrentIndex(rm_idx)
+        self._rm_segment.index_changed.connect(self._on_reduce_motion_changed)
+        rm_row.set_control(self._rm_segment)
+        appearance.add_row(rm_row)
 
-        # Window chrome: native OS title bar vs the in-app custom controls.
-        # Applied on restart (window flags are construction-time).
-        tb_enabled = bool(self.settings_manager.get("use_system_title_bar", False))
-        tb_field = SettingsField(
+        tb_row = self._v2_row(
             "Use system title bar",
             helper="Show your OS window frame instead of the in-app controls. "
-                   "Restart required to take effect.",
-        )
-        tb_switch = Switch(tb_enabled)
+                   "Restart required to take effect.")
+        tb_switch = self._v2_switch(
+            bool(self.settings_manager.get("use_system_title_bar", False)), "blue")
         tb_switch.toggled.connect(
-            lambda v: self.settings_manager.set("use_system_title_bar", v)
-        )
-        tb_field.set_control(tb_switch)
-        appearance.add_field(tb_field)
+            lambda v: self.settings_manager.set("use_system_title_bar", v))
+        tb_row.set_control(tb_switch)
+        appearance.add_row(tb_row)
 
-        # Start in Float UI mode: open straight into the transparent overlay at
-        # launch. Disabled (with the standard explanation) where Float UI is
-        # unsupported, so it never looks broken on non-X11 / no-Shape systems.
         from utils.settings_keys import START_IN_FLOAT_UI_MODE
         from utils.overlay.backend import get_overlay_backend
         try:
             float_available = bool(get_overlay_backend().is_available())
         except Exception:
             float_available = False
-        float_enabled = bool(self.settings_manager.get(START_IN_FLOAT_UI_MODE, False))
-        float_field = SettingsField(
+        float_row = self._v2_row(
             "Start in Float UI mode",
             helper="Open straight into the floating overlay instead of the "
-                   "windowed UI when the app launches.",
-        )
-        float_switch = Switch(float_enabled)
+                   "windowed UI when the app launches.")
+        float_switch = self._v2_switch(
+            bool(self.settings_manager.get(START_IN_FLOAT_UI_MODE, False)), "blue")
         float_switch.setObjectName("start_in_float_ui_switch")
         if float_available:
             float_switch.toggled.connect(
-                lambda v: self.settings_manager.set(START_IN_FLOAT_UI_MODE, v)
-            )
+                lambda v: self.settings_manager.set(START_IN_FLOAT_UI_MODE, v))
         else:
             float_switch.setEnabled(False)
             float_switch.setToolTip("Float UI is not available on this system")
-            float_field.setToolTip("Float UI is not available on this system")
-        float_field.set_control(float_switch)
-        appearance.add_field(float_field)
+            float_row.setToolTip("Float UI is not available on this system")
+        float_row.set_control(float_switch)
+        appearance.add_row(float_row)
 
         lay.insertWidget(insert_at, appearance)
         insert_at += 1
 
         # ── Updates ──────────────────────────────────────────────────────
-        updates = SettingsPanel(title="Updates", stripe="yellow")
-        self._panels.append(updates)
+        updates = CardSurface("yellow", title="Updates", icon=make_download_icon(20))
+        self._cards.append(updates)
 
-        upd_enabled = bool(self.settings_manager.get("check_for_updates_at_startup", False))
-        upd_field = SettingsField(
+        upd_row = self._v2_row(
             "Check for updates on startup",
-            helper="Look for new releases when the app launches.",
-        )
-        upd_switch = Switch(upd_enabled)
+            helper="Look for new releases when the app launches.")
+        upd_switch = self._v2_switch(
+            bool(self.settings_manager.get("check_for_updates_at_startup", False)),
+            "yellow")
         upd_switch.toggled.connect(
-            lambda v: self.settings_manager.set("check_for_updates_at_startup", v)
-        )
-        upd_field.set_control(upd_switch)
-        updates.add_field(upd_field)
+            lambda v: self.settings_manager.set("check_for_updates_at_startup", v))
+        upd_row.set_control(upd_switch)
+        updates.add_row(upd_row)
 
-        check_now_field = SettingsField(
+        check_now_row = self._v2_row(
             "Check for updates now",
-            helper=f"Current build: {build_info.version_string()}",
-        )
-        self._check_now_btn = QPushButton("Check now")
-        self._check_now_btn.setCursor(Qt.PointingHandCursor)
-        self._check_now_btn.setFixedHeight(28)
+            helper=f"Current build: {build_info.version_string()}")
+        self._check_now_btn = self._v2_button("Check now")
         self._check_now_btn.clicked.connect(self._on_check_now_clicked)
-        check_now_field.set_control(self._check_now_btn)
-        self._check_now_field = check_now_field  # for completion handlers
-        updates.add_field(check_now_field)
+        check_now_row.set_control(self._check_now_btn)
+        self._check_now_field = check_now_row      # completion handlers use .helper_widget
+        updates.add_row(check_now_row)
 
         lay.insertWidget(insert_at, updates)
 
         # ── macOS permissions (darwin only) ──────────────────────────────
         if sys.platform == "darwin":
             insert_at += 1
-            macos = SettingsPanel(title="macOS", stripe="blue")
-            self._panels.append(macos)
-            perms_field = SettingsField(
+            from utils.icon_factory import make_nav_gear
+            macos = CardSurface("blue", title="macOS", icon=make_nav_gear(20, None))
+            self._cards.append(macos)
+            perms_row = self._v2_row(
                 "Permissions",
                 helper="Accessibility and Input Monitoring let the app control "
-                       "your background toons. Open the setup guide to grant them.",
-            )
-            perms_btn = QPushButton("Open guide…")
-            perms_btn.setCursor(Qt.PointingHandCursor)
-            perms_btn.setFixedHeight(28)
+                       "your background toons. Open the setup guide to grant them.")
+            perms_btn = self._v2_button("Open guide...")
             perms_btn.clicked.connect(self._open_macos_permissions)
-            perms_field.set_control(perms_btn)
-            macos.add_field(perms_field)
+            perms_row.set_control(perms_btn)
+            macos.add_row(perms_row)
             lay.insertWidget(insert_at, macos)
 
     def _open_macos_permissions(self):
@@ -2413,13 +2412,24 @@ class SettingsTab(QWidget):
         # Panels
         for panel in self._panels:
             panel.apply_theme(c, is_dark)
-        # Switches
-        for s in self.findChildren(Switch):
-            s.set_theme_colors(
-                track_on=c["accent_blue_btn"],
-                track_off=c["border_input"] if is_dark else "#d1d1d6",
-                thumb="#ffffff",
-            )
+        # v2 kit propagation
+        for card in self._cards:
+            card.apply_theme(is_dark, animate=True)
+        for row in self._v2_rows:
+            row.apply_theme(is_dark)
+        from utils.theme_manager import get_v2_tokens
+        t2 = get_v2_tokens(is_dark)
+        for sw, key in self._v2_switches:
+            a = V2_ACCENTS[key]
+            on = a["b"] if key == "red" else a["c"]
+            sw.set_theme_colors(track_on=on,
+                                track_off=_qcolor_from_rgba(t2["sw_off"]),
+                                thumb="#ffffff")
+            sw.set_accent(on, a["b"])
+        for seg, key in self._v2_segments:
+            seg.apply_theme(is_dark, accent_key=key)
+        for btn in self._v2_buttons:
+            btn.apply_theme(is_dark)
         # SettingsComboBox dropdowns — propagate accent + theme polarity so
         # the menu's current-value dot and the chevron color follow the
         # active theme (matches the Switch propagation right above).

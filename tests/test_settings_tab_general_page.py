@@ -39,10 +39,10 @@ def test_general_page_has_two_panels(qapp, settings_manager):
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
     page = tab.pages["general"]
-    # The page's panel layout has the title, subtitle, two panels, and a stretch.
-    from tabs.settings_tab import SettingsPanel
-    panels = page.findChildren(SettingsPanel)
-    titles = [p.title_label.text() for p in panels]
+    # The page's panel layout has the micro label, two v2 cards, and a stretch.
+    from utils.widgets.card_surface import CardSurface
+    cards = page.findChildren(CardSurface)
+    titles = [c.title_label.text() for c in cards]
     assert "Appearance & behavior" in titles
     assert "Updates" in titles
 
@@ -50,31 +50,27 @@ def test_general_page_has_two_panels(qapp, settings_manager):
 def test_general_page_appearance_dropdown_changes_theme(qapp, settings_manager):
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
-    # Find the Appearance dropdown by traversing field labels.
-    field = _find_field(tab, "general", "Appearance")
-    assert field is not None
-    # Combobox is the control widget.
-    from PySide6.QtWidgets import QComboBox
-    assert isinstance(field.control_widget, QComboBox)
-    # Setting index 1 (Light) should persist "light".
-    field.control_widget.setCurrentIndex(1)
+    # The Appearance control is now a SegmentedPill (System/Light/Dark).
+    from utils.widgets.pill_controls import SegmentedPill
+    assert isinstance(tab._theme_segment, SegmentedPill)
+    # Selecting index 1 (Light) should persist "light".
+    tab._theme_segment.index_changed.emit(1)
     assert settings_manager.get("theme") == "light"
 
 
 def test_general_page_reduce_motion_tri_state(qapp, settings_manager):
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
-    field = _find_field(tab, "general", "Reduce motion")
     # On: explicit=True, reduce_motion=True
-    field.control_widget.setCurrentIndex(1)
+    tab._rm_segment.index_changed.emit(1)
     assert settings_manager.get("reduce_motion_set_explicitly") is True
     assert settings_manager.get("reduce_motion") is True
     # Off: explicit=True, reduce_motion=False
-    field.control_widget.setCurrentIndex(2)
+    tab._rm_segment.index_changed.emit(2)
     assert settings_manager.get("reduce_motion_set_explicitly") is True
     assert settings_manager.get("reduce_motion") is False
     # System default: explicit=False, reduce_motion=False
-    field.control_widget.setCurrentIndex(0)
+    tab._rm_segment.index_changed.emit(0)
     assert settings_manager.get("reduce_motion_set_explicitly") is False
     assert settings_manager.get("reduce_motion") is False
 
@@ -127,9 +123,9 @@ def test_general_page_check_now_button_shows_disabled_state(qapp, settings_manag
 
 
 def _find_field(tab, page_key, label):
-    from tabs.settings_tab import SettingsField
+    from utils.widgets.inset_row import InsetRow
     page = tab.pages[page_key]
-    for f in page.findChildren(SettingsField):
+    for f in page.findChildren(InsetRow):
         if f.label_widget.text() == label:
             return f
     return None
