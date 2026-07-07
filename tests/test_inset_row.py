@@ -52,3 +52,36 @@ def test_helper_present_and_themed(app):
     row.apply_theme(is_dark=False)
     assert row.helper_widget is not None
     assert "11px" in row.helper_widget.styleSheet()
+
+
+def test_label_indent_uniform_regardless_of_control_width(app):
+    """The helper's 470px cap must not center the text column: label x must
+    be identical for narrow (switch-sized) and wide (segment-sized) controls."""
+    from PySide6.QtWidgets import QWidget as _W
+    rows = []
+    for ctrl_w in (50, 300):
+        row = InsetRow("Label", helper="Some helper text.")
+        ctrl = _W()
+        ctrl.setFixedSize(ctrl_w, 30)
+        row.set_control(ctrl)
+        row.resize(660, 60)
+        row.show()
+        rows.append(row)
+    QApplication.processEvents()
+    xs = [r.label_widget.mapTo(r, r.label_widget.rect().topLeft()).x()
+          for r in rows]
+    assert xs[0] == xs[1]
+    for r in rows:
+        r.hide()
+
+
+def test_bottom_buttons_right_aligned(app):
+    row = InsetRow("External CC log directory (advanced)", helper="h")
+    a, b = QPushButton("Browse"), QPushButton("Clear")
+    row.add_control(a)
+    row.add_control(b)
+    slot = row._bottom_control_slot
+    # stretch first, then the buttons in add order -> right-aligned row
+    assert slot.itemAt(0).spacerItem() is not None
+    assert slot.itemAt(1).widget() is a
+    assert slot.itemAt(2).widget() is b

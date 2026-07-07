@@ -50,6 +50,12 @@ class InsetRow(QFrame):
         else:
             self.helper_widget = None
         top_row.addLayout(text_col, 1)
+        # Left-pin the text column: the helper's 470px readable-width cap
+        # caps the WHOLE column (a box layout's max width is the minimum of
+        # its children's), and without an explicit alignment the surplus
+        # space in rows with narrow controls CENTERS the capped column -
+        # text indented on some rows but not others (live finding, 2026-07).
+        top_row.setAlignment(text_col, Qt.AlignLeft | Qt.AlignVCenter)
         self._top_control_slot = QHBoxLayout()
         self._top_control_slot.setContentsMargins(0, 0, 0, 0)
         self._top_control_slot.setSpacing(6)
@@ -81,22 +87,23 @@ class InsetRow(QFrame):
         self._controls.append(widget)
         if self.control_widget is None:
             self.control_widget = widget
+        # The bottom slot's stretch sits at index 0, so plain appends land
+        # AFTER it and the buttons hug the RIGHT edge (design: "2+ buttons
+        # move to a right-aligned row below the text"). Inserting before
+        # the stretch left-aligned them (live finding, 2026-07).
         if len(self._controls) == 1:
             self._top_control_slot.addWidget(widget)
         elif len(self._controls) == 2:
             first = self._controls[0]
             self._top_control_slot.removeWidget(first)
             first.setParent(self._bottom_row)
-            self._bottom_control_slot.insertWidget(
-                self._bottom_control_slot.count() - 1, first)
+            self._bottom_control_slot.addWidget(first)
             widget.setParent(self._bottom_row)
-            self._bottom_control_slot.insertWidget(
-                self._bottom_control_slot.count() - 1, widget)
+            self._bottom_control_slot.addWidget(widget)
             self._bottom_row.show()
         else:
             widget.setParent(self._bottom_row)
-            self._bottom_control_slot.insertWidget(
-                self._bottom_control_slot.count() - 1, widget)
+            self._bottom_control_slot.addWidget(widget)
 
     def set_full_width_control(self, widget) -> None:
         self._clear_controls()
