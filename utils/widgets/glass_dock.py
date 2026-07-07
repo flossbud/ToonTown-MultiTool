@@ -1,9 +1,12 @@
 """GlassDock - the app's tab switcher as one liquid-glass segmented control.
 
 Custom-painted (no QGraphicsEffect, per the v2 kit law): a translucent glass
-container holds four segments; the selected segment cross-fades an identity
-tint + inner ring + painted glow. Selection state and hover are painted, not
-child widgets, so there is zero layout reflow per frame.
+container holds four segments. A single identity-tinted glass pill slides
+between segments on selection and morphs its color from the source tab's
+identity color to the destination's as it travels (blue -> red -> gold ->
+green); each segment's label brightens by how much the pill covers it. The pill
+and hover are painted, not child widgets, so there is zero layout reflow per
+frame.
 """
 from __future__ import annotations
 
@@ -30,13 +33,27 @@ SEG_GAP = 2       # gap between segments
 GLOW = 8          # painted-glow margin reserved around the container
 
 
+def _lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t
+
+
+def _lerp_rect(a: QRectF, b: QRectF, t: float) -> QRectF:
+    return QRectF(_lerp(a.x(), b.x(), t), _lerp(a.y(), b.y(), t),
+                  _lerp(a.width(), b.width(), t), _lerp(a.height(), b.height(), t))
+
+
+def _lerp_color(a: QColor, b: QColor, t: float) -> QColor:
+    return QColor(round(_lerp(a.red(), b.red(), t)),
+                  round(_lerp(a.green(), b.green(), t)),
+                  round(_lerp(a.blue(), b.blue(), t)))
+
+
 @dataclass
 class _Segment:
     label: str
     icon_maker: str
     accent_key: str
     rect: QRect = field(default_factory=QRect)   # in widget coords
-    fade: float = 0.0                            # 0..1 selected-tint amount
 
 
 class GlassDock(QWidget):
@@ -49,7 +66,6 @@ class GlassDock(QWidget):
         self._hover = -1
         self._anim: Optional[QVariantAnimation] = None
         self.segments = [_Segment(lbl, mk, key) for (lbl, mk, key) in items]
-        self.segments[0].fade = 1.0
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_Hover, True)
         self.setCursor(Qt.PointingHandCursor)
@@ -57,6 +73,11 @@ class GlassDock(QWidget):
         self._label_font = QFont()
         self._label_font.setPixelSize(13)
         self._compute_layout()
+        # The selection pill starts on segment 0.
+        pair0 = V2_NAV[self.segments[0].accent_key]
+        self._pill_rect = QRectF(self.segments[0].rect)
+        self._pill_c = QColor(pair0["c"])
+        self._pill_b = QColor(pair0["b"])
 
     # -- geometry --------------------------------------------------------
     def _seg_width(self, seg: _Segment) -> int:
@@ -87,16 +108,24 @@ class GlassDock(QWidget):
         return self._selected
 
     def select(self, index: int, animate: bool = True) -> None:
-        """Set the active segment. Does NOT emit `selected` (programmatic)."""
+        """Slide the selection pill to `index`. Does NOT emit `selected`
+        (programmatic). The pill morphs its color from the current tab's
+        identity color to the destination's over the slide."""
         if index == self._selected:
             return
         self._selected = index
+        dest = self.segments[index]
+        pair = V2_NAV[dest.accent_key]
+        to_rect = QRectF(dest.rect)
+        to_c = QColor(pair["c"])
+        to_b = QColor(pair["b"])
         if not animate or motion.is_reduced():
-            for i, seg in enumerate(self.segments):
-                seg.fade = 1.0 if i == index else 0.0
+            self._pill_rect = to_rect
+            self._pill_c = to_c
+            self._pill_b = to_b
             self.update()
             return
-        self._start_fade(index)
+        self._start_slide(to_rect, to_c, to_b)
 
     def apply_theme(self, is_dark: bool) -> None:
         self._is_dark = is_dark
@@ -147,22 +176,25 @@ class GlassDock(QWidget):
         self.select(index)
         self.selected.emit(index)
 
-    # -- cross-fade ------------------------------------------------------
-    def _start_fade(self, index: int) -> None:
+    # -- slide animation -------------------------------------------------
+    def _start_slide(self, to_rect: QRectF, to_c: QColor, to_b: QColor) -> None:
         if self._anim is not None:
             self._anim.stop()
-        start = [seg.fade for seg in self.segments]
-        target = [1.0 if i == index else 0.0 for i in range(len(self.segments))]
+        from_rect = QRectF(self._pill_rect)
+        from_c = QColor(self._pill_c)
+        from_b = QColor(self._pill_b)
         anim = QVariantAnimation(self)
-        raw = motion.DURATION_HOVER * motion._TEST_DURATION_SCALE
+        raw = motion.DURATION_PILL * motion._TEST_DURATION_SCALE
         anim.setDuration(0 if raw == 0.0 else max(1, int(raw)))
         anim.setEasingCurve(motion.EASE_STANDARD)
         anim.setStartValue(0.0)
         anim.setEndValue(1.0)
 
         def on_val(v):
-            for i, seg in enumerate(self.segments):
-                seg.fade = start[i] + (target[i] - start[i]) * float(v)
+            t = float(v)
+            self._pill_rect = _lerp_rect(from_rect, to_rect, t)
+            self._pill_c = _lerp_color(from_c, to_c, t)
+            self._pill_b = _lerp_color(from_b, to_b, t)
             self.update()
 
         anim.valueChanged.connect(on_val)
@@ -171,6 +203,16 @@ class GlassDock(QWidget):
         anim.start()
 
     # -- paint -----------------------------------------------------------
+    def _coverage(self, seg: _Segment) -> float:
+        """How much of `seg` the selection pill horizontally covers, 0..1."""
+        seg_l, seg_r = seg.rect.x(), seg.rect.x() + seg.rect.width()
+        pill_l = self._pill_rect.x()
+        pill_r = self._pill_rect.x() + self._pill_rect.width()
+        overlap = min(seg_r, pill_r) - max(seg_l, pill_l)
+        if overlap <= 0:
+            return 0.0
+        return min(1.0, overlap / seg.rect.width())
+
     def paintEvent(self, e):
         t = get_v2_tokens(self._is_dark)
         p = QPainter(self)
@@ -184,49 +226,49 @@ class GlassDock(QWidget):
         p.setBrush(with_alpha(neutral, 0.055))
         p.drawRoundedRect(pill, radius, radius)
 
+        # Selection pill (one moving, color-morphing glass capsule).
+        self._paint_selection_pill(p)
+
+        # Idle hover tint + per-segment icon/label (coverage-lit).
         for i, seg in enumerate(self.segments):
-            self._paint_segment(p, seg, i, t)
+            self._paint_segment_content(p, seg, i, t)
         p.end()
 
-    def _paint_segment(self, p: QPainter, seg: _Segment, i: int, t: dict) -> None:
+    def _paint_selection_pill(self, p: QPainter) -> None:
+        r = self._pill_rect
+        radius = r.height() / 2
+        # Painted glow: concentric strokes in the current (morphing) tint.
+        glow = QColor(self._pill_c)
+        for w, a in ((10, 0.06), (6, 0.14), (3, 0.22)):
+            glow.setAlphaF(a)
+            p.setPen(QPen(glow, w))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(r, radius, radius)
+        # Fill + inner ring.
+        p.setPen(QPen(with_alpha(self._pill_b, 0.6), 1))
+        p.setBrush(with_alpha(self._pill_c, 0.55))
+        p.drawRoundedRect(r, radius, radius)
+
+    def _paint_segment_content(self, p: QPainter, seg: _Segment, i: int, t: dict) -> None:
         r = QRectF(seg.rect)
         radius = r.height() / 2
-        pair = V2_NAV[seg.accent_key]
-        f = seg.fade
+        cov = self._coverage(seg)
 
-        # Painted glow (only when tinted). Concentric strokes, alpha scaled by f.
-        if f > 0.01:
-            glow = QColor(pair["c"])
-            for w, a in ((10, 0.06), (6, 0.14), (3, 0.22)):
-                glow.setAlphaF(a * f)
-                p.setPen(QPen(glow, w))
-                p.setBrush(Qt.NoBrush)
-                p.drawRoundedRect(r, radius, radius)
-
-        # Base fill: idle hover tint, then the identity tint fading in on top.
-        if i == self._hover and f < 0.5:
+        # Hover tint on a mostly-uncovered idle segment.
+        if i == self._hover and cov < 0.5:
             p.setPen(Qt.NoPen)
             p.setBrush(_qcolor_from_rgba(t["nav_hover"]))
             p.drawRoundedRect(r, radius, radius)
-        if f > 0.01:
-            p.setPen(QPen(with_alpha(pair["b"], 0.6 * f), 1))
-            p.setBrush(with_alpha(pair["c"], 0.55 * f))
-            p.drawRoundedRect(r, radius, radius)
 
-        # Icon + label. Text color lerps idle -> white by f.
+        # Text/icon color lerps idle -> white by pill coverage.
         idle = _qcolor_from_rgba(t["nav_idle_text"])
-        white = QColor("#ffffff")
-        text_col = QColor(
-            round(idle.red() + (white.red() - idle.red()) * f),
-            round(idle.green() + (white.green() - idle.green()) * f),
-            round(idle.blue() + (white.blue() - idle.blue()) * f),
-        )
+        text_col = _lerp_color(idle, QColor("#ffffff"), cov)
         maker = getattr(icon_factory, seg.icon_maker)
         icon = maker(ICON, text_col)
         iy = int(r.center().y() - ICON / 2)
         p.drawPixmap(int(r.x() + PAD_X), iy, icon.pixmap(ICON, ICON))
         f_font = QFont(self._label_font)
-        f_font.setWeight(QFont.Bold if i == self._selected else QFont.Medium)
+        f_font.setWeight(QFont.Bold if cov >= 0.5 else QFont.Medium)
         p.setFont(f_font)
         p.setPen(text_col)
         p.drawText(r.adjusted(PAD_X + ICON + ICON_GAP, 0, -PAD_X, 0),

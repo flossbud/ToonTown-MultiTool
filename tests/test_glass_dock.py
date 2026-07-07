@@ -120,3 +120,30 @@ def test_dock_selected_signal_calls_nav_select(qapp, monkeypatch):
     inst.nav_band = inst._build_nav_band()
     inst.nav_dock.selected.emit(2)
     assert calls == [2]
+
+
+# -- sliding selection pill (color-morphing) --------------------------------
+
+def test_pill_starts_on_segment_zero(dock):
+    from utils.theme_manager import V2_NAV
+    from PySide6.QtGui import QColor
+    assert dock._pill_rect.x() == dock.segments[0].rect.x()
+    assert dock._pill_c == QColor(V2_NAV["multitoon"]["c"])
+
+
+def test_reduced_motion_snaps_pill_to_selected(dock, monkeypatch):
+    import utils.motion as motion
+    from utils.theme_manager import V2_NAV
+    from PySide6.QtGui import QColor
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    dock.select(2)
+    assert dock._pill_rect.x() == dock.segments[2].rect.x()
+    assert dock._pill_c == QColor(V2_NAV["keysets"]["c"])   # morphed to Keysets gold
+
+
+def test_coverage_is_full_on_snapped_segment_only(dock, monkeypatch):
+    import utils.motion as motion
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    dock.select(3)
+    assert dock._coverage(dock.segments[3]) == 1.0
+    assert dock._coverage(dock.segments[0]) == 0.0
