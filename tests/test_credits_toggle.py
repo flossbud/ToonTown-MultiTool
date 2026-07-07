@@ -98,7 +98,7 @@ def test_return_uses_reverse_vertical_and_reselects_dock_tab(qapp, monkeypatch):
 
 def test_active_page_change_clears_backdrop(qapp, monkeypatch):
     inst = _app(qapp, monkeypatch)
-    inst.header_app_icon = type("I", (), {"set_active": lambda self, v: None})()
+    inst.header_logo = type("L", (), {"set_active": lambda self, v: None})()
     inst._credits_open = True
     inst.credits_tab.__class__.cleared.clear()
     inst._on_active_page_changed(0)             # left credits
@@ -113,7 +113,7 @@ def test_active_page_change_self_heals_stuck_transitioning(qapp, monkeypatch):
     # which DOES fire via the cancelling nav's currentChanged — must clear the
     # guard, else the header icon toggle is permanently disabled.
     inst = _app(qapp, monkeypatch)
-    inst.header_app_icon = type("I", (), {"set_active": lambda self, v: None})()
+    inst.header_logo = type("L", (), {"set_active": lambda self, v: None})()
     inst._credits_transitioning = True          # simulate the stuck guard
     inst._credits_open = True
     inst._on_active_page_changed(1)             # settled on a chip page

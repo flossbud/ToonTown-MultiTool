@@ -962,11 +962,15 @@ class MultiToonTool(QMainWindow):
 
         # Centered wordmark. The pixmap (and its theme variant) is assigned in
         # _apply_full_theme via _refresh_header_logo so theme + sizing live in
-        # one place.
-        self.header_logo = QLabel()
+        # one place. The wordmark is the Credits entry point (replaces the
+        # removed corner app icon): click brings Credits down, click again
+        # returns. It lives in the header, so Credits stays reachable in both
+        # frameless AND native-title-bar modes.
+        from utils.widgets.clickable_logo import ClickableLogo
+        self.header_logo = ClickableLogo()
         self.header_logo.setObjectName("header_logo")
         self.header_logo.setAlignment(Qt.AlignCenter)
-        self.header_logo.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.header_logo.clicked.connect(self._on_app_icon_clicked)
         outer.addWidget(self.header_logo, 0, Qt.AlignCenter)
 
         outer.addStretch()
@@ -975,17 +979,17 @@ class MultiToonTool(QMainWindow):
         # (tests build the header without _apply_full_theme).
         self._refresh_header_logo(header_width=575)
 
-        # App icon pinned in the top-left corner, proportionally opposite the
-        # traffic-light controls (top-right). 36px, inset an equal 13px from
-        # both the top and left edges so it sits symmetrically in the corner
-        # (well inside the 16px rounded corner). Header-owned (not the
-        # frameless-only WindowChromeController) so the Credits entry point
-        # survives the "system title bar" setting.
-        from utils.widgets.window_chrome import _HeaderAppIcon
-        self.header_app_icon = _HeaderAppIcon(_resolve_app_icon(), header)
-        self.header_app_icon.move(13, 13)
-        self.header_app_icon.raise_()   # keep above any later header children
-        self.header_app_icon.clicked.connect(self._on_app_icon_clicked)
+        # Hover-hints toggle, top-left corner (13,13) — symmetric with the
+        # window controls top-right. Moved here from the retired chip rail.
+        self.hint_btn = QToolButton(header)
+        self.hint_btn.setObjectName("hint_toggle")
+        self.hint_btn.move(13, 13)
+        self.hint_btn.setFixedSize(34, 34)
+        self.hint_btn.setIconSize(QSize(20, 20))
+        self.hint_btn.setCursor(Qt.PointingHandCursor)
+        self.hint_btn.setFocusPolicy(Qt.NoFocus)
+        self.hint_btn.clicked.connect(self._toggle_hints)
+        self.hint_btn.raise_()
 
         return header
 
@@ -1009,11 +1013,11 @@ class MultiToonTool(QMainWindow):
             return
         scaled = src.scaled(tw, th, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.header_logo.setPixmap(scaled)
-        # Keep the corner app icon above the logo after any theme/size refresh.
-        # Guarded: the build-time call runs before the icon is created.
-        icon = getattr(self, "header_app_icon", None)
-        if icon is not None:
-            icon.raise_()
+        # Keep the corner hints toggle above the logo after any theme/size
+        # refresh. Guarded: the build-time call runs before the toggle exists.
+        hint_btn = getattr(self, "hint_btn", None)
+        if hint_btn is not None:
+            hint_btn.raise_()
 
     def _apply_window_chrome(self):
         """Apply the frameless flag + custom controls + rounded translucent
@@ -1224,8 +1228,8 @@ class MultiToonTool(QMainWindow):
 
     def _on_active_page_changed(self, index: int):
         """Fired by stack.currentChanged on every page switch. Lights the header
-        app icon while Credits (index 5) is active, and — whenever the user
-        leaves Credits by ANY path (icon toggle-back, dock nav, or animated
+        wordmark while Credits (index 5) is active, and — whenever the user
+        leaves Credits by ANY path (wordmark toggle-back, dock nav, or animated
         slide finalization) — clears the credits open-flag and releases the
         blurred backdrop pixmap."""
         # currentChanged fires only when a transition has SETTLED on a page, so
@@ -1235,9 +1239,9 @@ class MultiToonTool(QMainWindow):
         # _begin_credits_transition's finished-lambda would otherwise leave
         # _credits_transitioning stuck True and permanently disable the toggle.
         self._credits_transitioning = False
-        icon = getattr(self, "header_app_icon", None)
-        if icon is not None:
-            icon.set_active(index == 5)
+        logo = getattr(self, "header_logo", None)
+        if logo is not None and hasattr(logo, "set_active"):
+            logo.set_active(index == 5)
         if index != 5:
             self._credits_open = False
             credits_tab = getattr(self, "credits_tab", None)
@@ -1245,7 +1249,7 @@ class MultiToonTool(QMainWindow):
                 credits_tab.clear_backdrop()
 
     def _wire_header_icon_active_state(self):
-        """Drive the icon's 'lit while Credits active' state from ONE choke
+        """Drive the wordmark's 'lit while Credits active' state from ONE choke
         point — the stack's currentChanged — so every nav path (dock nav,
         credits nav, slide-animation finalization, direct setCurrentIndex) is
         covered without duplicating logic. Sync once for the page shown at
