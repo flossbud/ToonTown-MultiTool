@@ -89,18 +89,39 @@ def _game_logo_pixmap(game: str) -> QPixmap:
 
 
 def _mini_toon_pixmap(game: str, is_dark: bool, species: str | None,
-                       accent_hex: str | None) -> QPixmap:
-    """30px mini primary-toon portrait for a reorder row: a tinted race
-    silhouette ringed in the toon's own accent (or the game accent) when a
-    primary toon is set, else a faint dashed circle with a generic person
-    glyph. Mirrors the recipe in utils/widgets/primary_toon_slot.py and
-    utils/widgets/toon_picker_popover.py's _face_pixmap."""
+                       accent_hex: str | None, *, toon_name: str | None = None,
+                       dna: str | None = None, customizations=None) -> QPixmap:
+    """30px mini primary-toon portrait for a reorder row: the account's real toon
+    portrait (same radial-menu source + saved pose as the tiles/picker) when it is
+    cached, else a tinted race silhouette, else a faint dashed circle with a
+    generic person glyph. Mirrors the recipe in utils/widgets/primary_toon_slot.py
+    and utils/widgets/toon_picker_popover.py's _face_pixmap."""
     pm = QPixmap(MINI_SIZE, MINI_SIZE)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing, True)
+    p.setRenderHint(QPainter.SmoothPixmapTransform, True)
     circle = QRectF(0, 0, MINI_SIZE, MINI_SIZE)
     base_hex = "#ffffff" if is_dark else "#0f172a"
+    ring_accent = accent_hex or V2_ACCENTS.get(game, V2_ACCENTS["blue"])["c"]
+
+    # Real toon portrait from the radial-menu source (disk-cache synchronous).
+    if dna:
+        try:
+            from utils.overlay.radial_portrait import render_account_portrait
+            render = render_account_portrait(game, toon_name, dna, customizations, MINI_SIZE)
+            if render.status == "complete":
+                p.drawPixmap(0, 0, render.pixmap)
+                p.setBrush(Qt.NoBrush)
+                pen = QPen(QColor(ring_accent))
+                pen.setWidthF(MINI_RING_W)
+                p.setPen(pen)
+                p.drawEllipse(circle.adjusted(MINI_RING_W / 2, MINI_RING_W / 2,
+                                              -MINI_RING_W / 2, -MINI_RING_W / 2))
+                p.end()
+                return pm
+        except Exception:
+            pass
 
     if species:
         accent = accent_hex or V2_ACCENTS.get(game, V2_ACCENTS["blue"])["c"]
@@ -161,6 +182,8 @@ class _ReorderRow(QFrame):
         self._toon_is_set = bool(account.get("primary_is_set"))
         self._toon_species = account.get("primary_species")
         self._toon_accent = account.get("primary_accent")
+        self._toon_name = account.get("primary_name")
+        self._toon_dna = account.get("primary_dna")
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(12, 8, 12, 8)
@@ -239,10 +262,13 @@ class _ReorderRow(QFrame):
 class AccountReorderDialog(QDialog):
     order_changed = Signal()
 
-    def __init__(self, game: str, accounts: list[dict], parent=None):
+    def __init__(self, game: str, accounts: list[dict], parent=None,
+                 customizations=None):
         super().__init__(parent)
         assert game in ("ttr", "cc")
         self._game = game
+        # ToonCustomizationsManager so row portraits render the saved pose.
+        self._customizations = customizations
         self._order: list[dict] = list(accounts)
         self._rows: list[_ReorderRow] = []
         # Manual drag state.
@@ -644,7 +670,10 @@ class AccountReorderDialog(QDialog):
             r.portrait.setPixmap(_mini_toon_pixmap(
                 self._game, is_dark,
                 r._toon_species if r._toon_is_set else None,
-                r._toon_accent))
+                r._toon_accent,
+                toon_name=r._toon_name if r._toon_is_set else None,
+                dna=r._toon_dna if r._toon_is_set else None,
+                customizations=self._customizations))
             r.title.setStyleSheet(f"color: {v2['title']}; font-size: 13px; font-weight: 700; background: transparent;")
             r.subtitle.setStyleSheet(f"color: {v2['sub']}; font-size: 10.5px; background: transparent;")
             for b in (r.up_btn, r.down_btn):

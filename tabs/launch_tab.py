@@ -1227,7 +1227,8 @@ class LaunchTab(QWidget):
             entry = {"id": a.id, "label": a.label or "", "username": a.username or ""}
             entry.update(self._primary_toon_fields(a.id))
             accounts.append(entry)
-        dlg = AccountReorderDialog(game=game, accounts=accounts, parent=self.window())
+        dlg = AccountReorderDialog(game=game, accounts=accounts, parent=self.window(),
+                                   customizations=self._customizations)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         new_ids = dlg.ordered_ids()
