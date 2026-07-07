@@ -51,11 +51,11 @@ SETTINGS_CONTENT_MAX_W = 768
 # ── Category pill rail (v2 shell, replaces Sidebar) ───────────────────────────
 
 CATEGORY_META = {
-    # key: (accent fill, bright border, icon maker name, micro sub)
-    "general":  ("#0077ff", "#3399ff", "make_nav_gear",     "App-wide preferences"),
-    "games":    ("#3da343", "#56d66a", "make_nav_gamepad",  "Locations and runtime settings for each game"),
-    "features": ("#ff9500", "#ffb04d", "make_radio_waves_icon", "Optional broadcast and automation behaviors"),
-    "advanced": ("#b34848", "#e05252", "make_wrench_icon",  "Lower-level controls - most users should not need these"),
+    # key: (accent fill, bright border, icon maker name)
+    "general":  ("#0077ff", "#3399ff", "make_nav_gear"),
+    "games":    ("#3da343", "#56d66a", "make_nav_gamepad"),
+    "features": ("#ff9500", "#ffb04d", "make_radio_waves_icon"),
+    "advanced": ("#b34848", "#e05252", "make_wrench_icon"),
 }
 
 
@@ -72,7 +72,7 @@ class _CategoryPill(QWidget):
         super().__init__(parent)
         self.key = key
         self.label = label
-        self.fill, self.border, icon_name, _sub = CATEGORY_META[key]
+        self.fill, self.border, icon_name = CATEGORY_META[key]
         self._active = False
         self._hovered = False
         self._is_dark = True
@@ -266,13 +266,6 @@ class SettingsTab(QWidget):
             page_lay.setSpacing(4)
             page_lay.setAlignment(Qt.AlignTop)
 
-            # Micro section label: "GENERAL - APP-WIDE PREFERENCES" (10px/600,
-            # letter-spacing, uppercase; hyphen by project rule, never an
-            # em-dash).
-            micro = QLabel(f"{label} - {CATEGORY_META[key][3]}".upper())
-            micro.setObjectName("settings_micro_label")
-            page_lay.addWidget(micro)
-            page._micro_label = micro          # type: ignore[attr-defined]
             page._panel_layout = page_lay      # type: ignore[attr-defined]
             page_lay.addStretch(1)
 
@@ -1655,13 +1648,6 @@ class SettingsTab(QWidget):
                 bar.set_theme(is_dark)
         # Category pill rail
         self.rail.apply_theme(c, is_dark)
-        # Micro section label (per page)
-        for page in self.pages.values():
-            page._micro_label.setStyleSheet(
-                f"font-size: 10px; font-weight: 600; letter-spacing: 0.8px; "
-                f"color: {c['text_muted']}; background: transparent; "
-                "margin-bottom: 2px;"
-            )
         # v2 kit propagation
         for card in self._cards:
             card.apply_theme(is_dark, animate=True)

@@ -47,8 +47,9 @@ def test_legacy_keep_alive_key_rewrites(app):
     assert tab._current_page_key == "features"
 
 
-def test_micro_label_has_no_emdash(app):
+def test_pages_have_no_micro_label(app):
+    # Micro section labels were removed by operator decision (2026-07-06):
+    # pages open straight onto the first card.
     tab = SettingsTab(FakeSettings())
     for page in tab.pages.values():
-        assert "—" not in page._micro_label.text()
-        assert page._micro_label.text().isupper()
+        assert not hasattr(page, "_micro_label")
