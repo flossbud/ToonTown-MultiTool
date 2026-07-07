@@ -215,9 +215,11 @@ class CardSurface(QFrame):
         shadow_path.addRoundedRect(r.translated(0, 4), radius, radius)
         self._paint_halo(p, shadow_path, QColor(0, 0, 0), 18, 0.40 if self._is_dark else 0.10)
 
-        # Accent halo (approx. `0 0 26px alpha(c, 0.20)` dark / 0.14 light).
+        # Accent halo - deliberately far fainter than the mock's
+        # `0 0 26px alpha(c, 0.20)`: at full strength the painted aura read
+        # as a hard colored band live (operator call, 2026-07-06).
         self._paint_halo(p, path, QColor(self._a["c"]), GLOW_PAD,
-                         0.20 if self._is_dark else 0.14)
+                         0.06 if self._is_dark else 0.04)
 
         # Body gradient (~158deg: down + slightly right, pinwheel convention).
         grad = QLinearGradient(r.topLeft().x(), r.topLeft().y(),
@@ -241,12 +243,14 @@ class CardSurface(QFrame):
                     spread: int, peak_alpha: float) -> None:
         """Layered-alpha stroke halo: HALO_STEPS strokes of growing width and
         quadratically-fading alpha approximate a gaussian glow. Painted BEFORE
-        the body fill, so the inner stroke halves are covered by it."""
+        the body fill, so the inner stroke halves are covered by it. No alpha
+        floor: the outermost strokes must fade to nothing, or the halo reads
+        as a wide colored band instead of a glow."""
         p.setBrush(Qt.NoBrush)
         for i in range(HALO_STEPS, 0, -1):
             frac = i / HALO_STEPS
             col = QColor(color)
-            col.setAlphaF(peak_alpha * (1.0 - frac) ** 2 + peak_alpha * 0.08)
+            col.setAlphaF(peak_alpha * (1.0 - frac) ** 2)
             pen = QPen(col, spread * 2 * frac)
             pen.setJoinStyle(Qt.RoundJoin)
             p.setPen(pen)
