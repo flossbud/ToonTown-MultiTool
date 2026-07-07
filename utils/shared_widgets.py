@@ -44,19 +44,20 @@ def repolish(widget) -> None:
 # ── Accent-blue Switch ───────────────────────────────────────────────────────
 
 class Switch(QWidget):
-    """Accent-blue pill toggle. Drop-in replacement for IOSToggle in Settings.
+    """v2 pill toggle (44x24 track, 18px knob, 3px painted-glow budget).
 
-    Visually identical proportions to IOSToggle but uses the app's accent-blue
-    palette for the on state (instead of iOS green) and exposes set_theme_colors
-    so refresh_theme can re-tint both the track and the thumb for light/dark.
+    On-state takes the owning card's accent via set_accent(c, b) - red cards
+    pass the bright variant as c per the design. set_theme_colors keeps its
+    signature for the off-state track/border + knob.
     """
 
     toggled = Signal(bool)
 
-    TRACK_W = 38
-    TRACK_H = 20
-    THUMB_D = 16
+    TRACK_W = 44
+    TRACK_H = 24
+    THUMB_D = 18
     PADDING = 2
+    HALO = 3                      # widget margin reserved for the on-glow
 
     def __init__(self, checked: bool = False, parent=None):
         super().__init__(parent)
@@ -66,14 +67,16 @@ class Switch(QWidget):
             else self.TRACK_W - self.THUMB_D - self.PADDING
         )
         self._track_on = "#0077ff"
+        self._border_on = "#3399ff"
         self._track_off = "#3a3a3a"
+        self._border_off = "#4a4a4a"
         self._thumb_color = "#ffffff"
 
-        self.setFixedSize(self.TRACK_W, self.TRACK_H)
+        self.setFixedSize(self.TRACK_W + 2 * self.HALO, self.TRACK_H + 2 * self.HALO)
         self.setCursor(Qt.PointingHandCursor)
 
         self._anim = QPropertyAnimation(self, b"thumbX")
-        self._anim.setDuration(180)
+        self._anim.setDuration(160)
         self._anim.setEasingCurve(QEasingCurve.OutCubic)
 
     # ── public API (mirrors IOSToggle) ──────────────────────────────────
@@ -88,6 +91,11 @@ class Switch(QWidget):
         self._checked = value
         self._animate_to_state()
         self.toggled.emit(value)
+
+    def set_accent(self, track_on: str, border_on: str) -> None:
+        self._track_on = track_on
+        self._border_on = border_on
+        self.update()
 
     def set_theme_colors(self, *, track_on: str, track_off: str, thumb: str) -> None:
         self._track_on = track_on
@@ -140,22 +148,34 @@ class Switch(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-
         enabled = self.isEnabled()
-        # Track
+        track_rect = QRectF(self.HALO, self.HALO, self.TRACK_W, self.TRACK_H)
+        radius = self.TRACK_H / 2
+
+        # On-glow: 3 layered strokes fading out (approx. `0 0 12px c@33%`).
+        if self._checked and enabled:
+            glow = QColor(self._track_on)
+            for w, a in ((6, 0.10), (4, 0.18), (2, 0.28)):
+                glow.setAlphaF(a)
+                p.setPen(QPen(glow, w))
+                p.setBrush(Qt.NoBrush)
+                p.drawRoundedRect(track_rect, radius, radius)
+
         track = QColor(self._track_on if self._checked else self._track_off)
+        border = QColor(self._border_on if self._checked else self._border_off)
         if not enabled:
             track.setAlphaF(0.4)
-        p.setPen(Qt.NoPen)
+            border.setAlphaF(0.4)
+        p.setPen(QPen(border, 1))
         p.setBrush(track)
-        radius = self.TRACK_H / 2
-        p.drawRoundedRect(self.rect(), radius, radius)
+        p.drawRoundedRect(track_rect, radius, radius)
 
-        # Thumb
         thumb = QColor(self._thumb_color if enabled else "#cccccc")
+        p.setPen(Qt.NoPen)
         p.setBrush(thumb)
         p.drawEllipse(
-            int(self._thumb_x), self.PADDING,
+            int(self.HALO + self._thumb_x),
+            int(self.HALO + (self.TRACK_H - self.THUMB_D) / 2),
             self.THUMB_D, self.THUMB_D,
         )
         p.end()

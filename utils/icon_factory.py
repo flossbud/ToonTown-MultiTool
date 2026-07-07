@@ -648,3 +648,118 @@ def make_info_icon(size: int = 18, color: QColor = None) -> QIcon:
         p.setPen(pen)
         p.drawLine(int(s * 0.5), int(s * 0.45), int(s * 0.5), int(s * 0.70))
     return _draw_nav_icon(size, color, draw)
+
+
+# ── v2 badge / nav icons ─────────────────────────────────────────────────────
+
+def _v2_pen(color, size: int) -> QPen:
+    pen = QPen(color if color is not None else QColor("#ffffff"),
+               max(1.6, size * 2.2 / 24))
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    return pen
+
+
+def _v2_canvas(size: int):
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    return pm, p
+
+
+def make_sliders_icon(size: int = 20, color: QColor | None = None) -> QIcon:
+    """Three vertical slider tracks with offset crossbars (Appearance badge)."""
+    pm, p = _v2_canvas(size)
+    p.setPen(_v2_pen(color, size))
+    s = size / 24.0
+    for x, bar_y in ((4, 14), (12, 8), (20, 16)):
+        p.drawLine(int(x * s), int(3 * s), int(x * s), int(21 * s))
+        p.drawLine(int((x - 3) * s), int(bar_y * s), int((x + 3) * s), int(bar_y * s))
+    p.end()
+    return QIcon(pm)
+
+
+def make_download_icon(size: int = 20, color: QColor | None = None) -> QIcon:
+    """Down arrow into a tray (Updates badge)."""
+    pm, p = _v2_canvas(size)
+    p.setPen(_v2_pen(color, size))
+    s = size / 24.0
+    p.drawLine(int(12 * s), int(3 * s), int(12 * s), int(15 * s))
+    p.drawLine(int(7 * s), int(10 * s), int(12 * s), int(15 * s))
+    p.drawLine(int(17 * s), int(10 * s), int(12 * s), int(15 * s))
+    path = QPainterPath()
+    path.moveTo(3 * s, 15 * s)
+    path.lineTo(3 * s, 19 * s)
+    path.quadTo(3 * s, 21 * s, 5 * s, 21 * s)
+    path.lineTo(19 * s, 21 * s)
+    path.quadTo(21 * s, 21 * s, 21 * s, 19 * s)
+    path.lineTo(21 * s, 15 * s)
+    p.drawPath(path)
+    p.end()
+    return QIcon(pm)
+
+
+def make_activity_icon(size: int = 20, color: QColor | None = None) -> QIcon:
+    """Heartbeat polyline (Diagnostics badge)."""
+    pm, p = _v2_canvas(size)
+    p.setPen(_v2_pen(color, size))
+    s = size / 24.0
+    pts = [(2, 12), (6, 12), (9, 3), (15, 21), (18, 12), (22, 12)]
+    for a, b in zip(pts, pts[1:]):
+        p.drawLine(int(a[0] * s), int(a[1] * s), int(b[0] * s), int(b[1] * s))
+    p.end()
+    return QIcon(pm)
+
+
+def make_database_icon(size: int = 20, color: QColor | None = None) -> QIcon:
+    """Cylinder database (Storage badge)."""
+    pm, p = _v2_canvas(size)
+    p.setPen(_v2_pen(color, size))
+    s = size / 24.0
+    p.drawEllipse(QRectF(3 * s, 2 * s, 18 * s, 6 * s))
+    for y in (12, 19):
+        path = QPainterPath()
+        path.moveTo(3 * s, (y - 7) * s)
+        path.lineTo(3 * s, y * s)
+        path.arcTo(QRectF(3 * s, (y - 3) * s, 18 * s, 6 * s), 180, 180)
+        path.lineTo(21 * s, (y - 7) * s)
+        p.drawPath(path)
+    p.end()
+    return QIcon(pm)
+
+
+def make_wrench_icon(size: int = 20, color: QColor | None = None) -> QIcon:
+    """Wrench (Advanced nav pill)."""
+    pm, p = _v2_canvas(size)
+    p.setPen(_v2_pen(color, size))
+    s = size / 24.0
+    path = QPainterPath()
+    path.moveTo(14.7 * s, 6.3 * s)
+    path.lineTo(17.7 * s, 9.3 * s)
+    path.lineTo(21.4 * s, 5.6 * s)
+    path.arcTo(QRectF(9 * s, 2 * s, 12 * s, 12 * s), 60, 200)
+    path.lineTo(5.6 * s, 21.4 * s)
+    path.quadTo(4 * s, 23 * s, 2.6 * s, 21.4 * s)
+    path.quadTo(1 * s, 20 * s, 2.6 * s, 18.4 * s)
+    path.lineTo(11 * s, 10 * s)
+    p.drawPath(path)
+    p.end()
+    return QIcon(pm)
+
+
+def make_radio_waves_icon(size: int = 20, color: QColor | None = None) -> QIcon:
+    """Center dot + concentric broadcast arcs (Features nav pill)."""
+    pm, p = _v2_canvas(size)
+    pen = _v2_pen(color, size)
+    p.setPen(pen)
+    s = size / 24.0
+    p.setBrush(pen.color())
+    p.drawEllipse(QRectF(10.5 * s, 10.5 * s, 3 * s, 3 * s))
+    p.setBrush(Qt.NoBrush)
+    for r, span in ((6, 70), (10, 70)):
+        rect = QRectF((12 - r) * s, (12 - r) * s, 2 * r * s, 2 * r * s)
+        p.drawArc(rect, (180 - span // 2) * 16, span * 16)
+        p.drawArc(rect, (0 - span // 2) * 16, span * 16)
+    p.end()
+    return QIcon(pm)
