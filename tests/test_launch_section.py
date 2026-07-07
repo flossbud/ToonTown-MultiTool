@@ -227,24 +227,24 @@ def test_set_layout_mode_same_mode_does_not_reflash(qapp):
 
 
 def test_add_tile_uses_theme_tokens(qapp):
-    """The pager's '+ Add Account' button must use theme tokens, not literals,
-    so it switches palettes correctly."""
-    from utils.theme_manager import get_theme_colors
+    """The pager's '+ Add Account' button is a game-accent filled pill (v2
+    redesign - was a fixed blue), with white text."""
+    from utils.theme_manager import V2_ACCENTS, get_theme_colors
     sec = LaunchSection(game="ttr", icon_path="")
     sec.set_accounts([{"label": "x", "username": "y"}])
-    c = get_theme_colors(True)
-    qss = sec.pager.add_btn.styleSheet()
-    assert c["accent_blue_btn"] in qss
-    assert c["text_on_accent"] in qss
+    sec.apply_theme(get_theme_colors(True))
+    qss = sec.pager.add_btn.styleSheet().lower()
+    assert V2_ACCENTS["ttr"]["c"].lower() in qss
+    assert "#ffffff" in qss
 
 
 def test_add_tile_apply_theme_swaps_palettes(qapp):
-    """LaunchSection.apply_theme must propagate to the pager's add button."""
-    from utils.theme_manager import get_theme_colors
+    """LaunchSection.apply_theme must propagate to the pager's add button (which
+    is a game-accent filled pill in the v2 redesign)."""
+    from utils.theme_manager import V2_ACCENTS, get_theme_colors
     sec = LaunchSection(game="cc", icon_path="")
     sec.set_accounts([{"label": "x", "username": "y"}])
-    light = get_theme_colors(False)
-    sec.apply_theme(light)
-    qss = sec.pager.add_btn.styleSheet()
-    assert light["accent_blue_btn"] in qss
-    assert light["text_on_accent"] in qss
+    sec.apply_theme(get_theme_colors(False))
+    qss = sec.pager.add_btn.styleSheet().lower()
+    assert V2_ACCENTS["cc"]["c"].lower() in qss
+    assert "#ffffff" in qss
