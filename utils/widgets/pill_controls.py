@@ -137,6 +137,10 @@ class SegmentedPill(QWidget):
         from PySide6.QtCore import QRectF
         from utils.widgets.portrait_badge import _qcolor_from_rgba
         p = QPainter(self)
+        if not self.isEnabled():
+            # Disabled rows mute their controls (design: saturate+opacity);
+            # painted colors don't follow setEnabled, so mute explicitly.
+            p.setOpacity(0.45)
         p.setRenderHint(QPainter.Antialiasing, True)
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         radius = r.height() / 2

@@ -66,3 +66,13 @@ def test_ghost_expander_text(app):
     assert g.text() == "Show 13 more..."
     g.set_state(expanded=True, more_count=13)
     assert g.text() == "Show less"
+
+
+def test_segmented_pill_disabled_paints_muted(app):
+    seg = SegmentedPill(["A", "B"])
+    seg.apply_theme(is_dark=True, accent_key="orange")
+    seg.resize(seg.sizeHint())
+    enabled_img = seg.grab().toImage()
+    seg.setEnabled(False)
+    disabled_img = seg.grab().toImage()
+    assert enabled_img != disabled_img
