@@ -2382,6 +2382,12 @@ class MultitoonTab(QWidget):
         side of the switch.
         """
         self._overlay_active = bool(active)
+        # The emblem's backing disc is theme-colored in the windowed tab but
+        # pinned dark while floating (else light theme paints a white ring
+        # around the floating emblem) - re-resolve it on every mode edge.
+        layout = getattr(self, "_compact", None)
+        if layout is not None:
+            layout._refresh_emblem()
         if active:
             # Make sure the bars carry no leftover opacity effect from a fade
             # animation and are visible per the master flag, so they paint in the

@@ -69,3 +69,24 @@ def test_set_overlay_active_runs_bar_timer_then_stops(qt_app, monkeypatch, tmp_p
     assert tab._overlay_active is False
     # tab is not the visible/current page -> off-page gating stops the timer.
     assert tab._bar_timer.isActive() is False
+
+
+def test_emblem_backing_disc_pins_dark_in_overlay(qt_app, monkeypatch, tmp_path):
+    """Float mode must not inherit the light theme's bg_app backing disc -
+    it painted a white ring around the floating emblem (live, 2026-07-07).
+    Windowed mode keeps the theme color so the card cutouts blend."""
+    from PySide6.QtGui import QColor
+    from utils.theme_manager import get_theme_colors
+    tab = _make_tab(monkeypatch, tmp_path)
+    qt_app.processEvents()
+    emblem = tab._compact._emblem
+    assert emblem is not None
+    tab.settings_manager.set("theme", "light")
+    tab._compact._refresh_emblem()
+    light_bg = QColor(get_theme_colors(False)["bg_app"])
+    dark_bg = QColor(get_theme_colors(True)["bg_app"])
+    assert emblem._bg_app == light_bg          # windowed: follows the theme
+    tab.set_overlay_active(True)
+    assert emblem._bg_app == dark_bg           # floating: pinned dark
+    tab.set_overlay_active(False)
+    assert emblem._bg_app == light_bg          # back to windowed: theme again

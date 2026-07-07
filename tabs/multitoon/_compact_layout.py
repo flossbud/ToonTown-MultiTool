@@ -1689,11 +1689,23 @@ class _CompactLayout(QWidget):
         return {}
 
     # ── Theme ────────────────────────────────────────────────────────────────
+    def _emblem_bg_app(self, c: dict) -> str:
+        """The emblem's backing-disc color. In the windowed tab it MUST match
+        bg_app so the carved card cutouts blend into a clean seam. In float
+        mode the emblem floats over the game on a dark backdrop, where a
+        light-theme bg_app paints a white ring around the icon (live finding,
+        2026-07-07) - pin the backing to the DARK bg_app while the overlay is
+        active."""
+        if getattr(self._tab, "_overlay_active", False):
+            from utils.theme_manager import get_theme_colors
+            return get_theme_colors(True)["bg_app"]
+        return c["bg_app"]
+
     def apply_theme(self, c: dict) -> None:
         if self._emblem is not None:
             self._emblem.configure(
                 bool(getattr(self._tab, "service_running", False)),
-                c["bg_app"], c["accent_blue_btn"],
+                self._emblem_bg_app(c), c["accent_blue_btn"],
                 pulse_active=self._emblem_pulse_active())
         self._apply_initial_brands()
 
@@ -1728,7 +1740,7 @@ class _CompactLayout(QWidget):
         c = get_theme_colors(resolve_theme(self._tab.settings_manager) == "dark")
         self._emblem.configure(
             bool(getattr(self._tab, "service_running", False)),
-            c["bg_app"], c["accent_blue_btn"],
+            self._emblem_bg_app(c), c["accent_blue_btn"],
             pulse_active=self._emblem_pulse_active())
 
     # ── Keep-alive collapse (master switch) ──────────────────────────────────
