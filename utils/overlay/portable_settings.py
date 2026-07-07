@@ -87,9 +87,7 @@ class PortableSettingsContainer(QWidget):
         outer.setContentsMargins(40, 40, 40, 40)
         panel = QFrame(self)
         panel.setObjectName("portable_settings_panel")
-        panel.setStyleSheet(
-            "#portable_settings_panel{background:#141824;border:1px solid #232a3a;"
-            "border-radius:12px;}")
+        self._panel = panel
         pv = QVBoxLayout(panel)
         pv.setContentsMargins(0, 0, 0, 0)
         pv.setSpacing(0)
@@ -99,7 +97,7 @@ class PortableSettingsContainer(QWidget):
         header = QHBoxLayout(bar)
         header.setContentsMargins(14, 10, 10, 6)
         title = QLabel("Settings")
-        title.setStyleSheet("color:#e7ecf3;font-weight:600;")
+        self._title = title
         title.setAttribute(Qt.WA_TransparentForMouseEvents, True)  # let drags reach the bar
         close_btn = _CloseDot(bar)
         close_btn.clicked.connect(self.closed.emit)
@@ -115,6 +113,26 @@ class PortableSettingsContainer(QWidget):
         # only its chrome over an invisible body. Re-show the content we host.
         content.show()
         outer.addWidget(panel)
+        self._apply_panel_theme()
+        # The hosted SettingsTab can flip the app theme while this panel is
+        # open; follow it live so the chrome never mismatches the pages.
+        theme_changed = getattr(content, "theme_changed", None)
+        if theme_changed is not None:
+            theme_changed.connect(self._apply_panel_theme)
+
+    def _apply_panel_theme(self) -> None:
+        """Panel chrome follows the app theme (bg_app / border_card /
+        text_primary) so the strip around the tab's transparent pill rail
+        matches the pages instead of a hardcoded indigo (live finding,
+        2026-07-06)."""
+        from utils.theme_manager import get_theme_colors, is_dark_palette
+        c = get_theme_colors(is_dark_palette())
+        self._panel.setStyleSheet(
+            "#portable_settings_panel{"
+            f"background:{c['bg_app']};border:1px solid {c['border_card']};"
+            "border-radius:12px;}")
+        self._title.setStyleSheet(
+            f"color:{c['text_primary']};font-weight:600;")
 
     def release_content(self) -> QWidget:
         """Detach the content widget so it survives this container's destruction."""

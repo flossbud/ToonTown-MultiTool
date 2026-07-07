@@ -119,3 +119,17 @@ def test_titlebar_drag_moves_the_window():
     QApplication.processEvents()
     end = c.frameGeometry().topLeft()
     assert end - start == QPoint(60, 40), (start, end)
+
+def test_panel_chrome_follows_app_theme_tokens():
+    """The panel chrome must use bg_app/border_card, not hardcoded indigo -
+    the settings tab's pill rail is transparent and shows this background."""
+    _app()
+    from PySide6.QtWidgets import QLabel
+    from utils.overlay.portable_settings import PortableSettingsContainer
+    from utils.theme_manager import get_theme_colors, is_dark_palette
+    c = PortableSettingsContainer(QLabel("x"))
+    tokens = get_theme_colors(is_dark_palette())
+    ss = c._panel.styleSheet()
+    assert tokens["bg_app"] in ss
+    assert tokens["border_card"] in ss
+    assert "#141824" not in ss
