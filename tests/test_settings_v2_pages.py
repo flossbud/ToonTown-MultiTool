@@ -32,8 +32,15 @@ def test_general_page_uses_cards_not_panels(app):
 def test_theme_segment_writes_setting(app):
     fake = FakeSettings()
     tab = SettingsTab(fake)
-    tab._theme_segment.index_changed.emit(2)
-    assert fake.get("theme") == "dark"
+    # _on_theme_changed restyles the whole QApplication (intended app
+    # behavior); snapshot + restore so the global QSS doesn't leak into
+    # later test files in the same process (bare-widget paint tests).
+    before = app.styleSheet()
+    try:
+        tab._theme_segment.index_changed.emit(2)
+        assert fake.get("theme") == "dark"
+    finally:
+        app.setStyleSheet(before)
 
 
 def test_reduce_motion_segment_semantics(app):
