@@ -1212,8 +1212,11 @@ class LaunchTab(QWidget):
         ordered = [a for a in self._ordered_accounts(game) if a.id]
         if len(ordered) < 2:
             return
-        accounts = [{"id": a.id, "label": a.label or "", "username": a.username or ""}
-                    for a in ordered]
+        accounts = []
+        for a in ordered:
+            entry = {"id": a.id, "label": a.label or "", "username": a.username or ""}
+            entry.update(self._primary_toon_fields(a.id))
+            accounts.append(entry)
         dlg = AccountReorderDialog(game=game, accounts=accounts, parent=self.window())
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
