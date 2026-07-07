@@ -260,7 +260,10 @@ class SettingsTab(QWidget):
             page = QWidget()
             page_lay = QVBoxLayout(page)
             page_lay.setContentsMargins(24, 12, 24, 28)
-            page_lay.setSpacing(16)
+            # Card gap: cards carry an EDGE_PAD shadow margin on every side,
+            # so the layout gap stays small to keep the visual rhythm tight
+            # (operator call, 2026-07-06: was 16 with the old glow budget).
+            page_lay.setSpacing(4)
             page_lay.setAlignment(Qt.AlignTop)
 
             # Micro section label: "GENERAL - APP-WIDE PREFERENCES" (10px/600,

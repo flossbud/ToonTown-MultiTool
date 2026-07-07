@@ -2,8 +2,10 @@
 
 Surface (rich tint): 158deg gradient body (dark: darken(c,0.30)->darken(c,0.15);
 light: lighten(c,0.80)->lighten(c,0.90)), 2px border (dark alpha(b,0.55) /
-light alpha(c,0.50)), radius 20, plus a PAINTED accent halo + dark under-shadow
-inside a GLOW_PAD margin budget. Painted, never QGraphicsDropShadowEffect -
+light alpha(c,0.50)), radius 20, plus a PAINTED dark under-shadow inside an
+EDGE_PAD margin budget. The mock's accent glow was removed entirely by
+operator decision (2026-07-06): border + drop shadow only.
+Painted, never QGraphicsDropShadowEffect -
 the effect clips on macOS (tabs/multitoon/_compact_layout.py:141) and
 QGraphicsEffect on custom-painted widgets causes painter conflicts.
 
@@ -22,7 +24,7 @@ from utils.color_math import darken_rgb, lighten_rgb, with_alpha
 from utils.theme_manager import V2_ACCENTS, get_v2_tokens
 from utils.widgets.portrait_badge import PortraitBadge
 
-GLOW_PAD = 22          # px reserved on each side for halo + shadow
+EDGE_PAD = 10          # px reserved on each side for the drop shadow
 HALO_STEPS = 8
 THEME_FADE_MS = 220
 
@@ -40,7 +42,7 @@ class CardSurface(QFrame):
         self.setStyleSheet("background: transparent;")
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(GLOW_PAD + 16, GLOW_PAD + 14, GLOW_PAD + 16, GLOW_PAD + 16)
+        outer.setContentsMargins(EDGE_PAD + 16, EDGE_PAD + 14, EDGE_PAD + 16, EDGE_PAD + 16)
         outer.setSpacing(12)
 
         head = QHBoxLayout()
@@ -195,7 +197,7 @@ class CardSurface(QFrame):
             self.sub_label.setFont(f)
 
     def _body_rect(self) -> QRectF:
-        return QRectF(self.rect()).adjusted(GLOW_PAD, GLOW_PAD, -GLOW_PAD, -GLOW_PAD)
+        return QRectF(self.rect()).adjusted(EDGE_PAD, EDGE_PAD, -EDGE_PAD, -EDGE_PAD)
 
     def paintEvent(self, event):
         if self.width() <= 0 or self.height() <= 0:
@@ -213,13 +215,8 @@ class CardSurface(QFrame):
         # strokes around the body path shifted down 4px.
         shadow_path = QPainterPath()
         shadow_path.addRoundedRect(r.translated(0, 4), radius, radius)
-        self._paint_halo(p, shadow_path, QColor(0, 0, 0), 18, 0.40 if self._is_dark else 0.10)
-
-        # Accent halo - deliberately far fainter than the mock's
-        # `0 0 26px alpha(c, 0.20)`: at full strength the painted aura read
-        # as a hard colored band live (operator call, 2026-07-06).
-        self._paint_halo(p, path, QColor(self._a["c"]), GLOW_PAD,
-                         0.06 if self._is_dark else 0.04)
+        self._paint_halo(p, shadow_path, QColor(0, 0, 0), 9,
+                         0.40 if self._is_dark else 0.10)
 
         # Body gradient (~158deg: down + slightly right, pinwheel convention).
         grad = QLinearGradient(r.topLeft().x(), r.topLeft().y(),
