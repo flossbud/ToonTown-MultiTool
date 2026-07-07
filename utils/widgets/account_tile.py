@@ -304,8 +304,6 @@ class AccountTile(QFrame):
     def set_primary_toon(self, *, name: str, username: str, species: str | None,
                          accent: str | None, laff: int | None, max_laff: int | None,
                          slot_number: int | None, is_set: bool) -> None:
-        # max_laff is part of the API for callers that carry it, but the sub
-        # line renders "♥ laff" per the pinwheel spec, so it is not shown here.
         self.portrait.set_toon(
             species=species if is_set else None,
             accent=accent, slot_number=slot_number,
@@ -315,6 +313,7 @@ class AccountTile(QFrame):
             "name": name if is_set else username,
             "username": username,
             "laff": laff if is_set else None,
+            "max_laff": max_laff if is_set else None,
         }
         self._render_identity()
 
@@ -341,9 +340,13 @@ class AccountTile(QFrame):
         faint = _alpha("#ffffff" if self._is_dark else "#0f172a", 0.45)
         if idy["is_set"] and idy["laff"] is not None:
             user = idy["username"] or ""
+            # cur/max per the handoff (e.g. "120/137"); fall back to bare laff
+            # when max is unknown.
+            laff_txt = (f'{idy["laff"]}/{idy["max_laff"]}'
+                        if idy.get("max_laff") is not None else str(idy["laff"]))
             self.sub_label.setText(
                 f'{user} <span style="color:{faint}">&middot;</span> '
-                f'<span style="color:#e05252">&#9829;</span> {idy["laff"]}'
+                f'<span style="color:#e05252">&#9829;</span> {laff_txt}'
             )
         elif idy["is_set"]:
             # CC / no laff: username only.

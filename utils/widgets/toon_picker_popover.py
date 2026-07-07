@@ -121,10 +121,13 @@ class _Row(QFrame):
         self.laff_label = QLabel(self)
         self.laff_label.setStyleSheet("background: transparent;")
         if rec.laff is not None:
+            # cur/max per the handoff (e.g. "120/137"); bare laff when max unknown.
+            laff_txt = (f"{rec.laff}/{rec.max_laff}"
+                        if rec.max_laff is not None else str(rec.laff))
             self.laff_label.setTextFormat(Qt.RichText)
             self.laff_label.setText(
                 f'<span style="font-size:11px; color:{HEART_HEX};">&#9829;</span>'
-                f'<span style="font-size:11px; color:{t["sub"]};"> {rec.laff}</span>'
+                f'<span style="font-size:11px; color:{t["sub"]};"> {laff_txt}</span>'
             )
         self.laff_label.setVisible(rec.laff is not None)
         layout.addWidget(self.laff_label)
