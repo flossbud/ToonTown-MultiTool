@@ -85,3 +85,20 @@ def test_chat_handling_tiles_same_key_same_values(app):
     tab._chat_handling_tiles._on_tile_clicked(CHAT_HANDLING_ALL_TOONS)
     assert fake.get(CHAT_HANDLING_MODE) == CHAT_HANDLING_ALL_TOONS
     assert fired == [CHAT_HANDLING_ALL_TOONS]
+
+
+def test_hotkeys_card_uses_chord_pills_and_expander(app):
+    from utils.widgets.pill_controls import ChordPill, GhostExpander
+    tab = SettingsTab(FakeSettings())
+    assert all(isinstance(b, ChordPill) for b in tab._hotkey_rows.values())
+    assert isinstance(tab._hotkey_more_toggle, GhostExpander)
+    assert tab._hotkey_more_container.isHidden()          # collapsed on open
+
+
+def test_hotkey_expander_toggles(app):
+    tab = SettingsTab(FakeSettings())
+    tab._on_hotkey_more_toggled()
+    assert not tab._hotkey_more_container.isHidden()
+    assert tab._hotkey_more_toggle.text() == "Show less"
+    tab._on_hotkey_more_toggled()
+    assert tab._hotkey_more_container.isHidden()

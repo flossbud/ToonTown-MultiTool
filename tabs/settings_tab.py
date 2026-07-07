@@ -1670,30 +1670,26 @@ class SettingsTab(QWidget):
 
     def _build_hotkeys_card(self, page):
         from utils.hotkey_actions import ACTIONS
-        from utils.hotkey_capture import ChordCaptureButton
+        from utils.icon_factory import make_nav_keyboard
+        from utils.widgets.pill_controls import ChordPill
 
         lay = page._panel_layout
         insert_at = lay.count() - 1
 
-        panel = SettingsPanel(
-            title="Hotkeys",
-            sub=(
-                "Trigger app actions from anywhere with keyboard shortcuts. "
-                "Shortcuts are grabbed system-wide while the app runs."
-            ),
-            stripe="green",
-        )
-        self._panels.append(panel)
-        self._hotkeys_panel = panel
+        card = CardSurface(
+            "green", title="Hotkeys",
+            sub=("Trigger app actions from anywhere with keyboard shortcuts. "
+                 "Shortcuts are grabbed system-wide while the app runs."),
+            icon=make_nav_keyboard(20, None))
+        self._cards.append(card)
+        self._hotkeys_panel = card
         self._hotkey_rows: dict = {}
         self._hotkey_status: dict = {}
         self._hotkey_slot_combos: dict = {}
         self._hotkey_accounts_provider = None
+        self._v2_dropdowns: list = []
 
-        # One capture row per registry action, grouped by category. The
-        # SettingsPanel API has no section separator, so the category is
-        # rendered as a label prefix (matching the flat-row convention of
-        # the other Features cards).
+        # One capture row per registry action, grouped by category.
         categories: list[str] = []
         for action in ACTIONS:
             if action.category not in categories:
@@ -1708,7 +1704,7 @@ class SettingsTab(QWidget):
         more_container.setStyleSheet("background: transparent;")
         more_lay = QVBoxLayout(more_container)
         more_lay.setContentsMargins(0, 0, 0, 0)
-        more_lay.setSpacing(0)
+        more_lay.setSpacing(12)
         self._hotkey_more_container = more_container
 
         for category in categories:
@@ -1722,86 +1718,65 @@ class SettingsTab(QWidget):
                     field_label = action.label
                 else:
                     field_label = f"{category} - {action.label}"
-                field = SettingsField(field_label)
-                button = ChordCaptureButton(
+                row = self._v2_row(field_label)
+                button = ChordPill(
                     self._hotkey_stored_chord(action.id),
                     lambda text, aid=action.id: self._on_hotkey_chord(aid, text),
                     on_capture_end=self._refresh_hotkey_status,
                 )
-                button.setCursor(Qt.PointingHandCursor)
-                button.setFixedHeight(28)
                 if action.id.startswith("launch.slot_"):
                     # The slot's account picker sits inline between the
                     # label and the chord button. Built empty here; main
                     # wires the accounts provider after tab construction
                     # and the combos repopulate then (and on every show).
                     slot = action.id.rsplit("_", 1)[-1]
-                    combo = SettingsComboBox()
-                    combo.setFixedWidth(220)
+                    combo = DropdownPill()
+                    combo.setFixedWidth(200)
                     combo.currentIndexChanged.connect(
                         lambda _i, s=slot, c=combo:
                         self._on_hotkey_slot_selected(s, c.currentData()))
-                    inline = QWidget()
-                    inline.setStyleSheet("background: transparent;")
-                    inline_lay = QHBoxLayout(inline)
-                    inline_lay.setContentsMargins(0, 0, 0, 0)
-                    inline_lay.setSpacing(6)
-                    inline_lay.addWidget(combo)
-                    inline_lay.addWidget(button)
-                    field.set_control(inline)
+                    self._v2_dropdowns.append(combo)
+                    row.add_control(combo)
+                    row.add_control(button)
                     self._hotkey_slot_combos[slot] = combo
                 else:
-                    field.set_control(button)
+                    row.set_control(button)
                 if category == first_category:
-                    panel.add_field(field)
+                    card.add_row(row)
                 else:
-                    # Placement bypasses add_field (the row lives inside
-                    # the collapsible container, not the panel body), but
-                    # the field still registers in panel.fields so theming
-                    # and the last-row divider flag cover it.
-                    panel.fields.append(field)
-                    more_lay.addWidget(field)
+                    more_lay.addWidget(row)
                 self._hotkey_rows[action.id] = button
-        panel._refresh_last_flag()
 
         self._hotkey_more_count = sum(
             1 for a in ACTIONS if a.category != first_category)
 
-        # Link-styled expander between the always-visible rows and the
-        # container; themed in refresh_theme.
-        toggle = QPushButton(f"Show {self._hotkey_more_count} more...")
-        toggle.setCursor(Qt.PointingHandCursor)
-        toggle.setFlat(True)
-        toggle.setStyleSheet("background: transparent; border: none;")
+        toggle = GhostExpander()
+        toggle.set_state(expanded=False, more_count=self._hotkey_more_count)
         toggle.clicked.connect(self._on_hotkey_more_toggled)
         self._hotkey_more_toggle = toggle
         toggle_row = QWidget()
         toggle_row.setStyleSheet("background: transparent;")
         toggle_lay = QHBoxLayout(toggle_row)
-        toggle_lay.setContentsMargins(16, 8, 16, 10)
-        toggle_lay.setSpacing(0)
+        toggle_lay.setContentsMargins(0, 0, 0, 0)
+        toggle_lay.addStretch(1)
         toggle_lay.addWidget(toggle)
         toggle_lay.addStretch(1)
-        panel._body_layout.addWidget(toggle_row)
-        panel._body_layout.addWidget(more_container)
+        card.add_row(toggle_row)
+        card.add_row(more_container)
         more_container.hide()
 
         self._rebuild_hotkey_slot_rows()
 
-        lay.insertWidget(insert_at, panel)
+        lay.insertWidget(insert_at, card)
 
     def _on_hotkey_more_toggled(self) -> None:
-        """Expand/collapse the below-the-fold hotkey rows. The state is
-        per-widget-construction (SettingsTab is built once per app run),
-        so every app start opens collapsed by design. Status badges and
-        the slot-combo rebuild touch rows directly and never depend on -
-        or change - this visibility."""
+        """Expand/collapse the below-the-fold hotkey rows. Collapsed is the
+        default on every construction - no persistence by design."""
         container = self._hotkey_more_container
         show = container.isHidden()
         container.setVisible(show)
-        self._hotkey_more_toggle.setText(
-            "Show less" if show
-            else f"Show {self._hotkey_more_count} more...")
+        self._hotkey_more_toggle.set_state(
+            expanded=show, more_count=self._hotkey_more_count)
 
     def _hotkey_stored_chord(self, action_id):
         """The chord this row should DISPLAY: stored override (None = cleared)
@@ -2396,15 +2371,11 @@ class SettingsTab(QWidget):
                 accent=c["accent_blue_btn"],
                 is_dark=is_dark,
             )
-        # Hotkeys card "Show more" expander — link-styled flat button.
+        for pill in self._hotkey_rows.values():
+            pill.apply_theme(is_dark)
+        for combo in getattr(self, "_v2_dropdowns", []):
+            combo.apply_theme(is_dark)
         toggle = getattr(self, "_hotkey_more_toggle", None)
         if toggle is not None:
-            toggle.setStyleSheet(
-                "QPushButton {"
-                f" color: {c['accent_blue_btn']};"
-                " background: transparent; border: none; padding: 0;"
-                " font-size: 12px; font-weight: 600; text-align: left;"
-                " }"
-                "QPushButton:hover { text-decoration: underline; }"
-            )
+            toggle.apply_theme(is_dark)
 

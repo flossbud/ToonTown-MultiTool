@@ -182,13 +182,13 @@ def test_click_sync_switch_tracks_external_flip(settings_tab):
 
 def test_launch_slot_combo_sits_inline_with_chord_button(settings_tab):
     # The slot-1 account picker and its chord button share one inline
-    # container inside the same SettingsField (no separate picker row).
-    from tabs.settings_tab import SettingsField
+    # container inside the same InsetRow (no separate picker row).
+    from utils.widgets.inset_row import InsetRow
     tab = settings_tab
     combo = tab._hotkey_slot_combos["1"]
     button = tab._hotkey_rows["launch.slot_1"]
     assert combo.parentWidget() is button.parentWidget()
-    assert isinstance(combo.parentWidget().parentWidget(), SettingsField)
+    assert isinstance(combo.parentWidget().parentWidget(), InsetRow)
 
 
 def test_card_partially_collapsed_by_default(settings_tab):
