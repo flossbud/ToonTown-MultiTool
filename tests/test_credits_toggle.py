@@ -68,19 +68,17 @@ def test_pre_credits_index_fallback_multitoon(qapp, monkeypatch):
     assert inst.stack.currentIndex() == 0       # fell back to Multitoon
 
 
-def test_return_uses_reverse_vertical_and_moves_pill(qapp, monkeypatch):
+def test_return_uses_reverse_vertical_and_reselects_dock_tab(qapp, monkeypatch):
     import utils.motion as motion
-    from PySide6.QtCore import QRect
     inst = _app(qapp, monkeypatch)
 
-    class _Chip:
-        def __init__(self): self._checked = False
-        def setChecked(self, v): self._checked = v
-        def geometry(self): return QRect(10, 0, 40, 30)
-
-    inst.chip_buttons = [_Chip(), _Chip(), _Chip(), _Chip()]
-    moved = []
-    inst.chip_pill = type("P", (), {"slide_to": lambda self, r: moved.append(r)})()
+    # Returning from Credits reverse-slides to the pre-Credits tab and drives
+    # the glass dock's selected segment back to it (the chip rail is retired).
+    selected = []
+    inst.nav_dock = type("D", (), {
+        "segments": [object()] * 4,
+        "select": lambda self, i, animate=True: selected.append(i),
+    })()
     called = {}
 
     def spy_push(stack, frm, to, axis="h", reverse=False):
@@ -95,8 +93,7 @@ def test_return_uses_reverse_vertical_and_moves_pill(qapp, monkeypatch):
     inst.stack.setCurrentIndex(5)
     inst._nav_return_from_credits()
     assert called["axis"] == "v" and called["reverse"] is True and called["to"] == 2
-    assert inst.chip_buttons[2]._checked is True
-    assert len(moved) == 1
+    assert selected == [2]
 
 
 def test_active_page_change_clears_backdrop(qapp, monkeypatch):

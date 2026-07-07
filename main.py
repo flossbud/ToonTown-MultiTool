@@ -129,7 +129,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QToolButton, QProxyStyle, QStyle, QFrame,
     QSpacerItem, QSizePolicy,
 )
-from PySide6.QtCore import QObject, QRect, QRectF, Qt, QSize, QEvent, Signal, Slot, QTimer
+from PySide6.QtCore import QRect, Qt, QSize, QEvent, Signal, Slot, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QIcon
 
 # === Internal Imports ===
@@ -1165,7 +1165,6 @@ class MultiToonTool(QMainWindow):
         band.setMinimumHeight(NAV_BAND_H)
         band.setObjectName("app_nav_band")
 
-        from utils.theme_manager import resolve_theme
         is_dark = resolve_theme(self.settings_manager) == "dark"
         from utils.widgets.glass_dock import GlassDock
         nav_items = [
@@ -1226,12 +1225,12 @@ class MultiToonTool(QMainWindow):
     def _on_active_page_changed(self, index: int):
         """Fired by stack.currentChanged on every page switch. Lights the header
         app icon while Credits (index 5) is active, and — whenever the user
-        leaves Credits by ANY path (icon toggle-back, chip nav, or animated
+        leaves Credits by ANY path (icon toggle-back, dock nav, or animated
         slide finalization) — clears the credits open-flag and releases the
         blurred backdrop pixmap."""
         # currentChanged fires only when a transition has SETTLED on a page, so
         # no Credits slide is in flight any more. Clearing the guard here is the
-        # self-heal for the case where a chip nav cancels a Credits slide via
+        # self-heal for the case where a dock nav cancels a Credits slide via
         # push_slide_pages' stop() — Qt does NOT emit `finished` on stop(), so
         # _begin_credits_transition's finished-lambda would otherwise leave
         # _credits_transitioning stuck True and permanently disable the toggle.
@@ -1247,7 +1246,7 @@ class MultiToonTool(QMainWindow):
 
     def _wire_header_icon_active_state(self):
         """Drive the icon's 'lit while Credits active' state from ONE choke
-        point — the stack's currentChanged — so every nav path (chip nav,
+        point — the stack's currentChanged — so every nav path (dock nav,
         credits nav, slide-animation finalization, direct setCurrentIndex) is
         covered without duplicating logic. Sync once for the page shown at
         startup (currentChanged does not fire retroactively)."""
