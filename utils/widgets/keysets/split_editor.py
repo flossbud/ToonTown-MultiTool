@@ -198,7 +198,7 @@ class FieldRow(QFrame):
             bg, border, txt = "rgba(0,0,0,0.35)", "rgba(255,255,255,0.14)", "#ffffff"
         self._field.setStyleSheet(
             "QLineEdit { min-width: 100px; border-radius: 8px; padding: 0 9px; "
-            "font-family: 'JetBrains Mono','Cascadia Mono',monospace; "
+            "font-family: 'Consolas','Menlo','DejaVu Sans Mono','Liberation Mono',monospace; "
             "font-size: 11.5px; font-weight: 600; "
             "background: %s; border: 1px solid %s; color: %s; }" % (bg, border, txt))
 

@@ -2339,12 +2339,21 @@ if __name__ == "__main__":
 
         _click_diag = _ClickDiag(app)
         app.installEventFilter(_click_diag)
+    # Bundle-load the UI font (DejaVu Sans) so it renders identically on every
+    # OS regardless of what the host has installed, and make it the application
+    # default so painter-drawn text (nav/category pills, keycaps, badges) matches
+    # the stylesheet text. Shipped under assets/fonts/ (included in every build).
+    from PySide6.QtGui import QFont as _QFont, QFontDatabase as _QFontDB
+    for _font_file in ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf"):
+        _font_path = os.path.join(_assets_dir(), "fonts", _font_file)
+        if os.path.exists(_font_path):
+            _QFontDB.addApplicationFont(_font_path)
+    _appfont = _QFont("DejaVu Sans")
     if sys.platform == "linux":
-        from PySide6.QtGui import QFont, QFontDatabase
-        QFontDatabase.addApplicationFont("/usr/share/fonts/google-noto-color-emoji-fonts/Noto-COLRv1.ttf")
-        _f = app.font()
-        _f.setFamilies([_f.family(), "Noto Color Emoji"])
-        app.setFont(_f)
+        # Explicit colour-emoji fallback (some Linux runtimes won't auto-fall).
+        _QFontDB.addApplicationFont("/usr/share/fonts/google-noto-color-emoji-fonts/Noto-COLRv1.ttf")
+        _appfont.setFamilies(["DejaVu Sans", "Noto Color Emoji"])
+    app.setFont(_appfont)
     settings = SettingsManager()
     apply_theme(app, resolve_theme(settings))
     window = MultiToonTool()

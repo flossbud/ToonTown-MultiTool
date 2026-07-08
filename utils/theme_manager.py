@@ -512,7 +512,7 @@ def get_v2_tokens(is_dark: bool) -> dict:
 
 DARK_THEME = """
     QWidget {
-        font-family: 'Inter', 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif;
+        font-family: 'DejaVu Sans', sans-serif;
         font-size: 12pt;
         background-color: #1a1a1a;
         color: #e0e0e0;
@@ -521,7 +521,7 @@ DARK_THEME = """
        the QWidget font-family. Explicit rule keeps Flatpak runtimes from
        falling back to a serif when the listed families are missing. */
     QToolTip {
-        font-family: 'Inter', 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif;
+        font-family: 'DejaVu Sans', sans-serif;
         font-size: 10pt;
         background-color: #2a2a2a;
         color: #e0e0e0;
@@ -649,7 +649,7 @@ DARK_THEME = """
     QLabel#picker_card_sub {
         color: #888888;
         font-size: 11px;
-        font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+        font-family: 'Consolas', 'Menlo', 'DejaVu Sans Mono', 'Liberation Mono', monospace;
         background: transparent;
     }
     QLabel#picker_active_pill {
@@ -718,7 +718,7 @@ DARK_THEME = """
 
 LIGHT_THEME = """
     QWidget {
-        font-family: 'Inter', 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif;
+        font-family: 'DejaVu Sans', sans-serif;
         font-size: 12pt;
         background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
             stop:0 #f8fafc, stop:1 #eef2f7);
@@ -727,7 +727,7 @@ LIGHT_THEME = """
     /* See DARK_THEME for why this rule is duplicated rather than relying on
        QWidget inheritance. */
     QToolTip {
-        font-family: 'Inter', 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif;
+        font-family: 'DejaVu Sans', sans-serif;
         font-size: 10pt;
         background-color: #ffffff;
         color: #0f172a;
@@ -855,7 +855,7 @@ LIGHT_THEME = """
     QLabel#picker_card_sub {
         color: #64748b;
         font-size: 11px;
-        font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+        font-family: 'Consolas', 'Menlo', 'DejaVu Sans Mono', 'Liberation Mono', monospace;
         background: transparent;
     }
     QLabel#picker_active_pill {

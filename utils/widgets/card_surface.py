@@ -222,7 +222,7 @@ class CardSurface(QFrame):
                 "background: transparent; border: none;")
             f = QFont()
             if self._sub_mono:
-                f.setFamilies(["JetBrains Mono", "Cascadia Mono", "monospace"])
+                f.setFamilies(["Consolas", "Menlo", "DejaVu Sans Mono", "Liberation Mono", "monospace"])
                 f.setStyleHint(QFont.Monospace)
             self.sub_label.setFont(f)
 

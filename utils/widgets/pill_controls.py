@@ -209,7 +209,7 @@ class ChordPill(ChordCaptureButton):
         bound = self._chord_text is not None
         if bound:
             f = QFont()
-            f.setFamilies(["JetBrains Mono", "Cascadia Mono", "monospace"])
+            f.setFamilies(["Consolas", "Menlo", "DejaVu Sans Mono", "Liberation Mono", "monospace"])
             f.setStyleHint(QFont.Monospace)
             f.setPixelSize(11)
             self.setFont(f)

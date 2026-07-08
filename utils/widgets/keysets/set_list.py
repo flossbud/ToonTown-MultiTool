@@ -44,7 +44,7 @@ class _Keycap(QLabel):
             "background-color: rgba(0,0,0,0.28); "
             "border: 1px solid rgba(255,255,255,0.14); border-radius: 5px; "
             "color: rgba(255,255,255,0.9); font-weight: 700; font-size: 9px; "
-            "font-family: 'JetBrains Mono', 'Cascadia Mono', monospace; "
+            "font-family: 'Consolas', 'Menlo', 'DejaVu Sans Mono', 'Liberation Mono', monospace; "
             "padding: 0 4px;"
         )
 

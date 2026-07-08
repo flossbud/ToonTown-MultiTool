@@ -23,7 +23,7 @@ from utils.color_math import with_alpha
 
 def _mono_font(px: int) -> QFont:
     f = QFont()
-    f.setFamilies(["JetBrains Mono", "Cascadia Mono", "monospace"])
+    f.setFamilies(["Consolas", "Menlo", "DejaVu Sans Mono", "Liberation Mono", "monospace"])
     f.setStyleHint(QFont.Monospace)
     f.setPixelSize(px)
     f.setBold(True)
