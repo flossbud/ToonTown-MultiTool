@@ -328,3 +328,52 @@ def test_refused_third_key_release_never_commits(qapp):
     _release(b, Qt.Key_1, Qt.ControlModifier, "1")
     assert seen == ["ctrl+1+t"]
     assert not b.is_capturing()
+
+
+def test_cancel_active_capture_ends_recording_and_clears_holiday(qapp):
+    """REGRESSION (deaf capture in the overlay panel): a capture that never
+    receives keys (non-activating panel) would, when the panel closed, leave
+    ``chord_capture_state`` stuck ON - silently disabling global hotkeys +
+    routing. cancel_active_capture() must end the recording AND clear the
+    holiday, keeping the existing binding (like Esc)."""
+    from utils import chord_capture_state, hotkey_capture
+    ended = []
+    seen = []
+    b = ChordCaptureButton("ctrl+1", on_chord=seen.append,
+                           on_capture_end=lambda: ended.append(True))
+    b.begin_capture()
+    assert b.is_capturing() and chord_capture_state.is_active()
+    assert hotkey_capture._active_capture is b        # registered for cancel
+
+    hotkey_capture.cancel_active_capture()
+
+    assert not b.is_capturing()                       # recording ended
+    assert not chord_capture_state.is_active()        # holiday cleared
+    assert b.text() == "Ctrl+1"                        # binding unchanged (Esc-like)
+    assert seen == []                                  # no chord committed
+    assert ended == [True]                             # owner notified
+    assert hotkey_capture._active_capture is None      # deregistered
+
+
+def test_cancel_active_capture_is_a_safe_noop_when_idle(qapp):
+    """No capture recording -> cancel_active_capture() must not raise and still
+    guarantees the holiday is off."""
+    from utils import chord_capture_state, hotkey_capture
+    hotkey_capture._active_capture = None
+    hotkey_capture.cancel_active_capture()             # no crash
+    assert not chord_capture_state.is_active()
+
+
+def test_end_capture_deregisters_only_self(qapp):
+    """A committed/cancelled capture clears the active-capture slot only if it
+    still owns it (a later begin_capture must not be wiped by an older button's
+    teardown)."""
+    from utils import hotkey_capture
+    b1 = ChordCaptureButton(None, on_chord=lambda c: None)
+    b2 = ChordCaptureButton(None, on_chord=lambda c: None)
+    b1.begin_capture()
+    assert hotkey_capture._active_capture is b1
+    b1.cancel()                                        # b1 done -> slot cleared
+    assert hotkey_capture._active_capture is None
+    b2.begin_capture()
+    assert hotkey_capture._active_capture is b2

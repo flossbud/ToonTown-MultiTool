@@ -49,6 +49,29 @@ _SHIFTED_US = {"!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6",
                "<": "comma", ">": "period", "?": "slash"}
 
 
+# Module-level "which button is recording" so a panel close / overlay teardown
+# can force-cancel an in-progress capture. Only ONE capture is ever live at a
+# time (begin_capture grabs the keyboard app-wide).
+_active_capture = None
+
+
+def cancel_active_capture() -> None:
+    """Force-cancel any in-progress chord capture (panel close / overlay leave).
+    Safe no-op when nothing is recording. GUARANTEES chord_capture_state is
+    cleared, so a capture abandoned while still recording - e.g. a deaf capture
+    in a non-activating overlay panel, or the panel closed mid-record - can never
+    strand the input holiday ON (which would silently disable global hotkeys +
+    routing until an app restart)."""
+    btn = _active_capture
+    if btn is not None:
+        try:
+            btn.cancel()
+        except Exception:  # noqa: BLE001 - teardown must never raise
+            pass
+    # Belt-and-suspenders: clear the holiday even if the button is gone/broken.
+    chord_capture_state.set_active(False)
+
+
 def _display(chord_text: str | None) -> str:
     """Human form of a canonical chord, per part: 'ctrl+alt+h' ->
     'Ctrl+Alt+H', 'shift+1+t' -> 'Shift+1+T'."""
@@ -128,7 +151,9 @@ class ChordCaptureButton(QPushButton):
     def begin_capture(self) -> None:
         if self._capturing:
             return
+        global _active_capture
         self._capturing = True
+        _active_capture = self          # so a panel close can force-cancel us
         self._reset_held()
         # Take focus BEFORE grabbing: if another row is mid-capture, its
         # focusOutEvent cancels (and releases its grab) right now, so our
@@ -146,12 +171,28 @@ class ChordCaptureButton(QPushButton):
         self.grabKeyboard()
 
     def _end_capture(self) -> None:
+        global _active_capture
         self._capturing = False
+        if _active_capture is self:
+            _active_capture = None
         self._reset_held()
         self.releaseKeyboard()
         # Mirror order: hand key focus back, then lift the input holiday.
         key_session.end(self)
         chord_capture_state.set_active(False)
+
+    def cancel(self) -> None:
+        """External force-cancel (panel close / overlay teardown): behave exactly
+        like Esc - end the session, keep the existing binding, notify the owner.
+        No-op when not recording. Lets a close path guarantee no capture (and no
+        input holiday) outlives the panel even if focus-out never fired (a
+        non-activating overlay panel's button may never have held real focus)."""
+        if not self._capturing:
+            return
+        self._end_capture()
+        self.set_chord(self._chord_text)
+        if self._on_capture_end is not None:
+            self._on_capture_end()
 
     def _reset_held(self) -> None:
         self._held = {}

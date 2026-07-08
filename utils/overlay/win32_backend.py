@@ -78,6 +78,7 @@ class Win32OverlayBackend(OverlayBackend):
             apply_transparent=self._set_transparent,
         )
         self._timer = None  # lazy QTimer, GUI thread, runs only while needed
+        self._key_session = None  # active chord-capture keyboard session state
         if self.is_available():
             overlay_trace("Win32OverlayBackend: available (cursor arbiter ready)")
 
@@ -190,6 +191,100 @@ class Win32OverlayBackend(OverlayBackend):
             self._flip_ex(hwnd, add=WS_EX_NOACTIVATE)
         else:
             self._flip_ex(hwnd, add=WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
+
+    # -- chord-capture keyboard session (win32 analog of the macOS bridge) --
+
+    def begin_key_session(self, window) -> bool:
+        """Let *window* (a non-activating overlay surface) receive keyboard for
+        the span of a chord capture. ``WS_EX_NOACTIVATE`` keeps the panel from
+        ever being the foreground/focused window, so Qt's ``grabKeyboard`` - which
+        only redirects keys the app ALREADY receives through a focused window -
+        stays deaf. Temporarily drop NOACTIVATE and force the window
+        foreground+focused: the user just clicked the capture button, so the
+        process has a fresh input event (SetForegroundWindow rights), and an
+        ``AttachThreadInput`` to the outgoing foreground thread makes the change
+        stick across the process boundary (the game). ``end_key_session`` restores
+        NOACTIVATE and hands foreground back. Returns whether the window actually
+        took keyboard focus (False = capture stays deaf, treated as "no session",
+        never an error). Richly traced so a live run shows the exact focus state
+        reached (TTMT_OVERLAY_TRACE)."""
+        if not self.is_available():
+            return False
+        try:
+            hwnd = int(window.winId())
+        except Exception:
+            return False
+        try:
+            import ctypes
+            import win32api
+            import win32process
+            user32 = ctypes.windll.user32
+            prev_fg = win32gui.GetForegroundWindow()
+            self._key_session = {"hwnd": hwnd, "prev_fg": prev_fg}
+            # NOACTIVATE blocks activation; drop it so the window CAN go foreground.
+            self._flip_ex(hwnd, remove=WS_EX_NOACTIVATE)
+            our_tid = win32api.GetCurrentThreadId()
+            fg_tid = 0
+            if prev_fg:
+                try:
+                    fg_tid = win32process.GetWindowThreadProcessId(prev_fg)[0]
+                except Exception:
+                    fg_tid = 0
+            attached = bool(fg_tid and fg_tid != our_tid
+                            and user32.AttachThreadInput(our_tid, fg_tid, True))
+            try:
+                win32gui.SetForegroundWindow(hwnd)
+            except Exception:
+                user32.SetForegroundWindow(hwnd)   # ctypes: 0/1, never raises
+            try:
+                win32gui.SetFocus(hwnd)            # hwnd is our thread's window
+            except Exception:
+                pass
+            got_fg = win32gui.GetForegroundWindow() == hwnd
+            try:
+                got_focus = win32gui.GetFocus() == hwnd
+            except Exception:
+                got_focus = False
+            if attached:
+                user32.AttachThreadInput(our_tid, fg_tid, False)
+            ok = bool(got_fg or got_focus)
+            overlay_trace(f"win32 key-session BEGIN ok={ok} fg={got_fg} "
+                          f"focus={got_focus} attached={attached} "
+                          f"prev_fg={prev_fg} hwnd={hwnd}")
+            return ok
+        except Exception as e:  # noqa: BLE001 - capture stays deaf, never crash
+            overlay_trace(f"win32 key-session BEGIN error: {e}")
+            return False
+
+    def end_key_session(self, window) -> None:
+        """Close the capture session: re-assert ``WS_EX_NOACTIVATE`` and hand the
+        foreground back to whatever the user was in (the game). Idempotent; a call
+        with no live session still restores NOACTIVATE best-effort so the panel can
+        never be left activatable."""
+        if not self.is_available():
+            return
+        sess = self._key_session
+        self._key_session = None
+        hwnd = sess.get("hwnd") if sess else None
+        if hwnd is None:
+            try:
+                hwnd = int(window.winId())
+            except Exception:
+                hwnd = None
+        if hwnd is not None:
+            self._flip_ex(hwnd, add=WS_EX_NOACTIVATE)
+        prev_fg = sess.get("prev_fg") if sess else None
+        if prev_fg:
+            try:
+                if win32gui.IsWindow(prev_fg):
+                    win32gui.SetForegroundWindow(prev_fg)
+            except Exception:
+                try:
+                    import ctypes
+                    ctypes.windll.user32.SetForegroundWindow(prev_fg)
+                except Exception:
+                    pass
+        overlay_trace(f"win32 key-session END hwnd={hwnd} restored_fg={prev_fg}")
 
     def set_rep_initial_state(self, window) -> None:
         """No-op: the representative is never constructed on Windows

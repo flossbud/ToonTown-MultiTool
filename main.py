@@ -1506,6 +1506,12 @@ class MultiToonTool(QMainWindow):
         if not getattr(self, "_settings_floating", False):
             return
         self._settings_floating = False
+        # Force-cancel any in-progress chord capture BEFORE the SettingsTab is
+        # reparented out: a deaf/abandoned capture in the non-activating panel
+        # would otherwise leave the input holiday stuck ON (global hotkeys +
+        # routing silently disabled). Its focus-out may never fire on Windows.
+        from utils import hotkey_capture
+        hotkey_capture.cancel_active_capture()
         cont = self._settings_container
         self._settings_container = None
         if cont is not None:
