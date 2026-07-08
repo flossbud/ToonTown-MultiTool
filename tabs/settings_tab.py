@@ -52,11 +52,12 @@ SETTINGS_CONTENT_MAX_W = 768
 
 CATEGORY_META = {
     # key: (accent fill, bright border, icon maker name)
-    "general":  ("#0077ff", "#3399ff", "make_nav_gear"),
-    "games":    ("#3da343", "#56d66a", "make_nav_gamepad"),
-    "keysets":  ("#1fb8a6", "#4dd2c3", "make_nav_keyboard"),
-    "features": ("#ff9500", "#ffb04d", "make_radio_waves_icon"),
-    "advanced": ("#b34848", "#e05252", "make_wrench_icon"),
+    # Pill identity colors, left to right: blue, red, yellow, green, purple.
+    "general":  ("#0077ff", "#3399ff", "make_nav_gear"),         # blue
+    "games":    ("#b34848", "#e05252", "make_nav_gamepad"),      # red
+    "keysets":  ("#d4a017", "#e8c14d", "make_nav_keyboard"),     # yellow
+    "features": ("#3da343", "#56d66a", "make_radio_waves_icon"), # green
+    "advanced": ("#8B4FD6", "#a97ce6", "make_wrench_icon"),      # purple
 }
 
 

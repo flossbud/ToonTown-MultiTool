@@ -33,9 +33,17 @@ def test_keysets_category_registered_and_ordered(app, km):
     keys = [k for k, _ in st.CATEGORIES]
     assert keys == ["general", "games", "keysets", "features", "advanced"]
 
-def test_keysets_identity_is_teal(app):
-    assert CATEGORY_META["keysets"][0] == "#1fb8a6"
-    assert CATEGORY_META["keysets"][1] == "#4dd2c3"
+def test_keysets_identity_is_yellow(app):
+    assert CATEGORY_META["keysets"][0] == "#d4a017"
+    assert CATEGORY_META["keysets"][1] == "#e8c14d"
+
+def test_category_pill_colors_left_to_right(app):
+    # blue, red, yellow, green, purple
+    assert CATEGORY_META["general"][:2]  == ("#0077ff", "#3399ff")
+    assert CATEGORY_META["games"][:2]    == ("#b34848", "#e05252")
+    assert CATEGORY_META["keysets"][:2]  == ("#d4a017", "#e8c14d")
+    assert CATEGORY_META["features"][:2] == ("#3da343", "#56d66a")
+    assert CATEGORY_META["advanced"][:2] == ("#8B4FD6", "#a97ce6")
 
 def test_keysets_page_is_mounted(app, km):
     from utils.widgets.keysets.keysets_page import KeysetsPage
