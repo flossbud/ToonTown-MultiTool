@@ -52,3 +52,22 @@ def test_back_button_visible_with_two_games(app, km):
     p = _page(km, ("ttr", "cc")); p.show()
     p._show_editor("ttr")
     assert p._back_btn.isVisible() is True
+
+def test_show_picker_if_available_returns_from_editor(app, km):
+    p = _page(km, ("ttr", "cc"))
+    p._show_editor("ttr")
+    assert p._stack.currentIndex() == 1
+    assert p.show_picker_if_available() is True
+    assert p._stack.currentIndex() == 0          # back on the picker
+    assert p.current_game() is None
+
+def test_show_picker_if_available_noop_on_single_game(app, km):
+    p = _page(km, ("cc",))                         # one game -> no picker
+    assert p._stack.currentIndex() == 1
+    assert p.show_picker_if_available() is False
+    assert p._stack.currentIndex() == 1            # stays on the editor
+
+def test_show_picker_if_available_noop_when_already_on_picker(app, km):
+    p = _page(km, ("ttr", "cc"))                   # opens on the picker
+    assert p._stack.currentIndex() == 0
+    assert p.show_picker_if_available() is False

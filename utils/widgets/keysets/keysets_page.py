@@ -209,6 +209,16 @@ class KeysetsPage(QWidget):
             return None
         return self._current_game
 
+    def show_picker_if_available(self) -> bool:
+        """Return to the game picker - the same action as the editor's
+        "All games" back button. No-op (returns False) when fewer than two
+        games are active (no picker exists) or the picker is already showing.
+        Lets the host treat a re-click on the Keysets chip as a back action."""
+        if len(self._active_games()) >= 2 and self._stack.currentIndex() != 0:
+            self._show_picker()
+            return True
+        return False
+
     # ── Detect-apply (Detect button in the editor) ─────────────────────────
     def _on_detect_settings_for_game(self, game: str) -> None:
         """Apply the live game config to the Default set, then reload the

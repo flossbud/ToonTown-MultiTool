@@ -1501,6 +1501,14 @@ class SettingsTab(QWidget):
 
     # ── Category routing ──────────────────────────────────────────────────
     def _on_category_selected(self, key: str):
+        # Re-clicking the already-active Keysets chip acts like the editor's
+        # "All games" back button: return to the game picker (when one exists).
+        # A first navigation TO Keysets from another category is unaffected.
+        if key == "keysets" and self._current_page_key == "keysets":
+            page = self.pages.get("keysets")
+            if hasattr(page, "show_picker_if_available") \
+                    and page.show_picker_if_available():
+                return
         self._show_category(key)
         self.settings_manager.set(SETTINGS_ACTIVE_CATEGORY, key)
 

@@ -54,3 +54,29 @@ def test_show_keysets_category_switches_stack(app, km):
     st = SettingsTab(FakeSettings(), keymap_manager=km, credentials_manager=FakeCreds())
     st._show_category("keysets", animate=False)
     assert st._current_page_key == "keysets"
+
+class _BothGamesCreds:
+    def get_accounts_metadata(self, game=None): return [{"x": 1}]
+
+def test_reclick_keysets_chip_returns_to_picker(app, km):
+    st = SettingsTab(FakeSettings(), keymap_manager=km,
+                     credentials_manager=_BothGamesCreds())
+    st._show_category("keysets", animate=False)   # Keysets is the active page
+    page = st.pages["keysets"]
+    page._show_editor("ttr")                        # user drills into TTR's editor
+    assert page._stack.currentIndex() == 1
+    st._on_category_selected("keysets")             # re-click the active chip
+    assert page._stack.currentIndex() == 0          # back on the game picker
+
+def test_reclick_keysets_chip_noop_without_picker(app, km):
+    # Single game -> no picker; re-clicking the chip must not blow up or move.
+    class _OneGameCreds:
+        def get_accounts_metadata(self, game=None):
+            return [{"x": 1}] if game == "ttr" else []
+    st = SettingsTab(FakeSettings(), keymap_manager=km,
+                     credentials_manager=_OneGameCreds())
+    st._show_category("keysets", animate=False)
+    page = st.pages["keysets"]
+    assert page._stack.currentIndex() == 1          # straight to the TTR editor
+    st._on_category_selected("keysets")
+    assert page._stack.currentIndex() == 1          # unchanged
