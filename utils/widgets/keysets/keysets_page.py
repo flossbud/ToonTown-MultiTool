@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from utils.theme_manager import resolve_theme
 from . import detect
+from .game_meta import GAME_META
 from .game_picker import GamePickerView
 from .split_editor import SplitEditor
 
@@ -187,7 +188,9 @@ class KeysetsPage(QWidget):
     # ── Navigation ──────────────────────────────────────────────────────────
     def _show_picker(self) -> None:
         active = self._active_games()
-        entries = [(g, self.keymap_manager.num_sets(g)) for g in sorted(active)]
+        # Present games in canonical order (TTR before CC), not alphabetical.
+        entries = [(g, self.keymap_manager.num_sets(g))
+                   for g in GAME_META if g in active]
         self._picker.set_games(entries)
         self._current_game = None
         self._back_btn.setVisible(False)

@@ -48,6 +48,13 @@ from utils.settings_keys import (
 # the scroll area's alignment. Engages whenever the content area is wider.
 SETTINGS_CONTENT_MAX_W = 768
 
+# Keysets is a master/detail editor plus a 2-up game picker, both wider than the
+# card column: two 360px picker cards + gap need ~736px of content, and the set
+# list + keyboard-bearing detail card want ~772px. Give that one page a wider
+# envelope so the picker lays out side-by-side and the keyboard centers. Window
+# minimum width is 820, so this clamps to the viewport on the narrowest window.
+KEYSETS_CONTENT_MAX_W = 880
+
 # ── Category pill rail (v2 shell, replaces Sidebar) ───────────────────────────
 
 CATEGORY_META = {
@@ -284,7 +291,9 @@ class SettingsTab(QWidget):
                 page._panel_layout = page_lay      # type: ignore[attr-defined]
                 page_lay.addStretch(1)
 
-            page.setMaximumWidth(SETTINGS_CONTENT_MAX_W)
+            page.setMaximumWidth(
+                KEYSETS_CONTENT_MAX_W if key == "keysets"
+                else SETTINGS_CONTENT_MAX_W)
             scroll.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
             scroll.setWidget(page)
             self.pages[key] = page
@@ -1512,8 +1521,10 @@ class SettingsTab(QWidget):
 
     def _animate_page_in(self, page) -> None:
         """200ms fade + 6px upward slide on category switch (cubic-out).
-        Pages are plain QSS-painted QWidgets, so QGraphicsOpacityEffect is
-        safe here (the painter-conflict law only bites custom paintEvents)."""
+        The opacity effect attaches to the plain-QWidget page CONTAINER, not to
+        any custom-paintEvent child, so the painter-conflict law is not tripped
+        even for the Keysets page (whose subtree paints itself). Never attach an
+        effect directly to a child that overrides paintEvent."""
         import utils.motion as motion
         if motion.is_reduced():
             return

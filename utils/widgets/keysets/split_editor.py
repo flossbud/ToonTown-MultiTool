@@ -34,13 +34,6 @@ from .visual_keyboard import VisualKeyboard
 
 _ROW_RADIUS = 13
 
-# Fixed display labels for the field-grid rows. Unlisted actions Title-case.
-_ROW_LABELS = {
-    "forward": "Forward", "reverse": "Reverse", "left": "Left", "right": "Right",
-    "jump": "Jump", "book": "Book", "gags": "Gags", "tasks": "Tasks",
-    "map": "Map", "sprint": "Sprint", "action": "Perform Action",
-}
-
 _CONFLICT_TEXT = ("Some keys are assigned to more than one action - "
                   "highlighted in red.")
 _HELPER_TEXT = ("These keys are what is sent to all game windows for input. "
@@ -48,7 +41,9 @@ _HELPER_TEXT = ("These keys are what is sent to all game windows for input. "
 
 
 def _row_label(action: str) -> str:
-    return _ROW_LABELS.get(action, action.replace("_", " ").title())
+    # Single-sourced from logical_actions.ACTION_LABELS; unlisted -> Title-case.
+    return logical_actions.ACTION_LABELS.get(
+        action, action.replace("_", " ").title())
 
 
 # ── number badge ────────────────────────────────────────────────────────────

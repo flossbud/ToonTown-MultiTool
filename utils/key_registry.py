@@ -6,11 +6,11 @@ their own hand-maintained dicts:
   - NAMED_KEYSYMS_FROM_REGISTRY  -> services/input_service.py (send-time keysym)
   - PASSTHROUGH_KEYSYMS          -> services/input_service.py (CC X11 grabber passthrough)
   - PYNPUT_NAME_MAP_BASE         -> services/hotkey_manager.py (pynput name decode)
-  - DISPLAY_NAMES_FROM_REGISTRY  -> tabs/keymap_tab.py (UI labels)
+  - DISPLAY_NAMES_FROM_REGISTRY  -> utils/widgets/keysets/movement_key_field.py (UI labels)
 
 Pure Python by design: no Qt and no pynput imports, so service-layer and
 headless code can import it without dragging in a GUI/runtime dependency.
-Qt key resolution (getattr(Qt, qt_key_name)) happens in keymap_tab.py only.
+Qt key resolution (getattr(Qt, qt_key_name)) happens in movement_key_field.py only.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ class KeyDef:
     # name->canonical map must apply the same no-duplicate discipline that
     # PYNPUT_NAME_MAP_BASE relies on.
     import_aliases: tuple[str, ...] = ()
-    qt_key_names: tuple[str, ...] = ()   # Qt key name strings; resolved via getattr(Qt, name) in keymap_tab.py
+    qt_key_names: tuple[str, ...] = ()   # Qt key name strings; resolved via getattr(Qt, name) in movement_key_field.py
     numpad_key: bool = False             # True → _NUMPAD_KEYS path; False → SPECIAL_KEYS path
     category: str = "control"           # modifier/control/arrow/function/navigation/numpad
     passthrough: bool = True            # include in CC X11 grabber passthrough tuple
@@ -178,7 +178,7 @@ PYNPUT_NAME_MAP_BASE: dict[str, str] = {
     for name in kd.pynput_names
 }
 
-# {canonical: display} — replaces hardcoded DISPLAY_NAMES in keymap_tab.py
+# {canonical: display} — feeds DISPLAY_NAMES in utils/widgets/keysets/movement_key_field.py
 DISPLAY_NAMES_FROM_REGISTRY: dict[str, str] = {
     kd.canonical: kd.display for kd in NAMED_KEY_REGISTRY
 }
