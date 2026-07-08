@@ -68,10 +68,10 @@ class KeysetsPage(QWidget):
         # ── Page 1: back button + the split editor ─────────────────────────
         editor_container = QWidget(self)
         ec_layout = QVBoxLayout(editor_container)
-        ec_layout.setContentsMargins(0, 0, 0, 0)
-        ec_layout.setSpacing(0)
+        ec_layout.setContentsMargins(6, 2, 6, 0)
+        ec_layout.setSpacing(8)
 
-        self._back_btn = QPushButton("‹ All games", editor_container)
+        self._back_btn = QPushButton("‹  All Games", editor_container)
         self._back_btn.setCursor(Qt.PointingHandCursor)
         self._back_btn.setFixedHeight(30)
         self._back_btn.clicked.connect(self._show_picker)
@@ -238,19 +238,15 @@ class KeysetsPage(QWidget):
         self._style_back_button(is_dark)
 
     def _style_back_button(self, is_dark: bool) -> None:
+        # Ghost breadcrumb link (borderless), not a boxed corner pill.
         self._back_btn.setStyleSheet(
             "QPushButton {"
-            " background: rgba(255,255,255,0.05);"
-            " border: 1px solid rgba(255,255,255,0.14);"
-            " border-radius: 8px;"
-            " color: #ffffff;"
-            " padding: 0 14px;"
-            " font-size: 12px; font-weight: 600;"
+            " background: transparent; border: none;"
+            " color: rgba(255,255,255,0.66);"
+            " padding: 4px 10px 4px 4px;"
+            " font-size: 13.5px; font-weight: 600; text-align: left;"
             "}"
-            "QPushButton:hover {"
-            " background: rgba(255,255,255,0.10);"
-            " border: 1px solid rgba(255,255,255,0.22);"
-            "}"
+            "QPushButton:hover { color: #ffffff; }"
         )
 
     # ── Re-gate on show ──────────────────────────────────────────────────────
