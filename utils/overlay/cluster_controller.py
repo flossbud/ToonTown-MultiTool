@@ -3035,6 +3035,14 @@ class ClusterOverlayController:
             size = int(CardMetrics(self._scale).emblem * 6)
             ax, ay = self._anchor
             surface = PanelSurface(backend=self._backend)
+            # Re-shape the click region to the window's live size on every resize:
+            # the hosted SettingsTab can clamp the window past the requested square,
+            # and a stale square region leaves the surplus width click-through.
+            # Guarded (getattr): test stubs may lack the method (like
+            # set_content_blanked below).
+            refresh = getattr(surface, "set_shape_refresh", None)
+            if refresh is not None:
+                refresh(self._reapply_panel_shape)
             surface.set_overlay_geometry(
                 QRect(int(ax - size / 2), int(ay - size / 2), size, size))
             self._safe_call(surface, "prepare_initial_state")
@@ -3785,7 +3793,6 @@ class ClusterOverlayController:
             return None   # fail-closed: no persistent top-level to host into
         from utils.overlay.card_metrics import CardMetrics
         from PySide6.QtCore import QRect
-        from PySide6.QtGui import QPainterPath
         try:
             size = int(CardMetrics(self._scale).emblem * 6)
             # Track the open marker + on_close IMMEDIATELY (before any fallible
@@ -3806,10 +3813,14 @@ class ClusterOverlayController:
             surface.set_overlay_geometry(
                 QRect(int(ax - size / 2), int(ay - size / 2), size, size))
             surface.raise_()
-            # NON-EMPTY click region: the WHOLE panel accepts clicks.
-            path = QPainterPath()
-            path.addRect(0, 0, size, size)
-            self._apply_panel_input_shape(path, swallow=False)
+            # NON-EMPTY click region covering the WHOLE panel. Shaped from the
+            # surface's REALIZED size, NOT the requested emblem*6 square:
+            # set_overlay_geometry() above activated the layout, so the hosted
+            # SettingsTab's minimum width has already clamped the window WIDER
+            # than the square (landscape). Shaping to the square left the surplus
+            # width - the strip holding the right-aligned hotkey buttons + close
+            # dot - click-through (see _panel_shape_path).
+            self._apply_panel_input_shape(self._panel_shape_path(), swallow=False)
             # Content hosted + shaped: lift the empty-state blank LAST (the
             # surface paints-before-opacity internally). A stub surface
             # without the method opens unblanked as before. Unguarded on the
@@ -3939,18 +3950,39 @@ class ClusterOverlayController:
             if not swallow:
                 raise
 
-    def _reapply_panel_shape(self) -> None:
-        """Re-apply the panel's FULL-RECT click region at the current panel size (and
-        thus the surface's CURRENT device-pixel ratio). The panel's LOGICAL rect is
-        unchanged; only the device conversion differs on a new monitor, so a
-        screen-change re-apply honors the logical/device contract. No-op when the
-        panel is closed. Mirrors ``_reapply_radial_shape``."""
-        if self._panel_surface is None or self._panel_size <= 0:
-            return
+    def _panel_shape_path(self):
+        """The panel's FULL-RECT click region, sized to the surface's REALIZED
+        width/height rather than the requested ``emblem*6`` square.
+
+        The controller requests a square canvas, but ``set_overlay_geometry``
+        activates the layout first, so the hosted SettingsTab's minimum width can
+        clamp the realized window WIDER than the requested side (a landscape
+        rectangle). Shaping the click region to the square then left the surplus
+        width - which carries the right-aligned hotkey capture buttons and the
+        close dot - OUTSIDE the interactive region, so the cursor arbiter held
+        ``WS_EX_TRANSPARENT`` there and every hover/click in that strip passed
+        straight through the popup (live-confirmed on Windows @125%: a 766x486
+        window shaped with a ~486px square, red dot + "Not set" buttons dead).
+        Reading the live ``width()/height()`` covers the whole panel however the
+        content sized it - on X11 (real X Shape) and win32/macOS (arbiter) alike.
+        Empty path when the surface is gone (callers no-op on an empty region)."""
         from PySide6.QtGui import QPainterPath
         path = QPainterPath()
-        path.addRect(0, 0, self._panel_size, self._panel_size)
-        self._apply_panel_input_shape(path)
+        surface = self._panel_surface
+        if surface is not None:
+            path.addRect(0, 0, surface.width(), surface.height())
+        return path
+
+    def _reapply_panel_shape(self) -> None:
+        """Re-apply the panel's FULL-RECT click region at the surface's CURRENT
+        size + device-pixel ratio. Fires on a screen/scale change AND on every
+        panel resize (``PanelSurface.resizeEvent`` -> ``set_shape_refresh``), so a
+        content-driven resize can never strand a stale (too-small) region. No-op
+        when the panel is closed (``_panel_size == 0``). Mirrors
+        ``_reapply_radial_shape``."""
+        if self._panel_surface is None or self._panel_size <= 0:
+            return
+        self._apply_panel_input_shape(self._panel_shape_path())
 
     # ------------------------------------------------------------------
     # Persistence (anchor + scale + monitor identity)

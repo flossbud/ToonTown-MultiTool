@@ -2702,6 +2702,77 @@ def test_open_panel_surface_centers_on_anchor_at_emblem_times_six(qapp, monkeypa
     ctrl.close_panel_surface()
 
 
+def test_open_panel_click_region_covers_content_widened_window(qapp, monkeypatch):
+    """REGRESSION (live Windows @125%): the panel window is CONTENT-sized, so the
+    hosted SettingsTab's minimum width can clamp the realized window WIDER than the
+    requested emblem*6 square. The click region must cover the FULL realized
+    window, not the square - else the surplus-width strip (the right-aligned hotkey
+    "Not set" buttons + the red close dot) is left OUTSIDE the interactive region,
+    the cursor arbiter holds it click-through, and the popup is dead there while
+    still looking open. Red on the old square-shaped region; green once shaped from
+    the live width()/height()."""
+    from PySide6.QtCore import QRect
+    backend = _RecordingBackend()
+    made: list = []
+
+    class _WideningPanelSurface(QWidget):
+        # Models Qt clamping the window WIDER than the requested square when the
+        # hosted content's minimum width exceeds the emblem*6 side.
+        _EXTRA_W = 200
+
+        def __init__(self, backend=None):
+            super().__init__()
+            self.backend = backend
+            self.geom = None
+            made.append(self)
+
+        def host(self, widget):
+            widget.setParent(self)
+
+        def set_overlay_geometry(self, rect):
+            self.geom = rect
+            self.setGeometry(QRect(rect.x(), rect.y(),
+                                   rect.width() + self._EXTRA_W, rect.height()))
+
+        def prepare_initial_state(self):
+            pass
+
+        def show(self):
+            pass
+
+        def hide(self):
+            pass
+
+        def raise_(self):
+            pass
+
+        def deleteLater(self):
+            pass
+
+        def set_content_blanked(self, blanked):
+            pass
+
+    monkeypatch.setattr("utils.overlay.cluster_surface.PanelSurface",
+                        _WideningPanelSurface)
+    ctrl, provider, window, created = _make(anchor=(1000, 700), backend=backend)
+    ctrl.enter()
+    backend.shapes.clear()                          # ignore enter-time cluster/panel shaping
+
+    surface = ctrl.open_panel_surface(QWidget())
+
+    assert surface is not None
+    size = _panel_size(1.0)
+    panel_shapes = [s for s in backend.shapes if s[0] is surface]
+    assert len(panel_shapes) >= 1
+    _win, path, _dpr = panel_shapes[-1]
+    br = path.boundingRect().toRect()
+    # The click region spans the FULL realized width (square + content surplus),
+    # so the right strip with the hotkey buttons + close dot stays interactive.
+    assert br.width() == size + _WideningPanelSurface._EXTRA_W
+    assert br.height() == surface.height()
+    ctrl.close_panel_surface()
+
+
 def test_close_panel_surface_runs_on_close_before_teardown_and_is_idempotent(qapp, monkeypatch):
     """close_panel_surface() runs on_close FIRST (the surface still exists + is
     undestroyed at that instant, so the caller can reparent its content out),
@@ -3769,6 +3840,14 @@ def _make_dpr_surface_stub():
 
         def set_overlay_geometry(self, rect):
             self.geom = rect
+
+        def width(self):
+            # Realized size == requested (no content clamp in the stub); the panel
+            # click region is shaped from the surface's live width()/height().
+            return self.geom.width() if self.geom is not None else 0
+
+        def height(self):
+            return self.geom.height() if self.geom is not None else 0
 
         def prepare_initial_state(self):
             pass

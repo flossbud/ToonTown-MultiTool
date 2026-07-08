@@ -325,3 +325,22 @@ class PanelSurface(ClusterSurface):
     """
 
     WM_WINDOW_TYPE = "_KDE_NET_WM_WINDOW_TYPE_ON_SCREEN_DISPLAY"
+
+    def set_shape_refresh(self, callback) -> None:
+        """Register a controller callback invoked on every resize so the click
+        region can be re-shaped to the window's live size. The panel window is
+        content-sized (the hosted SettingsTab's minimum width can push it past the
+        requested square), so a region shaped once at open can go stale on any
+        later resize; re-shaping on resize keeps it covering the whole panel."""
+        self._shape_refresh = callback
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # getattr default: a resize can fire during construction, before the
+        # controller registers the callback.
+        cb = getattr(self, "_shape_refresh", None)
+        if cb is not None:
+            try:
+                cb()
+            except Exception:
+                pass
