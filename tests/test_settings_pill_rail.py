@@ -25,13 +25,14 @@ def app():
 def test_rail_replaces_sidebar(app):
     tab = SettingsTab(FakeSettings())
     assert not hasattr(tab, "sidebar")
-    assert [p.key for p in tab.rail.pills] == ["general", "games", "features", "advanced"]
+    assert [p.key for p in tab.rail.pills] == [
+        "general", "games", "keysets", "features", "advanced"]
 
 
 def test_category_click_persists_and_switches(app):
     fake = FakeSettings()
     tab = SettingsTab(fake)
-    tab.rail.pills[2]._activate()
+    tab.rail.pills[3]._activate()   # "features" pill (index shifted by "keysets")
     assert fake.get(SETTINGS_ACTIVE_CATEGORY) == "features"
     assert tab._current_page_key == "features"
 

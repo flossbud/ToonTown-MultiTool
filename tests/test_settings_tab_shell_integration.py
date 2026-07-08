@@ -37,16 +37,16 @@ def settings_manager(tmp_path):
     return _Stub()
 
 
-def test_settings_tab_has_rail_and_four_pages(qapp, settings_manager):
+def test_settings_tab_has_rail_and_five_pages(qapp, settings_manager):
     from tabs.settings_tab import SettingsTab
     tab = SettingsTab(settings_manager)
     assert not hasattr(tab, "sidebar")
     assert tab.rail is not None
     assert [pill.key for pill in tab.rail.pills] == [
-        "general", "games", "features", "advanced",
+        "general", "games", "keysets", "features", "advanced",
     ]
     # Each category has a page widget mounted in the content-pane stack.
-    for key in ("general", "games", "features", "advanced"):
+    for key in ("general", "games", "keysets", "features", "advanced"):
         assert key in tab.pages
         assert isinstance(tab.pages[key], QWidget)
 

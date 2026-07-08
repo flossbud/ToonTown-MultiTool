@@ -54,6 +54,7 @@ CATEGORY_META = {
     # key: (accent fill, bright border, icon maker name)
     "general":  ("#0077ff", "#3399ff", "make_nav_gear"),
     "games":    ("#3da343", "#56d66a", "make_nav_gamepad"),
+    "keysets":  ("#1fb8a6", "#4dd2c3", "make_nav_keyboard"),
     "features": ("#ff9500", "#ffb04d", "make_radio_waves_icon"),
     "advanced": ("#b34848", "#e05252", "make_wrench_icon"),
 }
@@ -217,13 +218,16 @@ class SettingsTab(QWidget):
     CATEGORIES = [
         ("general", "General"),
         ("games", "Games"),
+        ("keysets", "Keysets"),
         ("features", "Features"),
         ("advanced", "Advanced"),
     ]
 
-    def __init__(self, settings_manager):
+    def __init__(self, settings_manager, keymap_manager=None, credentials_manager=None):
         super().__init__()
         self.settings_manager = settings_manager
+        self.keymap_manager = keymap_manager
+        self.credentials_manager = credentials_manager
         self.pages: dict[str, QWidget] = {}
         self._cards: list[CardSurface] = []          # v2 cards
         self._v2_rows: list[InsetRow] = []           # v2 inset rows
@@ -257,17 +261,27 @@ class SettingsTab(QWidget):
                 is_dark=resolve_theme(self.settings_manager) == "dark",
             )
 
-            page = QWidget()
-            page_lay = QVBoxLayout(page)
-            page_lay.setContentsMargins(24, 12, 24, 28)
-            # Card gap: cards carry an EDGE_PAD shadow margin on every side,
-            # so the layout gap stays small to keep the visual rhythm tight
-            # (operator call, 2026-07-06: was 16 with the old glow budget).
-            page_lay.setSpacing(4)
-            page_lay.setAlignment(Qt.AlignTop)
+            # KeysetsPage's initial gate touches self.keymap_manager
+            # unconditionally, so it can't be built with None (old single-arg
+            # callers, pre-Task-11 main.py wiring). Fall through to the
+            # generic empty-card page below instead of crashing.
+            if key == "keysets" and self.keymap_manager is not None:
+                from utils.widgets.keysets.keysets_page import KeysetsPage
+                page = KeysetsPage(
+                    self.keymap_manager, self.settings_manager, self.credentials_manager)
+                page._panel_layout = page.layout()   # satisfy _animate_page_in's margin hook
+            else:
+                page = QWidget()
+                page_lay = QVBoxLayout(page)
+                page_lay.setContentsMargins(24, 12, 24, 28)
+                # Card gap: cards carry an EDGE_PAD shadow margin on every side,
+                # so the layout gap stays small to keep the visual rhythm tight
+                # (operator call, 2026-07-06: was 16 with the old glow budget).
+                page_lay.setSpacing(4)
+                page_lay.setAlignment(Qt.AlignTop)
 
-            page._panel_layout = page_lay      # type: ignore[attr-defined]
-            page_lay.addStretch(1)
+                page._panel_layout = page_lay      # type: ignore[attr-defined]
+                page_lay.addStretch(1)
 
             page.setMaximumWidth(SETTINGS_CONTENT_MAX_W)
             scroll.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
@@ -1648,6 +1662,11 @@ class SettingsTab(QWidget):
                 bar.set_theme(is_dark)
         # Category pill rail
         self.rail.apply_theme(c, is_dark)
+        # Keysets page (only present when mounted as a real KeysetsPage;
+        # the None-manager fallback is a plain QWidget with no refresh_theme)
+        keysets_page = self.pages.get("keysets")
+        if hasattr(keysets_page, "refresh_theme"):
+            keysets_page.refresh_theme()
         # v2 kit propagation
         for card in self._cards:
             card.apply_theme(is_dark, animate=True)

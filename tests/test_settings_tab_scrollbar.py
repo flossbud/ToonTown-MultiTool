@@ -36,8 +36,8 @@ def test_settings_tab_scroll_areas_use_auto_hide_bar(qapp):
 
     tab = SettingsTab(_StubSettings(theme="dark"))
     scrolls = _scroll_areas(tab)
-    # One scroll area per category (general/games/keep_alive/advanced).
-    assert len(scrolls) == 4
+    # One scroll area per category (general/games/keysets/features/advanced).
+    assert len(scrolls) == 5
     for sa in scrolls:
         assert isinstance(sa.verticalScrollBar(), AutoHideScrollBar)
     tab.deleteLater()
