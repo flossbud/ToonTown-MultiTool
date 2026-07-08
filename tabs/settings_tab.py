@@ -170,6 +170,7 @@ class CategoryPillRail(QFrame):
     old Sidebar (category_selected on user click)."""
 
     category_selected = Signal(str)
+    category_reselected = Signal(str)   # active pill re-clicked (no category change)
 
     def __init__(self, categories: list[tuple[str, str]], parent=None):
         super().__init__(parent)
@@ -202,6 +203,9 @@ class CategoryPillRail(QFrame):
 
     def _on_pill_clicked(self, key: str) -> None:
         if key == self.active_key:
+            # Re-clicking the active pill does not switch category, but the host
+            # may still want to act on it (e.g. Keysets -> back to the picker).
+            self.category_reselected.emit(key)
             return
         self.set_active_category(key)
         self.category_selected.emit(key)
@@ -307,6 +311,7 @@ class SettingsTab(QWidget):
         persisted = self.settings_manager.get(SETTINGS_ACTIVE_CATEGORY, "general")
         self._show_category(persisted, animate=False)
         self.rail.category_selected.connect(self._on_category_selected)
+        self.rail.category_reselected.connect(self._on_category_reselected)
 
         self.refresh_theme()
 
@@ -1501,16 +1506,17 @@ class SettingsTab(QWidget):
 
     # ── Category routing ──────────────────────────────────────────────────
     def _on_category_selected(self, key: str):
-        # Re-clicking the already-active Keysets chip acts like the editor's
-        # "All games" back button: return to the game picker (when one exists).
-        # A first navigation TO Keysets from another category is unaffected.
-        if key == "keysets" and self._current_page_key == "keysets":
-            page = self.pages.get("keysets")
-            if hasattr(page, "show_picker_if_available") \
-                    and page.show_picker_if_available():
-                return
         self._show_category(key)
         self.settings_manager.set(SETTINGS_ACTIVE_CATEGORY, key)
+
+    def _on_category_reselected(self, key: str):
+        # Re-clicking the already-active Keysets chip returns to the game
+        # picker - the same action as the editor's "All games" back button.
+        # (The active pill emits category_reselected, not category_selected.)
+        if key == "keysets":
+            page = self.pages.get("keysets")
+            if hasattr(page, "show_picker_if_available"):
+                page.show_picker_if_available()
 
     def _show_category(self, key: str, animate: bool = True):
         # Back-compat: the "Keep-Alive" sidebar category was renamed to

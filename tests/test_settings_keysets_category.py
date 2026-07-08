@@ -58,14 +58,21 @@ def test_show_keysets_category_switches_stack(app, km):
 class _BothGamesCreds:
     def get_accounts_metadata(self, game=None): return [{"x": 1}]
 
+def _keysets_pill(st):
+    return next(p for p in st.rail.pills if p.key == "keysets")
+
 def test_reclick_keysets_chip_returns_to_picker(app, km):
+    # Drive the REAL pill-click path (not the handler directly): re-clicking the
+    # already-active pill must round-trip pill -> rail.category_reselected ->
+    # SettingsTab -> KeysetsPage.show_picker_if_available.
     st = SettingsTab(FakeSettings(), keymap_manager=km,
                      credentials_manager=_BothGamesCreds())
     st._show_category("keysets", animate=False)   # Keysets is the active page
+    assert st.rail.active_key == "keysets"
     page = st.pages["keysets"]
     page._show_editor("ttr")                        # user drills into TTR's editor
     assert page._stack.currentIndex() == 1
-    st._on_category_selected("keysets")             # re-click the active chip
+    _keysets_pill(st)._activate()                   # simulate clicking the active pill
     assert page._stack.currentIndex() == 0          # back on the game picker
 
 def test_reclick_keysets_chip_noop_without_picker(app, km):
@@ -78,5 +85,15 @@ def test_reclick_keysets_chip_noop_without_picker(app, km):
     st._show_category("keysets", animate=False)
     page = st.pages["keysets"]
     assert page._stack.currentIndex() == 1          # straight to the TTR editor
-    st._on_category_selected("keysets")
+    _keysets_pill(st)._activate()
     assert page._stack.currentIndex() == 1          # unchanged
+
+def test_reclick_reemits_reselected_signal(app, km):
+    # The rail must emit category_reselected (not swallow it) on an active
+    # re-click - the exact gap the original bug hid behind.
+    st = SettingsTab(FakeSettings(), keymap_manager=km, credentials_manager=FakeCreds())
+    st._show_category("games", animate=False)
+    got = []
+    st.rail.category_reselected.connect(got.append)
+    next(p for p in st.rail.pills if p.key == "games")._activate()
+    assert got == ["games"]
