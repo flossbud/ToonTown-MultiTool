@@ -960,7 +960,8 @@ class LaunchTab(QWidget):
         activity = self._page_activity(game, ordered, pc)
         section.set_page(dicts, page=page, page_count=pc, base_index=base,
                          activity=activity, show_empty_state=(n == 0),
-                         at_ceiling=(n >= MAX_PER_GAME), show_reorder=(n >= 2))
+                         at_ceiling=(n >= MAX_PER_GAME), total_count=n,
+                         show_reorder=(n >= 2))
         for local, acct in enumerate(slice_):
             if local < len(section.tiles):
                 self._visible_tiles[game][acct.id] = section.tiles[local]
@@ -1005,7 +1006,8 @@ class LaunchTab(QWidget):
             self._sections[game].set_page(dicts[:PAGE_SIZE], page=0, page_count=pc,
                 base_index=0, activity=[False] * pc,
                 show_empty_state=(len(accounts) == 0),
-                at_ceiling=(len(accounts) >= MAX_PER_GAME))
+                at_ceiling=(len(accounts) >= MAX_PER_GAME),
+                total_count=len(accounts))
 
     def _build_ui(self):
         # Drop any old children from the scroll layout so we can re-add the

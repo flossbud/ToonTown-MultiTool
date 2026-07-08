@@ -67,7 +67,8 @@ def test_max_accounts_hides_add_tile(qapp):
     full = [{"label": f"A{i}", "username": f"u{i}", "id": f"id{i}"}
             for i in range(4)]
     sec.set_page(full, page=3, page_count=4, base_index=12,
-                 activity=[False] * 4, show_empty_state=False, at_ceiling=True)
+                 activity=[False] * 4, show_empty_state=False, at_ceiling=True,
+                 total_count=16)
     sec.show()  # required for isVisible to mean anything
     assert not sec.pager.add_btn.isVisible()
 

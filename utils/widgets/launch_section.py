@@ -282,8 +282,7 @@ class LaunchSection(QWidget):
                            "raw_error": a.get("raw_error", "")})
         self.set_page(slice_, page=0, page_count=pc, base_index=0,
                       activity=[False] * pc, show_empty_state=(len(accounts) == 0),
-                      at_ceiling=(len(accounts) >= 16))
-        self._set_sub_count(len(accounts))
+                      at_ceiling=(len(accounts) >= 16), total_count=len(accounts))
 
     def tile_at(self, section_index: int) -> AccountTile | None:
         if 0 <= section_index < len(self.tiles):
@@ -475,11 +474,18 @@ class LaunchSection(QWidget):
 
     def set_page(self, accounts: list[dict], *, page: int, page_count: int,
                  base_index: int, activity: list[bool], show_empty_state: bool,
-                 at_ceiling: bool, show_reorder: bool = False) -> None:
+                 at_ceiling: bool, total_count: int, running: int = 0,
+                 show_reorder: bool = False) -> None:
         """Render one page. `accounts` is this page's slice; each dict has
         label/username/id/state/message/raw_error plus optional primary_*
         keys. base_index is the absolute index of the first tile (for slot
-        numbers). Tile signals carry account_id."""
+        numbers). Tile signals carry account_id.
+
+        `total_count` is the section's WHOLE-section account count (all pages)
+        and is REQUIRED: set_page is the single writer of the card sub-line, so
+        every render restates the count from it. This makes it impossible for a
+        section that has accounts to keep showing the seeded "No accounts yet"
+        (the bug that shipped when the paged path forgot to update the count)."""
         # Paged-view contract: render at most one page. Defensive slice so a
         # caller passing more than a page slice can't overflow the 2-row grid.
         accounts = accounts[:PAGE_SIZE]
@@ -501,7 +507,7 @@ class LaunchSection(QWidget):
             self.grid_container.setVisible(False)
             self.empty_page_hint.setVisible(False)
             self.pager.setVisible(False)
-            self.card.set_sub("No accounts yet")
+            self._set_sub_count(total_count, running)
             return
 
         self.empty_state.setVisible(False)
@@ -539,6 +545,10 @@ class LaunchSection(QWidget):
 
         self.pager.set_state(page=page, page_count=page_count, activity=activity,
                              show_add=not at_ceiling, show_reorder=show_reorder)
+        # Sub-line is restated from the whole-section total on EVERY render (not
+        # just the empty case), so a populated section can never keep the seeded
+        # "No accounts yet".
+        self._set_sub_count(total_count, running)
         self.apply_theme(self._current_theme)
 
     def set_activity(self, activity: list[bool]) -> None:
