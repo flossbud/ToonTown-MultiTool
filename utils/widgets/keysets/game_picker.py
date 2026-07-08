@@ -16,7 +16,7 @@ from __future__ import annotations
 from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QLayout, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QLayout, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from utils.color_math import darken_rgb, with_alpha
@@ -270,7 +270,6 @@ class GamePickerView(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 40, 24, 40)
         outer.setSpacing(22)
-        outer.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
 
         self._title = QLabel("Choose a game")
         self._title.setAlignment(Qt.AlignCenter)
@@ -288,9 +287,17 @@ class GamePickerView(QWidget):
         )
         outer.addWidget(self._subtitle, 0, Qt.AlignHCenter)
 
+        # The flow-layout row must fill the available width so its cards lay
+        # out side-by-side and center within it; a hugging (sizeHint) width
+        # would force every card onto its own row. heightForWidth lets the
+        # column reserve the wrapped height.
         self._row_widget = QWidget()
+        row_policy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        row_policy.setHeightForWidth(True)
+        self._row_widget.setSizePolicy(row_policy)
         self._row_layout = _CenteredFlowLayout(_ROW_GAP, self._row_widget)
-        outer.addWidget(self._row_widget, 0)
+        outer.addWidget(self._row_widget)
+        outer.addStretch(1)
 
     # ── public API ───────────────────────────────────────────────────────
     def set_games(self, entries: list[tuple[str, int]]) -> None:
