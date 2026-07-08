@@ -469,8 +469,8 @@ class MultiToonTool(QMainWindow):
         root.addWidget(self.nav_band)
 
         self.stack = QStackedWidget()
-        self.stack.addWidget(self.multitoon_tab)   # 0
-        self.stack.addWidget(self.launch_tab)       # 1
+        self.stack.addWidget(self.launch_tab)       # 0
+        self.stack.addWidget(self.multitoon_tab)    # 1
         self.stack.addWidget(self.settings_tab)     # 2
         self.stack.addWidget(self.debug_tab)        # 3
         self.stack.addWidget(self.credits_tab)      # 4
@@ -493,7 +493,9 @@ class MultiToonTool(QMainWindow):
         # Demo mode (TTMT_DEMO_LAUNCH_TAB) jumps directly to the Launch tab so
         # the visual verification script can capture it without synthesizing
         # clicks through xdotool.
-        _initial_tab = 1 if os.environ.get("TTMT_DEMO_LAUNCH_TAB") else 0
+        # Stack order is Launcher(0) / Multitoon(1) / Settings(2); default
+        # landing is Multitoon (middle), demo flag opens the Launch tab.
+        _initial_tab = 0 if os.environ.get("TTMT_DEMO_LAUNCH_TAB") else 1
         self.nav_select(_initial_tab)
         self._setup_update_checker()
         self._maybe_kick_off_startup_check()
@@ -714,7 +716,7 @@ class MultiToonTool(QMainWindow):
             self._on_keep_alive_inhibit_status
         )
         self.multitoon_tab.launch_tab_requested.connect(
-            lambda: self.nav_select(1)
+            lambda: self.nav_select(0)  # Launcher
         )
 
         self.log(f"[Debug] {app_name()} launched.")
@@ -1171,8 +1173,8 @@ class MultiToonTool(QMainWindow):
         is_dark = resolve_theme(self.settings_manager) == "dark"
         from utils.widgets.glass_dock import GlassDock
         nav_items = [
-            ("Multitoon", "make_nav_gamepad", "multitoon"),
             ("Launcher", "make_nav_power", "launcher"),
+            ("Multitoon", "make_nav_gamepad", "multitoon"),
             ("Settings", "make_nav_gear", "settings"),
         ]
         self.nav_dock = GlassDock(nav_items, is_dark=is_dark)
@@ -1267,7 +1269,7 @@ class MultiToonTool(QMainWindow):
         # Capture the outgoing page as the blurred backdrop BEFORE switching, so
         # the descending Credits page already carries the blurred view. Ordering
         # is load-bearing: push_slide_pages grabs credits.grab() for its proxy.
-        self._pre_credits_index = prev_index if 0 <= prev_index < 4 else 0
+        self._pre_credits_index = prev_index if 0 <= prev_index < 4 else 1
         self.credits_tab.set_backdrop_source(self.stack.widget(prev_index).grab())
         self._credits_open = True
         self._credits_transitioning = True
@@ -1298,7 +1300,7 @@ class MultiToonTool(QMainWindow):
 
     def _nav_return_from_credits(self):
         """Reverse-vertical slide from Credits back to the pre-Credits tab."""
-        target = getattr(self, "_pre_credits_index", 0)
+        target = getattr(self, "_pre_credits_index", 1)
         if not (0 <= target < 4):
             target = 0
         self._credits_open = False
@@ -1738,7 +1740,7 @@ class MultiToonTool(QMainWindow):
         self._update_nav_phantom_width()
         ttr_api.set_debug(show)
         if not show and self.stack.currentIndex() == 3:
-            self.nav_select(0)
+            self.nav_select(1)  # back to Multitoon (home)
 
     def on_clear_credentials_requested(self):
         self.launch_tab.clear_all_credentials()
