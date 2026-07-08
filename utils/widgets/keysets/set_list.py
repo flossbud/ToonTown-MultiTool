@@ -159,7 +159,7 @@ class SetListPanel(QFrame):
 
     set_selected = Signal(int)
     add_requested = Signal()
-    WIDTH = 214
+    WIDTH = 266
     MAX_SETS = MAX_SETS
 
     def __init__(self, is_dark: bool = True, parent=None):

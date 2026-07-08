@@ -138,7 +138,7 @@ class FieldRow(QFrame):
         self.setCursor(Qt.PointingHandCursor)
 
         h = QHBoxLayout(self)
-        h.setContentsMargins(11, 7, 11, 7)
+        h.setContentsMargins(11, 5, 11, 5)
         h.setSpacing(12)
         self._label = QLabel(label_text)
         self._label.setStyleSheet(
@@ -197,7 +197,7 @@ class FieldRow(QFrame):
         else:
             bg, border, txt = "rgba(0,0,0,0.35)", "rgba(255,255,255,0.14)", "#ffffff"
         self._field.setStyleSheet(
-            "QLineEdit { min-width: 72px; border-radius: 8px; padding: 0 9px; "
+            "QLineEdit { min-width: 100px; border-radius: 8px; padding: 0 9px; "
             "font-family: 'JetBrains Mono','Cascadia Mono',monospace; "
             "font-size: 11.5px; font-weight: 600; "
             "background: %s; border: 1px solid %s; color: %s; }" % (bg, border, txt))
@@ -243,13 +243,21 @@ class SplitEditor(QWidget):
         self._panel = SetListPanel(is_dark, self)
         self._panel.set_selected.connect(self._select)
         self._panel.add_requested.connect(self._on_add)
+        # Centre the editor with stretch at both ends so it keeps side margins
+        # in the window instead of sitting edge-to-edge.
+        outer.addStretch(1)
         outer.addWidget(self._panel, 0, Qt.AlignTop)
 
         # ── right detail card ──
+        # Sizes to its content: just wide enough for the keyboard (so it stops
+        # sprawling horizontally) and only as tall as its rows (no dead space
+        # below). AlignTop + no horizontal stretch does both.
         self._card = _DetailCard(self)
-        outer.addWidget(self._card, 1)
+        self._card.setMaximumWidth(560)
+        outer.addWidget(self._card, 0, Qt.AlignTop)
+        outer.addStretch(1)
         cv = QVBoxLayout(self._card)
-        cv.setContentsMargins(20, 18, 20, 20)
+        cv.setContentsMargins(20, 14, 20, 14)
         cv.setSpacing(0)
 
         header = QHBoxLayout()
@@ -294,7 +302,7 @@ class SplitEditor(QWidget):
         self._delete_btn.clicked.connect(self._on_delete)
         header.addWidget(self._delete_btn, 0)
         cv.addLayout(header)
-        cv.addSpacing(14)
+        cv.addSpacing(10)
 
         kb_row = QHBoxLayout()
         kb_row.setContentsMargins(0, 0, 0, 0)
@@ -303,7 +311,7 @@ class SplitEditor(QWidget):
         kb_row.addWidget(self._keyboard, 0)
         kb_row.addStretch(1)
         cv.addLayout(kb_row)
-        cv.addSpacing(16)
+        cv.addSpacing(12)
 
         grid = QHBoxLayout()
         grid.setContentsMargins(0, 0, 0, 0)
@@ -311,7 +319,7 @@ class SplitEditor(QWidget):
         self._move_rows = self._make_column(grid, "Movement")
         self._act_rows = self._make_column(grid, "Actions")
         cv.addLayout(grid)
-        cv.addSpacing(12)
+        cv.addSpacing(8)
 
         self._conflict_banner = QLabel(_CONFLICT_TEXT)
         self._conflict_banner.setWordWrap(True)
@@ -329,7 +337,6 @@ class SplitEditor(QWidget):
             "color: rgba(255,255,255,0.62); font-size: 11px;")
         self._helper.setVisible(False)
         cv.addWidget(self._helper)
-        cv.addStretch(1)
 
         self.apply_theme(is_dark)
 
@@ -340,7 +347,7 @@ class SplitEditor(QWidget):
         col.addWidget(_section_label(title))
         rows = QVBoxLayout()
         rows.setContentsMargins(0, 0, 0, 0)
-        rows.setSpacing(6)
+        rows.setSpacing(4)
         col.addLayout(rows)
         col.addStretch(1)
         grid.addLayout(col, 1)
