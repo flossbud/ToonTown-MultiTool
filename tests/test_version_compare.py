@@ -53,6 +53,46 @@ def test_is_newer(local_v, local_b, remote_v, remote_b, expected):
     assert is_newer(lv, local_b, rv, remote_b) is expected
 
 
+@pytest.mark.parametrize("older,newer", [
+    # Dotted numeric suffixes must order numerically, not lexicographically.
+    # "alpha.10" < "alpha.9" as strings, which silently stalled the updater.
+    ("v0.7.0-alpha.9", "v0.7.0-alpha.10"),
+    ("v0.7.0-alpha.2", "v0.7.0-alpha.10"),
+    ("v0.7.0-alpha.9", "v0.7.0-alpha.100"),
+    # Single-digit ordering keeps working.
+    ("v0.7.0-alpha.1", "v0.7.0-alpha.2"),
+    ("v0.7.0-alpha.4", "v0.7.0-alpha.5"),
+    # Label ordering: alpha < beta < rc, regardless of the numeric part.
+    ("v0.8.0-alpha.10", "v0.8.0-beta.1"),
+    ("v0.8.0-beta.2", "v0.8.0-rc.1"),
+    ("v0.8.0-alpha.99", "v0.8.0-rc.1"),
+    # A bare label ranks below the same label with a number (alpha < alpha.1).
+    ("v0.8.0-alpha", "v0.8.0-alpha.1"),
+    # A numeric segment ranks below an alphanumeric one at the same position.
+    ("v0.8.0-alpha.1", "v0.8.0-alpha.beta"),
+    # Stable still supersedes every pre-release, including double-digit ones.
+    ("v0.8.0-alpha.10", "v0.8.0"),
+    ("v0.8.0-rc.9", "v0.8.0"),
+    # Version tuple still outranks any suffix comparison.
+    ("v0.7.0-rc.9", "v0.8.0-alpha.1"),
+    # Legacy single-letter suffixes from the pre-restructure tags.
+    ("v2.3.0-a", "v2.3.0-b"),
+    ("v2.3.0-b", "v2.3.0-rc1"),
+])
+def test_suffix_ordering(older, newer):
+    assert compare(parse(older), parse(newer)) == -1
+    assert compare(parse(newer), parse(older)) == 1
+    assert is_newer(parse(older), 0, parse(newer), 0) is True
+    assert is_newer(parse(newer), 0, parse(older), 0) is False
+
+
+def test_numerically_equal_suffixes_fall_through_to_build_number():
+    """`alpha.01` and `alpha.1` are the same release; the build number breaks the tie."""
+    assert compare(parse("v0.8.0-alpha.01"), parse("v0.8.0-alpha.1")) == 0
+    assert is_newer(parse("v0.8.0-alpha.01"), 100, parse("v0.8.0-alpha.1"), 101) is True
+    assert is_newer(parse("v0.8.0-alpha.01"), 101, parse("v0.8.0-alpha.1"), 100) is False
+
+
 def test_compare_remote_newer_returns_negative():
     assert compare(parse("v2.3.0"), parse("v2.3.1")) == -1
 

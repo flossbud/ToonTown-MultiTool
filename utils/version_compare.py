@@ -4,9 +4,13 @@ Stable = no suffix; beta = any suffix (-a, -b, -rc1, ...).
 
 Comparison precedence: (major, minor, patch) tuple > suffix ordering >
 build_number integer. Suffix ordering: stable (no suffix) ranks above
-all pre-release suffixes; within pre-releases, lexicographic order
-(`a < b < rc1`). The build-number tiebreaker covers re-released tags
-and build-bumped-without-tag-bump edge cases.
+all pre-release suffixes. Pre-release suffixes split on "." and compare
+segment by segment: numeric segments compare by value and rank below
+alphanumeric ones, which compare lexicographically. A bare label ranks
+below the same label with a segment appended. So `alpha.9 < alpha.10`
+(a plain string compare gets this backwards), `alpha < alpha.1`, and
+`alpha.10 < beta.1 < rc.1`. The build-number tiebreaker covers
+re-released tags and build-bumped-without-tag-bump edge cases.
 
 Intentionally not PEP 440: our tag format is constrained enough that a
 small comparator is clearer than pulling in `packaging` as a new runtime
@@ -49,17 +53,30 @@ def is_beta_tag(tag: str) -> bool:
     return bool(parsed and parsed.suffix)
 
 
+def _segment_key(segment: str) -> tuple:
+    # Numeric segments rank below alphanumeric ones at the same position,
+    # and compare by value so alpha.9 < alpha.10.
+    if segment.isdecimal():
+        return (0, int(segment), "")
+    return (1, 0, segment)
+
+
+def _suffix_key(suffix: str) -> tuple:
+    # Stable (no suffix) outranks every pre-release.
+    if not suffix:
+        return (1, ())
+    return (0, tuple(_segment_key(s) for s in suffix.split(".")))
+
+
 def compare(local: ParsedVersion, remote: ParsedVersion) -> int:
     lt = (local.major, local.minor, local.patch)
     rt = (remote.major, remote.minor, remote.patch)
     if lt != rt:
         return -1 if lt < rt else 1
-    if local.suffix != remote.suffix:
-        # Stable (no suffix) is newer than any pre-release suffix.
-        # Within pre-release, use lexicographic order ("a" < "b" < "rc1").
-        local_key = (0, local.suffix) if local.suffix else (1, "")
-        remote_key = (0, remote.suffix) if remote.suffix else (1, "")
-        return -1 if local_key < remote_key else 1
+    lk = _suffix_key(local.suffix)
+    rk = _suffix_key(remote.suffix)
+    if lk != rk:
+        return -1 if lk < rk else 1
     return 0
 
 
