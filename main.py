@@ -135,7 +135,6 @@ from PySide6.QtGui import QColor, QGuiApplication, QIcon
 # === Internal Imports ===
 from tabs.multitoon_tab import MultitoonTab
 from tabs.launch_tab import LaunchTab
-from tabs.keymap_tab import KeymapTab
 from tabs.settings_tab import SettingsTab
 from tabs.credits_tab import CreditsTab
 from tabs.debug_tab import DebugTab
@@ -379,12 +378,11 @@ class MultiToonTool(QMainWindow):
         # Share the Multitoon tab's ToonCustomizationsManager so the Launch tab's
         # primary-toon portraits render the saved pose (matching the radial menu).
         self.launch_tab.set_customizations_manager(self.multitoon_tab.customizations)
-        self.keymap_tab = KeymapTab(
-            self.keymap_manager,
+        self.settings_tab = SettingsTab(
             self.settings_manager,
+            keymap_manager=self.keymap_manager,
             credentials_manager=self.launch_tab.cred_manager,
         )
-        self.settings_tab = SettingsTab(self.settings_manager)
         self.credits_tab = CreditsTab(self.settings_manager)
 
         self.settings_tab.debug_visibility_changed.connect(self.toggle_debug_tab_visibility)
@@ -473,13 +471,12 @@ class MultiToonTool(QMainWindow):
         self.stack = QStackedWidget()
         self.stack.addWidget(self.multitoon_tab)   # 0
         self.stack.addWidget(self.launch_tab)       # 1
-        self.stack.addWidget(self.keymap_tab)       # 2
-        self.stack.addWidget(self.settings_tab)     # 3
-        self.stack.addWidget(self.debug_tab)        # 4
-        self.stack.addWidget(self.credits_tab)      # 5
+        self.stack.addWidget(self.settings_tab)     # 2
+        self.stack.addWidget(self.debug_tab)        # 3
+        self.stack.addWidget(self.credits_tab)      # 4
         # Portable Settings panel (Task 12): when the Settings spoke floats the
         # real SettingsTab over the overlay it is reparented OUT of this stack;
-        # _restore_settings_to_stack re-inserts it at index 3. These track that
+        # _restore_settings_to_stack re-inserts it at index 2. These track that
         # transient state so restoration is idempotent across every teardown path.
         self._settings_floating = False
         self._settings_container = None
@@ -1176,7 +1173,6 @@ class MultiToonTool(QMainWindow):
         nav_items = [
             ("Multitoon", "make_nav_gamepad", "multitoon"),
             ("Launcher", "make_nav_power", "launcher"),
-            ("Keysets", "make_nav_keyboard", "keysets"),
             ("Settings", "make_nav_gear", "settings"),
         ]
         self.nav_dock = GlassDock(nav_items, is_dark=is_dark)
@@ -1203,7 +1199,7 @@ class MultiToonTool(QMainWindow):
         self.overflow_btn.setToolTip("More")
         self.overflow_btn.setVisible(self.settings_manager.get("show_debug_tab", False))
         self.overflow_popup = OverflowPopup()
-        self.overflow_popup.add_action("View Logs", lambda: self.nav_select(4))
+        self.overflow_popup.add_action("View Logs", lambda: self.nav_select(3))
 
         def _toggle_popup():
             from utils.motion import pop_menu
@@ -1230,7 +1226,7 @@ class MultiToonTool(QMainWindow):
 
     def _on_active_page_changed(self, index: int):
         """Fired by stack.currentChanged on every page switch. Lights the header
-        wordmark while Credits (index 5) is active, and — whenever the user
+        wordmark while Credits (index 4) is active, and — whenever the user
         leaves Credits by ANY path (wordmark toggle-back, dock nav, or animated
         slide finalization) — clears the credits open-flag and releases the
         blurred backdrop pixmap."""
@@ -1243,8 +1239,8 @@ class MultiToonTool(QMainWindow):
         self._credits_transitioning = False
         logo = getattr(self, "header_logo", None)
         if logo is not None and hasattr(logo, "set_active"):
-            logo.set_active(index == 5)
-        if index != 5:
+            logo.set_active(index == 4)
+        if index != 4:
             self._credits_open = False
             credits_tab = getattr(self, "credits_tab", None)
             if credits_tab is not None:
@@ -1265,13 +1261,13 @@ class MultiToonTool(QMainWindow):
         to that tab on the next press).
         """
         prev_index = self.stack.currentIndex()
-        if prev_index == 5:
+        if prev_index == 4:
             return
 
         # Capture the outgoing page as the blurred backdrop BEFORE switching, so
         # the descending Credits page already carries the blurred view. Ordering
         # is load-bearing: push_slide_pages grabs credits.grab() for its proxy.
-        self._pre_credits_index = prev_index if 0 <= prev_index < 5 else 0
+        self._pre_credits_index = prev_index if 0 <= prev_index < 4 else 0
         self.credits_tab.set_backdrop_source(self.stack.widget(prev_index).grab())
         self._credits_open = True
         self._credits_transitioning = True
@@ -1279,15 +1275,15 @@ class MultiToonTool(QMainWindow):
         was_initialized = getattr(self, "_initialized_nav", False)
         self._initialized_nav = True
         if not was_initialized:
-            self.stack.setCurrentIndex(5)
+            self.stack.setCurrentIndex(4)
             self._credits_transitioning = False
         else:
             from utils.motion import push_slide_pages
             self._begin_credits_transition(
-                push_slide_pages(self.stack, prev_index, 5, axis="v")
+                push_slide_pages(self.stack, prev_index, 4, axis="v")
             )
 
-        # Credits (index 5) has no dock segment; leave the dock's selection as
+        # Credits (index 4) has no dock segment; leave the dock's selection as
         # it is so returning from Credits restores the prior tab's tint.
 
     def _on_app_icon_clicked(self):
@@ -1303,16 +1299,16 @@ class MultiToonTool(QMainWindow):
     def _nav_return_from_credits(self):
         """Reverse-vertical slide from Credits back to the pre-Credits tab."""
         target = getattr(self, "_pre_credits_index", 0)
-        if not (0 <= target < 5):
+        if not (0 <= target < 4):
             target = 0
         self._credits_open = False
         self._credits_transitioning = True
         from utils.motion import push_slide_pages
         self._begin_credits_transition(
-            push_slide_pages(self.stack, 5, target, axis="v", reverse=True)
+            push_slide_pages(self.stack, 4, target, axis="v", reverse=True)
         )
-        # Drive the dock back to the tab we return to. Targets 0-3 are dock
-        # segments; target 4 (debug) has no segment, so the range guard skips it.
+        # Drive the dock back to the tab we return to. Targets 0-2 are dock
+        # segments; target 3 (debug) has no segment, so the range guard skips it.
         if hasattr(self, "nav_dock") and 0 <= target < len(self.nav_dock.segments):
             self.nav_dock.select(target, animate=True)
 
@@ -1512,7 +1508,7 @@ class MultiToonTool(QMainWindow):
         self._settings_container = None
         if cont is not None:
             cont.release_content()
-        self.stack.insertWidget(3, self.settings_tab)   # restore at its original index
+        self.stack.insertWidget(2, self.settings_tab)   # restore at its original index
 
     def nav_select(self, index: int):
         if self.stack.currentIndex() == index and getattr(self, "_initialized_nav", False):
@@ -1528,7 +1524,7 @@ class MultiToonTool(QMainWindow):
             from utils.motion import push_slide_pages
             push_slide_pages(self.stack, prev_index, index, axis="h")
 
-        # Drive the dock's selected segment (0..3 are the dock tabs; index 4/5
+        # Drive the dock's selected segment (0..2 are the dock tabs; index 3/4
         # are Logs/Credits, which have no segment — leave the dock as-is).
         if hasattr(self, "nav_dock") and 0 <= index < len(self.nav_dock.segments):
             self.nav_dock.select(index, animate=was_initialized)
@@ -1708,7 +1704,6 @@ class MultiToonTool(QMainWindow):
         self.multitoon_tab.refresh_theme()
         self.multitoon_tab.apply_all_visual_states()
         self.launch_tab.refresh_theme()
-        self.keymap_tab.refresh_theme()
         self.settings_tab.refresh_theme()
 
     def on_theme_changed(self):
@@ -1742,7 +1737,7 @@ class MultiToonTool(QMainWindow):
         # phantom so the dock stays geometrically centered.
         self._update_nav_phantom_width()
         ttr_api.set_debug(show)
-        if not show and self.stack.currentIndex() == 4:
+        if not show and self.stack.currentIndex() == 3:
             self.nav_select(0)
 
     def on_clear_credentials_requested(self):
@@ -1753,7 +1748,7 @@ class MultiToonTool(QMainWindow):
     def _on_keep_alive_help_requested(self):
         """User clicked 'Go to Settings' in the Keep-Alive help popover.
         Navigate to the Settings tab and highlight the Keep-Alive group."""
-        self.nav_select(3)  # Settings tab index — see stack widget order in __init__
+        self.nav_select(2)  # Settings tab index — see stack widget order in __init__
         self.settings_tab.highlight_keep_alive_group()
 
     def _on_keep_alive_inhibit_status(self, status):
@@ -1814,7 +1809,7 @@ class MultiToonTool(QMainWindow):
         made while TTMT is open are honored on the next key event.
 
         Mirrors the engine-dir fallback chain used by the manual 'Detect'
-        button in keymap_tab: stored ttr_engine_dir first, then
+        button in Settings > Keysets: stored ttr_engine_dir first, then
         find_engine_path() so a Linux native install with no stored dir
         still auto-detects."""
         from utils.ttr_settings import locate_settings_file, parse_ttr_settings

@@ -64,7 +64,7 @@ def test_every_special_key_qt_variant_in_special_keys():
     the correct canonical in SPECIAL_KEYS. Fails for F1-F12 and nav
     cluster until keymap_tab.py is wired (Task 5)."""
     from PySide6.QtCore import Qt
-    from tabs.keymap_tab import SPECIAL_KEYS
+    from utils.widgets.keysets.movement_key_field import SPECIAL_KEYS
     failures = []
     for kd in NAMED_KEY_REGISTRY:
         if kd.numpad_key or kd.category == "modifier":
@@ -91,7 +91,7 @@ def test_every_numpad_qt_variant_in_numpad_keys():
     variants) all map to the correct canonical in _NUMPAD_KEYS. Fails for
     KP_5 Key_Clear variant until keymap_tab.py is wired (Task 5)."""
     from PySide6.QtCore import Qt
-    from tabs.keymap_tab import MovementKeyField
+    from utils.widgets.keysets.movement_key_field import MovementKeyField
     nk = MovementKeyField._NUMPAD_KEYS
     failures = []
     for kd in NAMED_KEY_REGISTRY:
@@ -198,7 +198,7 @@ def test_display_names_derived_from_registry():
     _NUMPAD_KEYS but forgetting DISPLAY_NAMES. Fails until keymap_tab.py
     is wired (Task 5) — F-keys and nav cluster are absent from the old
     hardcoded DISPLAY_NAMES."""
-    from tabs.keymap_tab import DISPLAY_NAMES
+    from utils.widgets.keysets.movement_key_field import DISPLAY_NAMES
     failures = []
     for kd in NAMED_KEY_REGISTRY:
         if kd.canonical not in DISPLAY_NAMES:

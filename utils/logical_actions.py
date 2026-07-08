@@ -2,13 +2,21 @@
 TTMT forwards to background toons, which games each action applies to,
 and the per-game default binding.
 
-Adding a new action: one Action(...) entry below + a label in keymap_tab.py.
+Adding a new action: one Action(...) entry below + a label in ACTION_LABELS below.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from types import MappingProxyType
+
+
+# UI labels for the movement/action keys (was tabs/keymap_tab.py::ACTION_LABELS).
+ACTION_LABELS = {
+    "forward": "Forward", "reverse": "Reverse", "left": "Left", "right": "Right",
+    "jump": "Jump", "book": "Book", "gags": "Gags", "tasks": "Tasks",
+    "map": "Map", "sprint": "Sprint", "action": "Perform Action",
+}
 
 
 @dataclass(frozen=True)

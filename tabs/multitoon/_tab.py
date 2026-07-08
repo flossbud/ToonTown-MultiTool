@@ -893,7 +893,7 @@ class SetSelectorWidget(QWidget):
             return
         self._has_conflict = has
         if has and conflict_pairs:
-            from tabs.keymap_tab import ACTION_LABELS
+            from utils.logical_actions import ACTION_LABELS
             pretty_pairs = [
                 f"{ACTION_LABELS.get(a, a.title())} <-> {ACTION_LABELS.get(b, b.title())}"
                 for (a, b) in conflict_pairs

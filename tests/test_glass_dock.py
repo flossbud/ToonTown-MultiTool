@@ -99,8 +99,10 @@ def test_nav_band_builds_with_glass_dock(qapp):
     band = inst._build_nav_band()
     assert band.objectName() == "app_nav_band"
     assert isinstance(inst.nav_dock, GlassDock)
+    # Top-level Keysets tab dropped (moved into Settings > Keysets); production
+    # nav is back to three segments.
     assert [s.label for s in inst.nav_dock.segments] == \
-        ["Multitoon", "Launcher", "Keysets", "Settings"]
+        ["Multitoon", "Launcher", "Settings"]
 
 
 def test_nav_band_min_height_le_64(qapp):
