@@ -23,3 +23,9 @@ def test_click_emits_game(app):
     v.game_chosen.connect(got.append)
     v._cards["cc"]._emit_click()
     assert got == ["cc"]
+
+def test_banner_paths_resolve(app):
+    import os
+    from utils.widgets.keysets._assets import asset_path
+    assert os.path.exists(asset_path("ttr-banner.png"))
+    assert os.path.exists(asset_path("cc-banner.png"))
