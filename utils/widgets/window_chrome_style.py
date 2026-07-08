@@ -6,6 +6,11 @@ Kept free of widget state so it unit-tests without a live window. The window
 rounding uses translucency + QSS border-radius (anti-aliased, no custom
 paintEvent - see the design spec); these helpers build those QSS strings."""
 
+# PEP 604 unions ("str | None") in the annotations below are evaluated at
+# runtime on Python 3.9, which the frozen Linux build still bundles; deferring
+# annotations keeps them as strings so module import never touches the union.
+from __future__ import annotations
+
 # Geometry constants (px). The bottom inset keeps tab content out of the
 # physical bottom corners so the card's rounded background fills them; the
 # stroke inset keeps the 1px card border from being overpainted by children.
