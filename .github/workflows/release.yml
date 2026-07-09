@@ -148,3 +148,86 @@ jobs:
           else
             echo "No prior Latest to demote."
           fi
+
+      # The README's three platform cards link straight at the newest stable
+      # binaries. GitHub only serves an always-latest asset URL when the
+      # filename never changes, and ours carry the version -- so resolve the
+      # names here, at publish time, and write them into the README instead of
+      # duplicating every asset under a fixed alias.
+      #
+      # Gate on the resolved CHANNEL, never a version hyphen: every pre-1.0
+      # alpha tag is hyphenated regardless of channel, so a hyphen check would
+      # let a beta overwrite the stable download links.
+      #
+      # Both main and dev are updated in the same step. The commits carry
+      # [skip ci], which suppresses every workflow for that push -- including
+      # sync-docs-to-dev -- so dev cannot be left behind main.
+      #
+      # If this step ever fails, the links keep pointing at the previous
+      # release's real assets: stale by one version, never broken.
+      - name: Point README download links at this release
+        if: needs.channel.outputs.beta != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          names=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          pick() { printf '%s\n' "$names" | grep -iE "$1" | head -1; }
+          appimage=$(pick '\.AppImage$' || true)
+          dmg=$(pick '\.dmg$' || true)
+          exe=$(pick '\.exe$' || true)
+          for pair in "AppImage:$appimage" "dmg:$dmg" "exe:$exe"; do
+            if [ -z "${pair#*:}" ]; then
+              echo "::error::No ${pair%%:*} asset on $TAG; refusing to write a broken link."
+              exit 1
+            fi
+          done
+          echo "Resolved: $appimage | $dmg | $exe"
+
+          cat > /tmp/relink.py <<'PY'
+          import pathlib, re, sys
+          base, app, dmg, exe = sys.argv[1:5]
+          readme = pathlib.Path("README.md")
+          text = readme.read_text()
+
+          # A branch whose README predates the download cards has nothing to
+          # rewrite. Skip it rather than failing the release: exit 3 is "no
+          # links here", distinct from a real error.
+          if not re.search(r'https://github\.com/[^"]+/releases/download/', text):
+              sys.exit(3)
+
+          for ext, name in ((r"\.AppImage", app), (r"\.dmg", dmg), (r"\.exe", exe)):
+              pattern = rf'https://github\.com/[^"]+/releases/download/[^"]+{ext}'
+              text, n = re.subn(pattern, f"{base}/{name}", text)
+              if n != 1:
+                  sys.exit(f"expected exactly 1 {ext} link, rewrote {n}")
+          readme.write_text(text)
+          PY
+
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          for branch in main dev; do
+            git fetch origin "$branch"
+            git checkout -B "$branch" "origin/$branch"
+            rc=0
+            python3 /tmp/relink.py "$base" "$appimage" "$dmg" "$exe" || rc=$?
+            if [ "$rc" -eq 3 ]; then
+              echo "::notice::$branch has no download links to rewrite; skipping."
+              continue
+            elif [ "$rc" -ne 0 ]; then
+              echo "::error::$branch: refusing to write a broken link."
+              exit 1
+            fi
+            if git diff --quiet -- README.md; then
+              echo "$branch: links already current"
+              continue
+            fi
+            git add README.md
+            git commit -m "docs: point download links at $TAG [skip ci]"
+            git push origin "$branch"
+            echo "$branch: links updated"
+          done

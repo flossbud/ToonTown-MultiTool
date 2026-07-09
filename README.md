@@ -1,9 +1,20 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logos/readme-hero-dark.png">
-    <img src="assets/logos/readme-hero-light.png" width="890"
-         alt="ToonTown MultiTool. A multitoon controller for Toontown Rewritten and Corporate Clash. One app. Three platforms. No toon left behind. Linux: AUR, Flatpak, AppImage or .deb, install with 'yay -S toontown-multitool'. macOS: DMG for Apple Silicon and Intel, drag to Applications. Windows: installer or portable ZIP, ToonTownMultiTool-Setup.exe. All features on every platform.">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logos/readme-header-dark.png">
+    <img src="assets/logos/readme-header-light.png" width="100%"
+         alt="ToonTown MultiTool. A multitoon controller for Toontown Rewritten and Corporate Clash. One app. Three platforms. No toon left behind.">
   </picture>
+</p>
+
+<!-- The three hrefs below are rewritten to the newest stable assets by the
+     "Point README download links at this release" step in release.yml.
+     Keep them on one line, with no whitespace between the anchors: the cards
+     are separate images and any gap between them opens a seam. -->
+
+<p align="center"><a href="https://github.com/flossbud/ToonTown-MultiTool/releases/download/v0.8.0-alpha.1/ToonTownMultiTool-v0.8.0-alpha.1.AppImage"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/logos/readme-card-linux-dark.png"><img src="assets/logos/readme-card-linux-light.png" width="33.3%" alt="Linux. AppImage, Flatpak, .deb or AUR. Download the AppImage. All features."></picture></a><a href="https://github.com/flossbud/ToonTown-MultiTool/releases/download/v0.8.0-alpha.1/ToonTownMultiTool-v0.8.0-alpha.1.dmg"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/logos/readme-card-macos-dark.png"><img src="assets/logos/readme-card-macos-light.png" width="33.3%" alt="macOS. DMG for Apple Silicon and Intel. Download the .dmg. All features."></picture></a><a href="https://github.com/flossbud/ToonTown-MultiTool/releases/download/v0.8.0-alpha.1/ToonTownMultiTool-Setup-v0.8.0-alpha.1.exe"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/logos/readme-card-windows-dark.png"><img src="assets/logos/readme-card-windows-light.png" width="33.3%" alt="Windows. Installer or portable ZIP. Download the .exe. All features."></picture></a></p>
+
+<p align="right">
+  <a href="https://github.com/flossbud/ToonTown-MultiTool/releases/latest"><sub>All downloads and release notes →</sub></a>
 </p>
 
 <!-- Hero screenshot goes here. Suggested: top-of-app multitoon tab with
