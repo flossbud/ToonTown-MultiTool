@@ -218,7 +218,7 @@ source venv/bin/activate           # use activate.fish if your shell is fish
 python main.py
 ```
 
-`install.sh` detects your distro, installs Python 3.9 to 3.14 and the Qt6 runtime libraries if missing, and sets up a local Python environment. It asks before each `sudo` command; pass `--yes` to skip the prompts.
+`install.sh` detects your distro, installs a supported Python and the Qt6 runtime libraries if they're missing, and sets up a local Python environment. Python 3.9 through 3.14 are supported. It asks before each `sudo` command; pass `--yes` to skip the prompts.
 
 For unsupported distros (openSUSE, Gentoo, NixOS), or if you already have Python 3.9 to 3.14 and Qt6 installed:
 
@@ -228,13 +228,15 @@ For unsupported distros (openSUSE, Gentoo, NixOS), or if you already have Python
 
 #### Supported distros
 
-**CI-tested on every push:**
+**Built and tested from source on every push:**
 - Debian 11 (Python 3.9)
 - Debian 12 (Python 3.11)
 - Ubuntu 22.04 LTS (Python 3.10)
 - Ubuntu 24.04 LTS (Python 3.12)
-- Fedora latest (Python 3.14)
 - Arch Linux rolling (Python 3.14)
+
+**AppImage tested on every push:**
+- Fedora latest
 
 **Also supported (inherits parent base):**
 - LMDE 5 (= Debian 11)
@@ -260,9 +262,9 @@ xattr -dr com.apple.quarantine "/Applications/ToonTown MultiTool.app"
 
 #### Permissions
 
-To control your background toons, ToonTown MultiTool needs two macOS permissions: **Accessibility** and **Input Monitoring**. On first run the app shows a setup guide that walks you through granting them in System Settings, and you can reopen it any time from **Settings > macOS > Permissions**. Grant both and the synced input features will work.
+To control your background toons, ToonTown MultiTool needs two macOS permissions: **Accessibility** and **Input Monitoring**. On first run the app shows a setup guide that walks you through granting them in System Settings, and you can reopen it any time from **Settings > General > macOS**. Grant both and the synced input features will work.
 
-Because the app is not yet code-signed, macOS may ask you to grant these permissions again after an update.
+Because the app is ad-hoc signed rather than signed with a Developer ID, macOS may ask you to grant these permissions again after an update.
 
 ---
 
