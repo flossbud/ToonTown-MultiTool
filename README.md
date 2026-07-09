@@ -2,11 +2,67 @@
   <img src="assets/logos/ttmt_logo_icon+text.png" alt="ToonTown MultiTool" width="480">
 </p>
 
-A multitoon controller for **Toontown Rewritten** and **Corporate Clash** on Linux, macOS, and Windows.
+<p align="center">
+  A multitoon controller for <b>Toontown Rewritten</b> and <b>Corporate Clash</b>.
+</p>
+
+<p align="center">
+  One app. <b>Three platforms.</b> No toon left behind.
+</p>
 
 <!-- Hero screenshot goes here. Suggested: top-of-app multitoon tab with
      4 toons enabled, 1200x700 PNG. Drop the file into assets/ and add
      an img tag once available. -->
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### 🐧 Linux
+
+AUR · Flatpak · AppImage · .deb
+
+```bash
+yay -S toontown-multitool
+```
+
+✅ All features
+
+</td>
+<td width="33%" valign="top">
+
+### 🍎 macOS
+
+DMG · Apple Silicon + Intel
+
+```text
+Drag to Applications
+```
+
+✅ All features
+
+</td>
+<td width="33%" valign="top">
+
+### 🪟 Windows
+
+Installer · Portable ZIP
+
+```text
+ToonTownMultiTool-Setup.exe
+```
+
+✅ All features
+
+</td>
+</tr>
+</table>
+
+<p align="center">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-4493f8">
+  <img alt="Release" src="https://img.shields.io/github/v/release/flossbud/ToonTown-MultiTool?include_prereleases&label=release&color=8957e5">
+  <img alt="CI" src="https://github.com/flossbud/ToonTown-MultiTool/actions/workflows/ci.yml/badge.svg">
+</p>
 
 ---
 
@@ -19,37 +75,68 @@ Past releases v1.0 through v2.3.0-a1 have been retagged to v0.1.0-alpha.1 throug
 
 ---
 
+## Every feature, on every platform
+
+| Feature | Linux | macOS | Windows |
+|---|:---:|:---:|:---:|
+| Multitoon control (up to 4 toons) | ✅ | ✅ | ✅ |
+| Toontown Rewritten | ✅ | ✅ | ✅ |
+| Corporate Clash | ✅ | ✅ | ✅ |
+| Click Sync + ghost cursors | ✅ | ✅ | ✅ |
+| Float UI overlay | ✅ | ✅ | ✅ |
+| Global hotkeys | ✅ | ✅ | ✅ |
+| Keep-Alive | ✅ | ✅ | ✅ |
+
+---
+
 ## ✨ Features
 
 ### 🎮 Multitoon control
-- Control up to 4 toons at the same time
+- Control up to 4 toons at the same time.
 - Each toon can use a different set of movement keys (WASD, arrow keys, or your own custom layout).
-- Keep background toons from going idle: pick a key and an interval, and the app presses it for them automatically. Enable in Settings > Features. **(The use of Keep-Alive and other automation tools is against TTR and CC ToS, and thus is disabled by default. Enable in settings at your own risk.)**
 - Multitoon Chat ON/OFF Toggle: four chat handling modes (Focused Toon Only, All Toons, Keyset Dynamic, Per-Toon (manual)), switchable under Settings > Features. Focused Toon Only is the default.
-- Press F5 anywhere in the app to refresh the detected toon list.
+- Keep background toons from going idle: pick a key and an interval, and the app presses it for them automatically. Intervals run from Rapid Fire up to 5 minutes, and the default is 30 seconds. Enable in Settings > Features. **(The use of Keep-Alive and other automation tools is against TTR and CC ToS, and thus is disabled by default. Enable in settings at your own risk.)**
+- Press F5 (Ctrl+Alt+R on macOS) anywhere in the app to refresh the detected toon list.
+
+### 🫧 Float UI
+- Your toon cards lift out of the main window and float above the games as a click-through overlay, so the app doesn't block your gameplay.
+- Left-click the emblem for a radial menu: Accounts, Window, Settings, and Hide or Show cards, plus a ring of recent accounts you can launch without leaving the overlay.
+- Right-click the emblem to jump straight between the floating overlay and the normal window.
+- Open the app directly into it with Settings > General > "Start in Float UI mode".
+
+### ⌨️ Global hotkeys
+- Trigger MultiTool actions while a game holds focus, without switching windows.
+- Assign single keys or up to three-key chords under Settings > Features > Hotkeys.
+- Bind launching an account, starting and stopping the input service, toggling Keep-Alive or Click Sync, showing and hiding the Float UI cards, resizing them, refreshing the toon list, and loading a profile.
 
 ### 🖱️ Click Sync
-- Mouse input forwarding: clicks, drags, and hover movement mirror from the window you're playing into your other selected TTR windows, landing at the corresponding spot in each.
-- Pick which toon's recieve input forwarding. Only works when the windows share proportions/aspect ratio. Enable in Settings > Features.
-- Ghost Cursors: A colored cursor will appear on each forwarded window as input is forwarded. Toggleable in Settings > Features > Click Sync
+- Mouse input forwarding: clicks, drags, and hover movement mirror from the window you're playing into your other selected windows, landing at the corresponding spot in each.
+- Pick which toons receive forwarded input. Works when the windows share proportions. Enable in Settings > Features.
+- Ghost Cursors: a colored cursor appears on each forwarded window as input is forwarded. Toggle it in Settings > Features > Click Sync.
 
 ### <img src="assets/logos/ttr_readme.png" height="40" align="middle"> Toontown Rewritten support
-- Sign in to TTR from inside the app. 
-- Launches both the standard TTR install (Windows) and the official Flatpak version (Linux).
+- Sign in to TTR from inside the app.
+- Launches both the standard TTR install and the official Flatpak version on Linux.
 - See each toon's name, laff, jellybean count, and portrait update live while you play, across all your toons.
 
 ### <img src="assets/logos/cc_readme.png" height="40" align="middle"> Corporate Clash support
 - Sign in to CC from inside the app.
-- Plays nicely with however you have CC installed: Windows, or any common Linux setup (Wine, Bottles, Lutris, Steam/Proton, Faugus, etc.).
-- Multi-toon for CC, which CC's official launcher doesn't support out of the box.
+- Plays nicely with however you have CC installed, including any common Linux setup (Wine, Bottles, Lutris, Steam/Proton, Faugus, etc.).
+- Multitoon for CC, which CC's official launcher doesn't support out of the box.
 
 ### 🔑 Accounts
-- Save up to 16 accounts across both games, with one-click launch.
+- Save up to 16 accounts per game, for 32 in total across both games, with one-click launch.
+- Give an account a primary toon and it shows up as a real portrait on that account's tile. Click the portrait on the tile to pick.
+- The same portraits appear in the Float UI radial menu's accounts ring.
 - Passwords are stored securely; the app never writes them into plain files. See [PRIVACY.md](PRIVACY.md) for details.
 
 ### 💾 Session profiles
 - Save up to 5 profiles (saves which toons are active, plus their movement keys and anti-idle settings).
-- Switch setups instantly with Ctrl+1 through Ctrl+5.
+- Switch setups instantly with Ctrl+1 through Ctrl+5, rebindable under Settings > Features > Hotkeys.
+
+### ⚙️ Settings and Keysets
+- Settings is organized into five categories: General, Games, Keysets, Features, and Advanced.
+- Keysets draws your layout as a keyboard. Click a row to spotlight its key, or click a keycap to rebind it. When both games are installed you pick the game first.
 
 ---
 
@@ -131,7 +218,7 @@ source venv/bin/activate           # use activate.fish if your shell is fish
 python main.py
 ```
 
-`install.sh` detects your distro, installs Python 3.9 to 3.14 and the Qt6 runtime libraries if missing, and sets up a local Python environment. It asks before each `sudo` command; pass `--yes` to skip the prompts.
+`install.sh` detects your distro, installs a supported Python and the Qt6 runtime libraries if they're missing, and sets up a local Python environment. Python 3.9 through 3.14 are supported. It asks before each `sudo` command; pass `--yes` to skip the prompts.
 
 For unsupported distros (openSUSE, Gentoo, NixOS), or if you already have Python 3.9 to 3.14 and Qt6 installed:
 
@@ -141,13 +228,15 @@ For unsupported distros (openSUSE, Gentoo, NixOS), or if you already have Python
 
 #### Supported distros
 
-**CI-tested on every push:**
+**Built and tested from source on every push:**
 - Debian 11 (Python 3.9)
 - Debian 12 (Python 3.11)
 - Ubuntu 22.04 LTS (Python 3.10)
 - Ubuntu 24.04 LTS (Python 3.12)
-- Fedora latest (Python 3.14)
 - Arch Linux rolling (Python 3.14)
+
+**AppImage tested on every push:**
+- Fedora latest
 
 **Also supported (inherits parent base):**
 - LMDE 5 (= Debian 11)
@@ -173,15 +262,23 @@ xattr -dr com.apple.quarantine "/Applications/ToonTown MultiTool.app"
 
 #### Permissions
 
-To control your background toons, ToonTown MultiTool needs two macOS permissions: **Accessibility** and **Input Monitoring**. On first run the app shows a setup guide that walks you through granting them in System Settings, and you can reopen it any time from **Settings > macOS > Permissions**. Grant both and the synced input features will work.
+To control your background toons, ToonTown MultiTool needs two macOS permissions: **Accessibility** and **Input Monitoring**. On first run the app shows a setup guide that walks you through granting them in System Settings, and you can reopen it any time from **Settings > General > macOS**. Grant both and the synced input features will work.
 
-Because the app is not yet code-signed, macOS may ask you to grant these permissions again after an update.
+Because the app is ad-hoc signed rather than signed with a Developer ID, macOS may ask you to grant these permissions again after an update.
 
 ---
 
 ## Configuration
 
-Your settings, profiles, and account list live in `C:\Users\<username>\.config\toontown_multitool\` (Windows), `~/.config/toontown_multitool/` (Linux), or `~/Library/Application Support/toontown_multitool/` (macOS). Back it up, copy it between machines, or delete it to start fresh.
+Your settings, profiles, and account list live in one directory:
+
+| Platform | Location |
+|---|---|
+| Linux | `~/.config/toontown_multitool/`, or `$XDG_CONFIG_HOME/toontown_multitool/` |
+| macOS | `~/Library/Application Support/toontown_multitool/` |
+| Windows | `C:\Users\<username>\.config\toontown_multitool\` |
+
+Back it up, copy it between machines, or delete it to start fresh.
 
 See [PRIVACY.md](PRIVACY.md) for the full breakdown of what's stored on your device and what gets sent to the game servers.
 
@@ -189,7 +286,7 @@ See [PRIVACY.md](PRIVACY.md) for the full breakdown of what's stored on your dev
 
 ## Updates
 
-The app can check for new releases at startup. Toggle it under **Settings > Updates**, or click **Check now** any time. When a new release is found, a banner appears at the top of the window. Click it to read the release notes and choose Update now, Remind me later, or Skip this version.
+The app can check for new releases at startup. Toggle it under **Settings > General**, or click **Check now** any time. When a new release is found, a banner appears at the top of the window. Click it to read the release notes and choose Update now, Remind me later, or Skip this version.
 
 The update action depends on how you installed:
 
@@ -198,7 +295,7 @@ The update action depends on how you installed:
 | Windows installer   | Downloads the new installer and prompts before running it       |
 | AppImage            | Opens the release page in your browser                          |
 | Flatpak, AUR, .deb  | Opens a terminal with the right update command for your install |
-| Run from source     | Shows a copyable `git pull` command                             |
+| Run from source     | Shows a copyable `git pull && pip install -r requirements.txt` command |
 
 ---
 
