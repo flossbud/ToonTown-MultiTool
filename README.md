@@ -75,6 +75,20 @@ Past releases v1.0 through v2.3.0-a1 have been retagged to v0.1.0-alpha.1 throug
 
 ---
 
+## Every feature, on every platform
+
+| Feature | Linux | macOS | Windows |
+|---|:---:|:---:|:---:|
+| Multitoon control (up to 4 toons) | ✅ | ✅ | ✅ |
+| Toontown Rewritten | ✅ | ✅ | ✅ |
+| Corporate Clash | ✅ | ✅ | ✅ |
+| Click Sync + ghost cursors | ✅ | ✅ | ✅ |
+| Float UI overlay | ✅ | ✅ | ✅ |
+| Global hotkeys | ✅ | ✅ | ✅ |
+| Keep-Alive | ✅ | ✅ | ✅ |
+
+---
+
 ## ✨ Features
 
 ### 🎮 Multitoon control
