@@ -2,11 +2,67 @@
   <img src="assets/logos/ttmt_logo_icon+text.png" alt="ToonTown MultiTool" width="480">
 </p>
 
-A multitoon controller for **Toontown Rewritten** and **Corporate Clash** on Linux, macOS, and Windows.
+<p align="center">
+  A multitoon controller for <b>Toontown Rewritten</b> and <b>Corporate Clash</b>.
+</p>
+
+<p align="center">
+  One app. <b>Three platforms.</b> No toon left behind.
+</p>
 
 <!-- Hero screenshot goes here. Suggested: top-of-app multitoon tab with
      4 toons enabled, 1200x700 PNG. Drop the file into assets/ and add
      an img tag once available. -->
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### 🐧 Linux
+
+AUR · Flatpak · AppImage · .deb
+
+```bash
+yay -S toontown-multitool
+```
+
+✅ All features
+
+</td>
+<td width="33%" valign="top">
+
+### 🍎 macOS
+
+DMG · Apple Silicon + Intel
+
+```text
+Drag to Applications
+```
+
+✅ All features
+
+</td>
+<td width="33%" valign="top">
+
+### 🪟 Windows
+
+Installer · Portable ZIP
+
+```text
+ToonTownMultiTool-Setup.exe
+```
+
+✅ All features
+
+</td>
+</tr>
+</table>
+
+<p align="center">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-4493f8">
+  <img alt="Release" src="https://img.shields.io/github/v/release/flossbud/ToonTown-MultiTool?include_prereleases&label=release&color=8957e5">
+  <img alt="CI" src="https://github.com/flossbud/ToonTown-MultiTool/actions/workflows/ci.yml/badge.svg">
+</p>
 
 ---
 
