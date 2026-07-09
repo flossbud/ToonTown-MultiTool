@@ -92,34 +92,51 @@ Past releases v1.0 through v2.3.0-a1 have been retagged to v0.1.0-alpha.1 throug
 ## ✨ Features
 
 ### 🎮 Multitoon control
-- Control up to 4 toons at the same time
+- Control up to 4 toons at the same time.
 - Each toon can use a different set of movement keys (WASD, arrow keys, or your own custom layout).
-- Keep background toons from going idle: pick a key and an interval, and the app presses it for them automatically. Enable in Settings > Features. **(The use of Keep-Alive and other automation tools is against TTR and CC ToS, and thus is disabled by default. Enable in settings at your own risk.)**
 - Multitoon Chat ON/OFF Toggle: four chat handling modes (Focused Toon Only, All Toons, Keyset Dynamic, Per-Toon (manual)), switchable under Settings > Features. Focused Toon Only is the default.
-- Press F5 anywhere in the app to refresh the detected toon list.
+- Keep background toons from going idle: pick a key and an interval, and the app presses it for them automatically. Intervals run from Rapid Fire up to 5 minutes, and the default is 30 seconds. Enable in Settings > Features. **(The use of Keep-Alive and other automation tools is against TTR and CC ToS, and thus is disabled by default. Enable in settings at your own risk.)**
+- Press F5 (Ctrl+Alt+R on macOS) anywhere in the app to refresh the detected toon list.
+
+### 🫧 Float UI
+- Your toon cards lift out of the main window and float above the games as a click-through overlay, so the app doesn't block your gameplay.
+- Left-click the emblem for a radial menu: Accounts, Window, Settings, and Hide or Show cards, plus a ring of recent accounts you can launch without leaving the overlay.
+- Right-click the emblem to jump straight between the floating overlay and the normal window.
+- Open the app directly into it with Settings > General > "Start in Float UI mode".
+
+### ⌨️ Global hotkeys
+- Trigger MultiTool actions while a game holds focus, without switching windows.
+- Assign single keys or up to three-key chords under Settings > Features > Hotkeys.
+- Bind launching an account, starting and stopping the input service, toggling Keep-Alive or Click Sync, showing and hiding the Float UI cards, resizing them, refreshing the toon list, and loading a profile.
 
 ### 🖱️ Click Sync
-- Mouse input forwarding: clicks, drags, and hover movement mirror from the window you're playing into your other selected TTR windows, landing at the corresponding spot in each.
-- Pick which toon's recieve input forwarding. Only works when the windows share proportions/aspect ratio. Enable in Settings > Features.
-- Ghost Cursors: A colored cursor will appear on each forwarded window as input is forwarded. Toggleable in Settings > Features > Click Sync
+- Mouse input forwarding: clicks, drags, and hover movement mirror from the window you're playing into your other selected windows, landing at the corresponding spot in each.
+- Pick which toons receive forwarded input. Works when the windows share proportions. Enable in Settings > Features.
+- Ghost Cursors: a colored cursor appears on each forwarded window as input is forwarded. Toggle it in Settings > Features > Click Sync.
 
 ### <img src="assets/logos/ttr_readme.png" height="40" align="middle"> Toontown Rewritten support
-- Sign in to TTR from inside the app. 
-- Launches both the standard TTR install (Windows) and the official Flatpak version (Linux).
+- Sign in to TTR from inside the app.
+- Launches both the standard TTR install and the official Flatpak version on Linux.
 - See each toon's name, laff, jellybean count, and portrait update live while you play, across all your toons.
 
 ### <img src="assets/logos/cc_readme.png" height="40" align="middle"> Corporate Clash support
 - Sign in to CC from inside the app.
-- Plays nicely with however you have CC installed: Windows, or any common Linux setup (Wine, Bottles, Lutris, Steam/Proton, Faugus, etc.).
-- Multi-toon for CC, which CC's official launcher doesn't support out of the box.
+- Plays nicely with however you have CC installed, including any common Linux setup (Wine, Bottles, Lutris, Steam/Proton, Faugus, etc.).
+- Multitoon for CC, which CC's official launcher doesn't support out of the box.
 
 ### 🔑 Accounts
-- Save up to 16 accounts across both games, with one-click launch.
+- Save up to 16 accounts per game, for 32 in total across both games, with one-click launch.
+- Give an account a primary toon and it shows up as a real portrait on that account's tile. Click the portrait on the tile to pick.
+- The same portraits appear in the Float UI radial menu's accounts ring.
 - Passwords are stored securely; the app never writes them into plain files. See [PRIVACY.md](PRIVACY.md) for details.
 
 ### 💾 Session profiles
 - Save up to 5 profiles (saves which toons are active, plus their movement keys and anti-idle settings).
-- Switch setups instantly with Ctrl+1 through Ctrl+5.
+- Switch setups instantly with Ctrl+1 through Ctrl+5, rebindable under Settings > Features > Hotkeys.
+
+### ⚙️ Settings and Keysets
+- Settings is organized into five categories: General, Games, Keysets, Features, and Advanced.
+- Keysets draws your layout as a keyboard. Click a row to spotlight its key, or click a keycap to rebind it. When both games are installed you pick the game first.
 
 ---
 
