@@ -7,6 +7,7 @@ def test_accent_pairs_match_handoff():
     assert V2_ACCENTS["teal"] == {"c": "#1fb8a6", "b": "#4dd2c3"}
     assert set(V2_ACCENTS) == {
         "blue", "yellow", "ttr", "cc", "orange", "pink", "green", "teal", "red",
+        "purple",
     }
 
 

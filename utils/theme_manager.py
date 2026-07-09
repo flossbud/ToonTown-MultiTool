@@ -428,6 +428,9 @@ V2_ACCENTS = {
     "green":  {"c": "#3da343", "b": "#56d66a"},
     "teal":   {"c": "#1fb8a6", "b": "#4dd2c3"},
     "red":    {"c": "#b34848", "b": "#e05252"},
+    # Deepened, higher-chroma variant of movement-set 7 purple (#9B6BE0) —
+    # the Logs V2 diagnostics-console identity (logs redesign bundle 2026-07-09).
+    "purple": {"c": "#8749E0", "b": "#a87cf0"},
 }
 
 # Nav identity colors for the Glass Dock selected-tab tint. Exact hex from the
