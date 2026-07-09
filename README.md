@@ -1,62 +1,14 @@
 <p align="center">
-  <img src="assets/logos/ttmt_logo_icon+text.png" alt="ToonTown MultiTool" width="480">
-</p>
-
-<p align="center">
-  A multitoon controller for <b>Toontown Rewritten</b> and <b>Corporate Clash</b>.
-</p>
-
-<p align="center">
-  One app. <b>Three platforms.</b> No toon left behind.
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logos/readme-hero-dark.png">
+    <img src="assets/logos/readme-hero-light.png" width="890"
+         alt="ToonTown MultiTool. A multitoon controller for Toontown Rewritten and Corporate Clash. One app. Three platforms. No toon left behind. Linux: AUR, Flatpak, AppImage or .deb, install with 'yay -S toontown-multitool'. macOS: DMG for Apple Silicon and Intel, drag to Applications. Windows: installer or portable ZIP, ToonTownMultiTool-Setup.exe. All features on every platform.">
+  </picture>
 </p>
 
 <!-- Hero screenshot goes here. Suggested: top-of-app multitoon tab with
      4 toons enabled, 1200x700 PNG. Drop the file into assets/ and add
      an img tag once available. -->
-
-<table>
-<tr>
-<td width="33%" valign="top">
-
-### 🐧 Linux
-
-AUR · Flatpak · AppImage · .deb
-
-```bash
-yay -S toontown-multitool
-```
-
-✅ All features
-
-</td>
-<td width="33%" valign="top">
-
-### 🍎 macOS
-
-DMG · Apple Silicon + Intel
-
-```text
-Drag to Applications
-```
-
-✅ All features
-
-</td>
-<td width="33%" valign="top">
-
-### 🪟 Windows
-
-Installer · Portable ZIP
-
-```text
-ToonTownMultiTool-Setup.exe
-```
-
-✅ All features
-
-</td>
-</tr>
-</table>
 
 <p align="center">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-4493f8">
