@@ -270,7 +270,15 @@ Because the app is ad-hoc signed rather than signed with a Developer ID, macOS m
 
 ## Configuration
 
-Your settings, profiles, and account list live in `C:\Users\<username>\.config\toontown_multitool\` (Windows), `~/.config/toontown_multitool/` (Linux), or `~/Library/Application Support/toontown_multitool/` (macOS). Back it up, copy it between machines, or delete it to start fresh.
+Your settings, profiles, and account list live in one directory:
+
+| Platform | Location |
+|---|---|
+| Linux | `~/.config/toontown_multitool/`, or `$XDG_CONFIG_HOME/toontown_multitool/` |
+| macOS | `~/Library/Application Support/toontown_multitool/` |
+| Windows | `C:\Users\<username>\.config\toontown_multitool\` |
+
+Back it up, copy it between machines, or delete it to start fresh.
 
 See [PRIVACY.md](PRIVACY.md) for the full breakdown of what's stored on your device and what gets sent to the game servers.
 
@@ -278,7 +286,7 @@ See [PRIVACY.md](PRIVACY.md) for the full breakdown of what's stored on your dev
 
 ## Updates
 
-The app can check for new releases at startup. Toggle it under **Settings > Updates**, or click **Check now** any time. When a new release is found, a banner appears at the top of the window. Click it to read the release notes and choose Update now, Remind me later, or Skip this version.
+The app can check for new releases at startup. Toggle it under **Settings > General**, or click **Check now** any time. When a new release is found, a banner appears at the top of the window. Click it to read the release notes and choose Update now, Remind me later, or Skip this version.
 
 The update action depends on how you installed:
 
@@ -287,7 +295,7 @@ The update action depends on how you installed:
 | Windows installer   | Downloads the new installer and prompts before running it       |
 | AppImage            | Opens the release page in your browser                          |
 | Flatpak, AUR, .deb  | Opens a terminal with the right update command for your install |
-| Run from source     | Shows a copyable `git pull` command                             |
+| Run from source     | Shows a copyable `git pull && pip install -r requirements.txt` command |
 
 ---
 
