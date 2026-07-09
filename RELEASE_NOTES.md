@@ -9,7 +9,7 @@ Adds macOS support, a new Float UI overlay, global hotkeys, and a redesigned int
 #### macOS Support
 
 - ToonTown MultiTool now runs on macOS. Install it by dragging the app out of the DMG into Applications. Apple has not notarized the app yet, so the first launch may prompt you to approve in Privacy & Security.
-- The first run walks you through granting the two permissions the synced input features need. You can reopen that guide any time from Settings > macOS > Permissions.
+- The first run walks you through granting the two permissions the synced input features need. You can reopen that guide any time from Settings > General > macOS.
 - Your saved account passwords are encrypted on disk. Accessing accounts is gated by Touch ID, falling back to your login password. See PRIVACY.md for what is stored and where.
 - All features (Keepalive, Click-Sync, Float UI) are fully supported.
 
