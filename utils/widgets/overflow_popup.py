@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Callable, List
 
-from PySide6.QtCore import QEvent, QPoint, Qt, Property
+from PySide6.QtCore import QEvent, QPoint, Qt, Property, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath
 from PySide6.QtWidgets import (
     QApplication, QFrame, QPushButton, QVBoxLayout,
@@ -19,6 +19,12 @@ class OverflowPopup(QFrame):
     """A frameless popup window. Use `add_action` to populate, then
     `show_at(anchor)` to display below an anchor widget.
     """
+
+    RADIUS = 10
+
+    # Emitted on every dismissal (toggle, row click, click-outside, Esc) so
+    # the trigger button can drop its [open="true"] QSS state.
+    closed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -31,10 +37,10 @@ class OverflowPopup(QFrame):
         self.rows: List[QPushButton] = []
         self._scale = 1.0
         self._anchor_corner = (1.0, 0.0)  # top-right of popup = origin
-        # Theme-driven paint colors. Defaults preserve the previous
-        # hardcoded dark appearance until set_theme_colors is called.
-        self._bg_color = QColor("#2b2745")
-        self._border_color = QColor(124, 92, 255, 80)
+        # Theme-driven paint colors. Defaults match apply_v2_theme's dark
+        # palette so the popup is correct before the first theme pass.
+        self._bg_color = QColor(30, 30, 30, 235)
+        self._border_color = QColor(255, 255, 255, 28)
 
     def add_action(self, label: str, handler: Callable[[], None]) -> None:
         row = QPushButton(label, self)
@@ -54,13 +60,30 @@ class OverflowPopup(QFrame):
         self.move(x, y)
         self.show()
 
-    def set_theme_colors(self, bg_hex: str, border_hex: str) -> None:
-        """Update the popup's background and border colors from the
-        active theme. Called from MultiToonTool._apply_full_theme on
-        theme switch.
-        """
-        self._bg_color = QColor(bg_hex)
-        self._border_color = QColor(border_hex)
+    def hideEvent(self, event) -> None:
+        super().hideEvent(event)
+        self.closed.emit()
+
+    def apply_v2_theme(self, is_dark: bool) -> None:
+        """Glass-dock-era look (logs redesign spec, entry chrome): dark
+        rgba(30,30,30,0.92) composited solid / light near-white, themed rows."""
+        from utils.color_math import alpha
+        if is_dark:
+            self._bg_color = QColor(30, 30, 30, 235)
+            self._border_color = QColor(255, 255, 255, 28)
+            row_text, row_hover = "#ffffff", alpha("#ffffff", 0.07)
+        else:
+            self._bg_color = QColor(255, 255, 255, 247)
+            self._border_color = QColor("#cbd5e1")
+            row_text, row_hover = "#0f172a", alpha("#0f172a", 0.07)
+        for row in self.rows:
+            row.setStyleSheet(
+                "QPushButton {"
+                f" background: transparent; color: {row_text}; border: none;"
+                " border-radius: 6px; min-height: 28px; padding: 0 12px;"
+                " font-size: 12.5px; text-align: left; }"
+                f"QPushButton:hover {{ background: {row_hover}; }}")
+        self.setMinimumWidth(140)
         self.update()
 
     # ── Scale property (animatable) ─────────────────────────────────────
@@ -84,7 +107,7 @@ class OverflowPopup(QFrame):
         p.translate(-anchor_x, -anchor_y)
 
         path = QPainterPath()
-        path.addRoundedRect(0, 0, self.width(), self.height(), 8, 8)
+        path.addRoundedRect(0, 0, self.width(), self.height(), self.RADIUS, self.RADIUS)
         p.fillPath(path, self._bg_color)
         p.setPen(self._border_color)
         p.drawPath(path)

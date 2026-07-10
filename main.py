@@ -148,6 +148,7 @@ from utils.game_registry import GameRegistry
 from utils.theme_manager import (
     apply_theme, resolve_theme, get_theme_colors,
     make_hint_icon, font_role,
+    get_overflow_trigger_qss,
     SystemThemeWatcher,
 )
 from utils.build_flavor import window_title, app_name, is_beta
@@ -1202,16 +1203,30 @@ class MultiToonTool(QMainWindow):
         self.overflow_btn.setVisible(self.settings_manager.get("show_debug_tab", False))
         self.overflow_popup = OverflowPopup()
         self.overflow_popup.add_action("View Logs", lambda: self.nav_select(3))
+        # closed fires on EVERY dismissal (click-outside/Esc never pass
+        # through the toggle), so the trigger always drops its open state.
+        self.overflow_popup.closed.connect(
+            lambda: self._set_overflow_open(False))
 
         def _toggle_popup():
             from utils.motion import pop_menu
-            pop_menu(self.overflow_popup, self.overflow_btn,
-                     show=not self.overflow_popup.isVisible())
+            show = not self.overflow_popup.isVisible()
+            if show:
+                self._set_overflow_open(True)
+            pop_menu(self.overflow_popup, self.overflow_btn, show=show)
         self.overflow_btn.clicked.connect(_toggle_popup)
         layout.addWidget(self.overflow_btn)
 
         self._update_nav_phantom_width()
         return band
+
+    def _set_overflow_open(self, is_open: bool) -> None:
+        """Drive the ⋯ trigger's [open="true"] QSS state (bundle: bg 0.055,
+        hover/open 0.10). Dynamic-property selectors only re-evaluate after
+        an unpolish/polish pass."""
+        self.overflow_btn.setProperty("open", is_open)
+        self.overflow_btn.style().unpolish(self.overflow_btn)
+        self.overflow_btn.style().polish(self.overflow_btn)
 
     def _update_nav_phantom_width(self):
         """Balance the right overflow cluster so the dock stays centered. The
@@ -1532,10 +1547,15 @@ class MultiToonTool(QMainWindow):
             from utils.motion import push_slide_pages
             push_slide_pages(self.stack, prev_index, index, axis="h")
 
-        # Drive the dock's selected segment (0..2 are the dock tabs; index 3/4
-        # are Logs/Credits, which have no segment — leave the dock as-is).
-        if hasattr(self, "nav_dock") and 0 <= index < len(self.nav_dock.segments):
-            self.nav_dock.select(index, animate=was_initialized)
+        # Drive the dock's selected segment. Indexes 0..2 are the dock tabs.
+        # Logs (index 3) is a chip-less route: no segment is lit while it
+        # shows, so deselect the dock entirely. Credits (index 4) also has no
+        # segment and leaves the dock as-is.
+        if hasattr(self, "nav_dock"):
+            if 0 <= index < len(self.nav_dock.segments):
+                self.nav_dock.select(index, animate=was_initialized)
+            elif index == 3:
+                self.nav_dock.select(-1, animate=was_initialized)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1704,10 +1724,9 @@ class MultiToonTool(QMainWindow):
         self.update_banner.apply_theme(c)
         self.admin_notice_banner.apply_theme(c)
         if hasattr(self, "overflow_popup"):
-            self.overflow_popup.set_theme_colors(
-                bg_hex=c['bg_card'],
-                border_hex=c['header_accent'],
-            )
+            overflow_dark = resolve_theme(self.settings_manager) == "dark"
+            self.overflow_popup.apply_v2_theme(overflow_dark)
+            self.overflow_btn.setStyleSheet(get_overflow_trigger_qss(overflow_dark))
         self._update_hint_icon()
 
         # Content pages

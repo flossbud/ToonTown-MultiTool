@@ -181,3 +181,101 @@ def test_phantom_balances_overflow_when_debug_on(qapp):
     band = inst._build_nav_band()   # hold the band so its QSpacerItem survives
     assert inst.nav_left_phantom.sizeHint().width() == 38  # overflow 34 + 4 gap
     assert band is not None
+
+
+# -- chip-less route: dock deselect (Logs route) ----------------------------
+
+def test_deselect_clears_selection_and_click_restores(dock):
+    dock.select(-1, animate=False)
+    assert dock.selected_index() == -1
+    # a real click on segment 2 restores selection + emits
+    fired = []
+    dock.selected.connect(fired.append)
+    # drive the real press path on segment 2's rect center
+    seg_rect = dock.segments[2].rect
+    from PySide6.QtCore import QPointF, Qt, QEvent
+    from PySide6.QtGui import QMouseEvent
+    ev = QMouseEvent(QEvent.MouseButtonPress, QPointF(seg_rect.center()),
+                     Qt.LeftButton, Qt.LeftButton, Qt.KeyboardModifier.NoModifier)
+    dock.mousePressEvent(ev)
+    assert dock.selected_index() == 2
+    assert fired == [2]
+
+
+def test_deselected_paint_smoke(dock, qapp):
+    dock.select(-1, animate=False)
+    from PySide6.QtGui import QImage, QPainter
+    img = QImage(dock.size(), QImage.Format_ARGB32_Premultiplied)
+    img.fill(0)
+    dock.render(img)   # must not crash with no selection
+    dock.select(0, animate=False)
+
+
+def _click(dock, index):
+    from PySide6.QtCore import QPointF, Qt, QEvent
+    from PySide6.QtGui import QMouseEvent
+    ev = QMouseEvent(QEvent.MouseButtonPress,
+                     QPointF(dock.segments[index].rect.center()),
+                     Qt.LeftButton, Qt.LeftButton, Qt.KeyboardModifier.NoModifier)
+    dock.mousePressEvent(ev)
+
+
+def test_click_remembered_segment_while_deselected_restores(dock):
+    # _selected stays 0 under the hood; the `or self._deselected` decider is
+    # what lets a click on that SAME segment re-select it.
+    dock.select(0, animate=False)
+    dock.select(-1, animate=False)
+    fired = []
+    dock.selected.connect(fired.append)
+    _click(dock, 0)
+    assert fired == [0]
+    assert dock.selected_index() == 0
+
+
+def test_select_same_index_after_deselect_restores(dock):
+    # Locks the was_deselected guard: select(2) after deselect must not
+    # early-return on `index == self._selected`.
+    dock.select(2, animate=False)
+    dock.select(-1, animate=False)
+    dock.select(2, animate=False)
+    assert dock.selected_index() == 2
+    assert dock._coverage(dock.segments[2]) == 1.0
+
+
+def test_deselected_coverage_is_zero_everywhere(dock):
+    # The pill rect still sits on segment 2 in memory; the _deselected gate
+    # alone must force coverage (and therefore segment lighting) to idle.
+    dock.select(2, animate=False)
+    dock.select(-1, animate=False)
+    assert all(dock._coverage(s) == 0.0 for s in dock.segments)
+
+
+def test_deselected_dock_is_keyboard_inert(dock):
+    dock.select(-1, animate=False)
+    fired = []
+    dock.selected.connect(fired.append)
+    from PySide6.QtCore import Qt, QEvent
+    from PySide6.QtGui import QKeyEvent
+    ev = QKeyEvent(QEvent.KeyPress, Qt.Key_Right, Qt.KeyboardModifier.NoModifier)
+    dock.keyPressEvent(ev)
+    assert dock.selected_index() == -1
+    assert fired == []
+
+
+def test_nav_select_logs_route_deselects_dock(qapp, monkeypatch):
+    import utils.motion as motion
+    from PySide6.QtWidgets import QStackedWidget, QWidget
+    inst = _bare_main(qapp)
+    inst.nav_band = inst._build_nav_band()
+    inst.stack = QStackedWidget()
+    pages = [QWidget() for _ in range(5)]
+    for w in pages:
+        inst.stack.addWidget(w)
+    # nav_select resolves push_slide_pages at call time; snap instead of
+    # animating so the offscreen test is deterministic.
+    monkeypatch.setattr(motion, "push_slide_pages",
+                        lambda stack, prev, idx, axis="h": stack.setCurrentIndex(idx))
+    inst.nav_select(3)                                   # Logs: chip-less
+    assert inst.nav_dock.selected_index() == -1
+    inst.nav_select(1)                                   # back to a dock tab
+    assert inst.nav_dock.selected_index() == 1

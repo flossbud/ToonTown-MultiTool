@@ -511,6 +511,26 @@ def get_v2_tokens(is_dark: bool) -> dict:
     }
 
 
+def get_overflow_trigger_qss(is_dark: bool) -> str:
+    """Glass material for the debug ⋯ overflow trigger (logs redesign spec,
+    entry chrome). Solid-composite over the band paint — no backdrop blur
+    (dock law). No painted shadow in v1."""
+    from utils.color_math import alpha
+    if is_dark:
+        bg, bg_hot = alpha("#ffffff", 0.055), alpha("#ffffff", 0.10)
+        border, fg, fg_hot = alpha("#ffffff", 0.11), "#9a9a9a", "#dddddd"
+    else:
+        bg, bg_hot = alpha("#0f172a", 0.055), alpha("#0f172a", 0.10)
+        border, fg, fg_hot = alpha("#0f172a", 0.11), "#64748b", "#334155"
+    return (
+        "QToolButton#rail_overflow {"
+        f" background: {bg}; border: 1px solid {border}; color: {fg};"
+        " border-radius: 17px; font-size: 18px; font-weight: 700; }"
+        "QToolButton#rail_overflow:hover, QToolButton#rail_overflow:pressed,"
+        ' QToolButton#rail_overflow[open="true"] {'
+        f" background: {bg_hot}; color: {fg_hot}; }}")
+
+
 # ── Global Stylesheets ────────────────────────────────────────────────────
 
 DARK_THEME = """

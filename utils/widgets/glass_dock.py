@@ -63,6 +63,7 @@ class GlassDock(QWidget):
         super().__init__(parent)
         self._is_dark = is_dark
         self._selected = 0
+        self._deselected = False   # chip-less route: no pill painted
         self._hover = -1
         self._anim: Optional[QVariantAnimation] = None
         self.segments = [_Segment(lbl, mk, key) for (lbl, mk, key) in items]
@@ -105,13 +106,24 @@ class GlassDock(QWidget):
 
     # -- public API ------------------------------------------------------
     def selected_index(self) -> int:
-        return self._selected
+        return -1 if self._deselected else self._selected
 
     def select(self, index: int, animate: bool = True) -> None:
         """Slide the selection pill to `index`. Does NOT emit `selected`
         (programmatic). The pill morphs its color from the current tab's
-        identity color to the destination's over the slide."""
-        if index == self._selected:
+        identity color to the destination's over the slide.
+
+        `index < 0` is the chip-less route: clear the selection entirely.
+        No pill or glow paints and every segment renders in its idle color
+        until a valid index is selected again (an instant reappear)."""
+        if index < 0:
+            if not self._deselected:
+                self._deselected = True
+                self.update()
+            return
+        was_deselected = self._deselected
+        self._deselected = False
+        if index == self._selected and not was_deselected:
             return
         self._selected = index
         dest = self.segments[index]
@@ -119,7 +131,9 @@ class GlassDock(QWidget):
         to_rect = QRectF(dest.rect)
         to_c = QColor(pair["c"])
         to_b = QColor(pair["b"])
-        if not animate or motion.is_reduced():
+        # From a deselected state the pill instantly reappears at the target
+        # (a slide-from-nowhere would look wrong); is_reduced() also snaps.
+        if not animate or motion.is_reduced() or was_deselected:
             self._pill_rect = to_rect
             self._pill_c = to_c
             self._pill_b = to_b
@@ -142,7 +156,9 @@ class GlassDock(QWidget):
         if e.button() == Qt.LeftButton:
             i = self._segment_at(e.position().toPoint())
             if i >= 0:
-                if i != self._selected:
+                # A click restores selection even from the deselected route,
+                # and even onto the previously-remembered segment.
+                if i != self._selected or self._deselected:
                     self.select(i)
                 self.selected.emit(i)
                 e.accept()
@@ -163,6 +179,11 @@ class GlassDock(QWidget):
         super().leaveEvent(e)
 
     def keyPressEvent(self, e):
+        if self._deselected:
+            # Chip-less route is keyboard-inert: arrow-nav from a deselected
+            # dock would re-light from a stale index.
+            super().keyPressEvent(e)
+            return
         if e.key() in (Qt.Key_Left, Qt.Key_Up):
             self._activate_via_key((self._selected - 1) % len(self.segments))
         elif e.key() in (Qt.Key_Right, Qt.Key_Down):
@@ -205,6 +226,8 @@ class GlassDock(QWidget):
     # -- paint -----------------------------------------------------------
     def _coverage(self, seg: _Segment) -> float:
         """How much of `seg` the selection pill horizontally covers, 0..1."""
+        if self._deselected:
+            return 0.0
         seg_l, seg_r = seg.rect.x(), seg.rect.x() + seg.rect.width()
         pill_l = self._pill_rect.x()
         pill_r = self._pill_rect.x() + self._pill_rect.width()
@@ -226,8 +249,10 @@ class GlassDock(QWidget):
         p.setBrush(with_alpha(neutral, 0.055))
         p.drawRoundedRect(pill, radius, radius)
 
-        # Selection pill (one moving, color-morphing glass capsule).
-        self._paint_selection_pill(p)
+        # Selection pill (one moving, color-morphing glass capsule). Skipped
+        # entirely on the chip-less route, where nothing is selected.
+        if not self._deselected:
+            self._paint_selection_pill(p)
 
         # Idle hover tint + per-segment icon/label (coverage-lit).
         for i, seg in enumerate(self.segments):
