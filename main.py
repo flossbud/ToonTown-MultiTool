@@ -1699,6 +1699,8 @@ class MultiToonTool(QMainWindow):
         """)
         if hasattr(self, "nav_dock"):
             self.nav_dock.apply_theme(resolve_theme(self.settings_manager) == "dark")
+        if hasattr(self, "debug_tab"):
+            self.debug_tab.apply_theme(resolve_theme(self.settings_manager) == "dark")
         self.update_banner.apply_theme(c)
         self.admin_notice_banner.apply_theme(c)
         if hasattr(self, "overflow_popup"):
@@ -1907,11 +1909,11 @@ class MultiToonTool(QMainWindow):
             _quit_app_after_main_window_close()
         print(f"[closeEvent] exiting pid={os.getpid()}")
 
-    def log(self, message: str):
+    def log(self, message: str, level: str | None = None):
         if not self.debug_tab.logging_enabled:
             return
         print(message)
-        self.debug_tab.append_log(message)
+        self.debug_tab.append_log(message, level=level)
 
 
 def _assets_dir() -> str:
