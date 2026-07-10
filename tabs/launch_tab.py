@@ -855,7 +855,7 @@ class LaunchTab(QWidget):
         try:
             ok = bool(runner(**runner_kwargs))
         except Exception as exc:  # noqa: BLE001
-            self.log(f"[Launch] launcher_runner({game}) raised: {exc!r}")
+            self.log(f"[Launch] launcher_runner({game}) raised: {exc!r}", level="error")
         if not ok:
             self.log(f"[Launch] Official {game.upper()} launcher could not be started.")
 
@@ -1235,7 +1235,7 @@ class LaunchTab(QWidget):
             return
         new_ids = dlg.ordered_ids()
         if not self.cred_manager.reorder_game(game, new_ids):
-            self.log(f"[Launch] Reorder of {game.upper()} accounts was rejected.")
+            self.log(f"[Launch] Reorder of {game.upper()} accounts was rejected.", level="warn")
             return
         self._reconcile_slots()
         self._render_section(game)
@@ -1398,7 +1398,7 @@ class LaunchTab(QWidget):
         slot = self._slots[game].get(account_id)
         worker = slot.worker if slot is not None else None
         if worker is None:
-            self.log(f"[2fa] no active worker for {game}/{account_id}; nothing to prompt")
+            self.log(f"[2fa] no active worker for {game}/{account_id}; nothing to prompt", level="warn")
             return
         banner = "Two-Factor Authentication required"
         self._prompt_2fa(game, account_id, banner)
@@ -1778,7 +1778,7 @@ class LaunchTab(QWidget):
         game_label = "TTR" if game == "ttr" else "CC"
         pos = self._position_of(game, account_id)
         if self.window_manager is None:
-            self.log(f"[Launch] {game_label} account {pos} game running (PID {pid})")
+            self.log(f"[Launch] {game_label} account {pos} game running (PID {pid})", level="ok")
             self._update_status(game, account_id, LoginState.RUNNING, "Game running")
             return
         self.log(f"[Launch] {game_label} account {pos} process started "
@@ -2013,9 +2013,9 @@ class LaunchTab(QWidget):
 
     # ── Logging ────────────────────────────────────────────────────────────
 
-    def log(self, msg):
+    def log(self, msg, level=None):
         if self.logger:
-            self.logger.append_log(msg)
+            self.logger.append_log(msg, level=level)
         else:
             print(msg)
 

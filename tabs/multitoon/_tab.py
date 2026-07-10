@@ -2720,7 +2720,7 @@ class MultitoonTab(QWidget):
 
     def _start_service_internal(self):
         self.input_service.start()
-        self.log("[Service] Multitoon service started.")
+        self.log("[Service] Multitoon service started.", level="ok")
         wids = self.window_manager.ttr_window_ids
         for i in range(4):
             if i < len(wids):
@@ -2731,7 +2731,7 @@ class MultitoonTab(QWidget):
                 self.apply_visual_state(i)
         count = len(wids)
         if count:
-            self.log(f"[Input] {count} toon window{'s' if count != 1 else ''} detected — input + chat enabled")
+            self.log(f"[Input] {count} toon window{'s' if count != 1 else ''} detected — input + chat enabled", level="ok")
         self.update_status_label()
         self.refresh_timer.start()
         self.schedule_toon_data_fetch(1200)
@@ -3837,7 +3837,7 @@ class MultitoonTab(QWidget):
             self.log(f"[KeepAlive] Sleep inhibitor verified ({status.method}).")
         else:
             self.log("[KeepAlive] Could not verify sleep inhibitor; "
-                     "the machine may sleep.")
+                     "the machine may sleep.", level="warn")
         self.keep_alive_inhibit_status.emit(status)
 
     def _release_sleep_inhibitor(self):
@@ -4092,9 +4092,9 @@ class MultitoonTab(QWidget):
         except Exception as e:
             self.log(f"[KeepAlive] Error: {e}")
 
-    def log(self, msg):
+    def log(self, msg, level=None):
         if self.logger:
-            self.logger.append_log(msg)
+            self.logger.append_log(msg, level=level)
         else:
             print(msg)
 
