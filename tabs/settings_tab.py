@@ -35,6 +35,7 @@ from services.ttr_login_service import (
 from services.cc_login_service import (
     find_cc_engine_path,
     get_cc_engine_executable_name,
+    cc_binary_path,
     discover_cc_installs,
 )
 from services.wine_runtimes import install_signature
@@ -616,12 +617,14 @@ class SettingsTab(QWidget):
         return get_cc_engine_executable_name()
 
     def _engine_binary_in(self, game: str, dir_path: str) -> str:
-        """Absolute path to the game's engine binary inside dir_path. TTR routes
-        through engine_binary_path so the macOS .app nesting is honored; CC keeps
-        the flat layout (no macOS CC client)."""
+        """Absolute path to the game's engine binary inside dir_path.
+        
+        TTR routes through engine_binary_path so the macOS .app nesting is honored.
+        CC also uses cc_binary_path to handle the macOS .app nesting.
+        """
         if game == "ttr":
             return engine_binary_path(dir_path)
-        return os.path.join(dir_path, self._exe_name(game))
+        return cc_binary_path(dir_path)
 
     def _find_path(self, game: str):
         if game == "ttr":
@@ -761,12 +764,12 @@ class SettingsTab(QWidget):
     # ── Compat runtime helpers ────────────────────────────────────────────
 
     def _get_active_cc_install(self):
-        from services.cc_login_service import get_cc_engine_executable_name
+        from services.cc_login_service import cc_binary_path
         from services.wine_runtimes import WineInstall, classify_path
         engine_dir = self.settings_manager.get("cc_engine_dir", "")
         if not engine_dir:
             return None
-        exe = os.path.join(engine_dir, get_cc_engine_executable_name())
+        exe = cc_binary_path(engine_dir)
         if not os.path.isfile(exe):
             return None
         try:
