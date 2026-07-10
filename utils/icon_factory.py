@@ -763,3 +763,59 @@ def make_radio_waves_icon(size: int = 20, color: QColor | None = None) -> QIcon:
         p.drawArc(rect, (0 - span // 2) * 16, span * 16)
     p.end()
     return QIcon(pm)
+
+
+def make_copy_icon(size: int = 12, color: QColor | None = None) -> QIcon:
+    """Lucide 'copy': front rect (9,9,13,13) over a back sheet path."""
+    color = color or QColor("#ffffff")
+    pm, p = _v2_canvas(size)
+    s = size / 24.0
+    pen = QPen(color, max(1.0, 2 * s))
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    p.setBrush(Qt.NoBrush)
+    p.drawRoundedRect(QRectF(9 * s, 9 * s, 13 * s, 13 * s), 2 * s, 2 * s)
+    path = QPainterPath(QPointF(5 * s, 15 * s))
+    path.lineTo(4 * s, 15 * s)
+    path.quadTo(2 * s, 15 * s, 2 * s, 13 * s)
+    path.lineTo(2 * s, 4 * s)
+    path.quadTo(2 * s, 2 * s, 4 * s, 2 * s)
+    path.lineTo(13 * s, 2 * s)
+    path.quadTo(15 * s, 2 * s, 15 * s, 4 * s)
+    path.lineTo(15 * s, 5 * s)
+    p.drawPath(path)
+    p.end()
+    return QIcon(pm)
+
+
+def make_pause_icon(size: int = 11, color: QColor | None = None) -> QIcon:
+    """Two 5x16 rounded bars (the follow-state icon in the Logs console)."""
+    color = color or QColor("#ffffff")
+    pm, p = _v2_canvas(size)
+    s = size / 24.0
+    p.setPen(Qt.NoPen)
+    p.setBrush(color)
+    for x in (5, 14):
+        p.drawRoundedRect(QRectF(x * s, 4 * s, 5 * s, 16 * s), 1.5 * s, 1.5 * s)
+    p.end()
+    return QIcon(pm)
+
+
+def make_arrow_down_icon(size: int = 10, color: QColor | None = None) -> QIcon:
+    """Straight-down arrow (jump-to-live pill), 3px stroke in the viewBox."""
+    color = color or QColor("#ffffff")
+    pm, p = _v2_canvas(size)
+    s = size / 24.0
+    pen = QPen(color, max(1.0, 3 * s))
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    p.drawLine(QPointF(12 * s, 4 * s), QPointF(12 * s, 20 * s))
+    p.setBrush(Qt.NoBrush)
+    path = QPainterPath(QPointF(5 * s, 13 * s))
+    path.lineTo(12 * s, 20 * s)
+    path.lineTo(19 * s, 13 * s)
+    p.drawPath(path)
+    p.end()
+    return QIcon(pm)
