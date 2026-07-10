@@ -10,7 +10,7 @@ the effect clips on macOS (tabs/multitoon/_compact_layout.py:141) and
 QGraphicsEffect on custom-painted widgets causes painter conflicts.
 
 Header: PortraitBadge + title/sub column + optional right-aligned buttons.
-Body: vertical stack (gap 12) filled via add_row().
+Body: vertical stack (gap 12 by default, ctor-configurable) filled via add_row().
 Theme flips may animate (220ms lerp) via apply_theme(animate=True).
 """
 from __future__ import annotations
@@ -36,7 +36,8 @@ class CardSurface(QFrame):
     header_clicked = Signal()
 
     def __init__(self, accent_key: str, title: str, sub: str | None = None,
-                 icon=None, logo_path: str | None = None, parent=None):
+                 icon=None, logo_path: str | None = None, gap: int = 12,
+                 parent=None):
         super().__init__(parent)
         self.accent_key = accent_key
         self._a = V2_ACCENTS.get(accent_key, V2_ACCENTS["blue"])
@@ -49,7 +50,7 @@ class CardSurface(QFrame):
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(EDGE_PAD + 16, EDGE_PAD + 14, EDGE_PAD + 16, EDGE_PAD + 16)
-        outer.setSpacing(12)
+        outer.setSpacing(gap)
 
         head = QHBoxLayout()
         head.setContentsMargins(0, 0, 0, 0)
@@ -83,13 +84,13 @@ class CardSurface(QFrame):
         self._body.setStyleSheet("background: transparent;")
         self._body_layout = QVBoxLayout(self._body)
         self._body_layout.setContentsMargins(0, 0, 0, 0)
-        self._body_layout.setSpacing(12)
+        self._body_layout.setSpacing(gap)
         outer.addWidget(self._body)
 
     # ── public API ──────────────────────────────────────────────────────
-    def add_row(self, widget) -> None:
+    def add_row(self, widget, stretch: int = 0) -> None:
         widget.setParent(self._body)
-        self._body_layout.addWidget(widget)
+        self._body_layout.addWidget(widget, stretch)
 
     def add_header_button(self, button) -> None:
         button.setParent(self._header_button_row)
@@ -104,6 +105,14 @@ class CardSurface(QFrame):
         self._sub_mono = mono
         self._sub_color_override = color_override
         self._style_text()
+
+    def set_sub_widget(self, widget) -> None:
+        """Place a custom widget in the sub-line slot (below the title).
+        Used by consumers whose status line isn't plain text (e.g. the Logs
+        console's pulsing activity dot). Coexists with set_sub(): if a text
+        sub label exists it stays above the custom widget."""
+        widget.setParent(self)
+        self._text_col.addWidget(widget)
 
     def apply_theme(self, is_dark: bool, animate: bool = False) -> None:
         import utils.motion as motion
