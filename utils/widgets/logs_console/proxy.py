@@ -24,7 +24,10 @@ class LogFilterProxy(QSortFilterProxyModel):
         self.invalidateFilter()
 
     def set_active_tags(self, tags: Iterable[str]) -> None:
-        self._tags = set(tags)
+        tags = set(tags)
+        if tags == self._tags:
+            return
+        self._tags = tags
         self.invalidateFilter()
 
     def set_query(self, query: str) -> None:

@@ -1,14 +1,16 @@
 """LogsCard — the whole Logs tab surface. v0 = CardSurface shell (purple,
 gap 11) + pulsing status line + console pane. The toolbar (source segment,
-search, follow button), tag chips, and header actions are added by the
-follow-up tasks in the same plan."""
+search, follow button) and the scope-aware tag filter chip row are wired in;
+header actions are added by follow-up tasks in the same plan."""
 from __future__ import annotations
 
-from PySide6.QtCore import QEasingCurve, QPointF, Qt, QVariantAnimation
+from PySide6.QtCore import (QEasingCurve, QPoint, QPointF, QRect, QSize, Qt,
+                            QVariantAnimation)
 from PySide6.QtGui import QColor, QPainter, QPalette
-from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QPushButton,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLayout, QLineEdit,
+                               QPushButton, QVBoxLayout, QWidget)
 
+from utils.color_math import alpha
 from utils.icon_factory import make_nav_terminal
 from utils.theme_manager import get_v2_tokens
 from utils.widgets.card_surface import CardSurface
@@ -94,6 +96,88 @@ class _StatusDot(QWidget):
         p.end()
 
 
+class _FlowLayout(QLayout):
+    """Minimal left-aligned wrap layout (gap 5) for the tag chip row."""
+
+    def __init__(self, gap=5, parent=None):
+        super().__init__(parent)
+        self._gap = gap
+        self._items = []
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, i):
+        return self._items[i] if 0 <= i < len(self._items) else None
+
+    def takeAt(self, i):
+        return self._items.pop(i) if 0 <= i < len(self._items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientations(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, w):
+        return self._do_layout(QRect(0, 0, w, 0), test=True)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._do_layout(rect, test=False)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        s = QSize()
+        for it in self._items:
+            s = s.expandedTo(it.minimumSize())
+        return s
+
+    def _do_layout(self, rect, test):
+        x, y, row_h = rect.x(), rect.y(), 0
+        for it in self._items:
+            hint = it.sizeHint()
+            if row_h and x + hint.width() > rect.right() + 1:
+                x = rect.x()
+                y += row_h + self._gap
+                row_h = 0
+            if not test:
+                it.setGeometry(QRect(QPoint(x, y), hint))
+            x += hint.width() + self._gap
+            row_h = max(row_h, hint.height())
+        return y + row_h - rect.y()
+
+
+class _TagChip(QPushButton):
+    """Mono 10.5/600 pill chip. Idle = neutral translucent; active = tag-tinted
+    bg + tag border (bundle chips spec)."""
+
+    def __init__(self, tag: str, parent=None):
+        super().__init__(tag, parent)
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def restyle(self, tokens: dict) -> None:
+        tag_color = tokens["tags"].get(self.text(), tokens["tag_fallback"])
+        active_bg = alpha(tag_color, tokens["chip_active_bg_alpha"])
+        self.setStyleSheet(
+            "QPushButton {"
+            f" background: {tokens['chip_idle_bg']};"
+            f" border: 1px solid {tokens['chip_idle_border']};"
+            f" color: {tokens['chip_idle_text']};"
+            " border-radius: 11px; padding: 3px 10px;"
+            " font-family: 'Consolas','Menlo','DejaVu Sans Mono','Liberation Mono',monospace;"
+            " font-size: 10.5px; font-weight: 600; }"
+            "QPushButton:checked {"
+            f" background: {active_bg}; border: 1px solid {tag_color};"
+            f" color: {tokens['chip_active_text']}; }}")
+
+
 class LogsCard(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -149,6 +233,12 @@ class LogsCard(QWidget):
         tbl.addWidget(self.follow_btn)
         self.surface.add_row(toolbar)
 
+        self._chips_host = QWidget()
+        self._chips_host.setStyleSheet("background: transparent;")
+        self._chips_layout = _FlowLayout(5, self._chips_host)
+        self._chip_tags: list[str] = []
+        self.surface.add_row(self._chips_host)
+
         self.pane = LogConsolePane(self.proxy)
         self.surface.add_row(self.pane, stretch=1)
 
@@ -157,6 +247,8 @@ class LogsCard(QWidget):
         self.proxy.modelReset.connect(self._refresh_status)
         self.pane.follow_changed.connect(self._refresh_status)
         self.pane.follow_changed.connect(self._refresh_follow_icon)
+        self.model.rowsInserted.connect(self._rebuild_chips)
+        self.model.modelReset.connect(self._rebuild_chips)
 
         self.apply_theme(True)
         self.dot.start()
@@ -196,10 +288,17 @@ class LogsCard(QWidget):
             " border-radius: 15px; }"
             f"QPushButton:hover {{ background: {tk['ctrl_hover']}; }}")
         self._refresh_follow_icon()
+        for c in self.chips():
+            c.restyle(t)
+
+    def chips(self) -> list:
+        return [self._chips_layout.itemAt(i).widget()
+                for i in range(self._chips_layout.count())]
 
     # ── internals ───────────────────────────────────────────────────────
     def _on_scope_changed(self, idx: int) -> None:
         self.proxy.set_scope(self.SCOPES[idx][1])
+        self._rebuild_chips()
         self._refresh_status()
         self._refresh_empty_state()
 
@@ -215,7 +314,48 @@ class LogsCard(QWidget):
         self.pane.refresh_empty_state()
 
     def _narrowed(self) -> bool:
-        return bool(self.search.text().strip())   # chips task ORs in active chips
+        return bool(self.search.text().strip()) or any(
+            c.isChecked() for c in self.chips())
+
+    def _scoped_tags(self) -> list[str]:
+        scope = self.proxy.scope()
+        seen: list[str] = []
+        for line in self.model.lines():
+            if scope != "all" and line.source != scope:
+                continue
+            if line.tag and line.tag not in seen:
+                seen.append(line.tag)
+        return seen
+
+    def _rebuild_chips(self, *_args) -> None:
+        scoped = self._scoped_tags()
+        if set(scoped) == set(self._chip_tags):
+            return
+        # Survivors keep their positions; genuinely new tags append at the
+        # end. First-seen order of the SESSION, not of the rotating ring
+        # buffer — buffer rotation must never reshuffle or rebuild the row.
+        alive = set(scoped)
+        tags = [t for t in self._chip_tags if t in alive]
+        tags += [t for t in scoped if t not in tags]
+        active = {c.text() for c in self.chips() if c.isChecked()}
+        while self._chips_layout.count():
+            item = self._chips_layout.takeAt(0)
+            item.widget().deleteLater()
+        for tag in tags:
+            chip = _TagChip(tag, self._chips_host)
+            chip.setChecked(tag in active)
+            chip.restyle(self._t)
+            chip.toggled.connect(self._on_chips_changed)
+            self._chips_layout.addWidget(chip)
+        self._chip_tags = tags
+        self._chips_host.setVisible(bool(tags))
+        self._on_chips_changed()
+
+    def _on_chips_changed(self, *_args) -> None:
+        active = {c.text() for c in self.chips() if c.isChecked()}
+        self.proxy.set_active_tags(active)
+        self._refresh_status()
+        self._refresh_empty_state()
 
     def _refresh_follow_icon(self, *_args) -> None:
         from utils.icon_factory import make_pause_icon, make_play_icon
