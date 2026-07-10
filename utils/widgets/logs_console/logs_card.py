@@ -15,11 +15,11 @@ from utils.icon_factory import make_nav_terminal
 from utils.theme_manager import get_v2_tokens
 from utils.widgets.card_surface import CardSurface
 from utils.widgets.logs_console._tokens import get_logs_tokens
-from utils.widgets.logs_console.model import LogLineModel
+from utils.widgets.logs_console.model import LINE_ROLE, LogLineModel
 from utils.widgets.logs_console.pane import LogConsolePane
 from utils.widgets.logs_console.proxy import LogFilterProxy
-from utils.widgets.logs_console.records import make_line
-from utils.widgets.pill_controls import SegmentedPill
+from utils.widgets.logs_console.records import format_line, make_line
+from utils.widgets.pill_controls import PillButton, SegmentedPill
 from utils.widgets.portrait_badge import _qcolor_from_rgba
 
 PULSE_MS = 2800
@@ -196,6 +196,18 @@ class LogsCard(QWidget):
         outer.setContentsMargins(6, 2, 6, 6)
         outer.addWidget(self.surface)
 
+        self.copy_btn = PillButton("Copy")
+        self.copy_btn.setToolTip("Copy visible lines")
+        self.copy_btn.clicked.connect(self._on_copy)
+        self.export_btn = PillButton("Export")
+        self.export_btn.setToolTip("Save visible lines as a .log file")
+        self.export_btn.clicked.connect(self._on_export)
+        self.clear_btn = PillButton("Clear", tone="danger")
+        self.clear_btn.setToolTip("Clear this view")
+        self.clear_btn.clicked.connect(self._on_clear)
+        for b in (self.copy_btn, self.export_btn, self.clear_btn):
+            self.surface.add_header_button(b)
+
         status_row = QWidget()
         status_row.setStyleSheet("background: transparent;")
         srl = QHBoxLayout(status_row)
@@ -269,6 +281,8 @@ class LogsCard(QWidget):
             f"color: {self._t['status_text']};")
 
         t = self._t
+        for b in (self.copy_btn, self.export_btn, self.clear_btn):
+            b.apply_theme(is_dark)
         self.segment.apply_theme(is_dark, accent_key="purple")
         self.search.setStyleSheet(
             "QLineEdit {"
@@ -295,8 +309,64 @@ class LogsCard(QWidget):
         return [self._chips_layout.itemAt(i).widget()
                 for i in range(self._chips_layout.count())]
 
+    # ── header actions ──────────────────────────────────────────────────
+    def _visible_lines(self) -> list:
+        return [self.proxy.index(i, 0).data(LINE_ROLE)
+                for i in range(self.proxy.rowCount())]
+
+    def _on_copy(self) -> None:
+        from PySide6.QtWidgets import QApplication
+        lines = self._visible_lines()
+        if not lines:
+            self.pane.show_toast("Nothing to copy")
+            return
+        QApplication.clipboard().setText(
+            "\n".join(format_line(ln) for ln in lines))
+        n = len(lines)
+        self.pane.show_toast(
+            f"Copied {n} line{'s' if n != 1 else ''} to clipboard")
+
+    def _on_export(self) -> None:
+        from datetime import date
+        from PySide6.QtWidgets import QFileDialog
+        lines = self._visible_lines()
+        if not lines:
+            self.pane.show_toast("Nothing to export")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export logs", f"ttmt-logs-{date.today().isoformat()}.log",
+            "Log files (*.log)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(format_line(ln) for ln in lines) + "\n")
+        except OSError as e:
+            # An unhandled exception in a Qt slot is fatal in PySide6 — a
+            # read-only dir or full disk must toast, never crash the app.
+            self.pane.show_toast(f"Export failed: {e.strerror or e}")
+            return
+        n = len(lines)
+        self.pane.show_toast(
+            f"Exported {n} line{'s' if n != 1 else ''} to .log")
+
+    def _on_clear(self) -> None:
+        idx = self.segment.currentIndex()
+        label, scope = self.SCOPES[idx]
+        self.model.clear_scope(None if scope == "all" else scope)
+        self.pane.show_toast("Logs cleared" if scope == "all"
+                             else f"{label} cleared")
+        self._rebuild_chips()
+        self._refresh_status()
+        self._refresh_empty_state()
+
     # ── internals ───────────────────────────────────────────────────────
     def _on_scope_changed(self, idx: int) -> None:
+        # setCurrentIndex is silent by contract (no index_changed re-emit),
+        # so this sync is safe: it keeps segment.currentIndex() truthful for
+        # programmatic scope changes (e.g. tests, _on_clear) that don't go
+        # through the real mousePressEvent path.
+        self.segment.setCurrentIndex(idx)
         self.proxy.set_scope(self.SCOPES[idx][1])
         self._rebuild_chips()
         self._refresh_status()

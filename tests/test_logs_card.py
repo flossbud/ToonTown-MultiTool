@@ -183,3 +183,98 @@ def test_checked_state_survives_new_tag_rebuild(card):
     visible_tags = {card.proxy.index(i, 0).data(LINE_ROLE).tag
                     for i in range(card.proxy.rowCount())}
     assert visible_tags == {"[Service]"}
+
+
+def test_copy_copies_visible_lines_and_toasts(card, qapp):
+    card.append("[Credentials] a")
+    card.append("[Service] b")
+    QApplication.processEvents()
+    card.search.setText("credentials")
+    QApplication.processEvents()
+    card._on_copy()
+    clip = qapp.clipboard().text()
+    assert "[Credentials] a" in clip and "[Service]" not in clip
+    assert "Copied 1 line to clipboard" in card.pane.toast.text()
+    card.search.setText("")
+
+
+def test_export_writes_visible_lines(card, tmp_path, monkeypatch):
+    from datetime import date
+    from PySide6.QtWidgets import QFileDialog
+    card.append("[Launch] exported line")
+    QApplication.processEvents()
+    dest = tmp_path / "out.log"
+    calls = []
+
+    def fake_get_save(*a, **k):
+        calls.append((a, k))
+        return (str(dest), "")
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(fake_get_save))
+    card._on_export()
+    text = dest.read_text()
+    assert "[Launch] exported line" in text
+    assert text.endswith("\n")
+    assert "Exported 1 line to .log" in card.pane.toast.text()
+    # The dialog is seeded with a dated default filename (positional arg 3).
+    assert calls[0][0][2] == f"ttmt-logs-{date.today().isoformat()}.log"
+
+
+def test_export_cancel_is_a_noop(card, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    card.append("[Launch] cancel me")             # past the empty-view guard
+    QApplication.processEvents()
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: ("", "")))
+    before_toast = card.pane.toast.text()
+    # conftest seeds tmp_path (_isolated_home), so diff against a baseline.
+    before_files = set(tmp_path.iterdir())
+    card._on_export()
+    assert card.pane.toast.text() == before_toast
+    assert set(tmp_path.iterdir()) == before_files  # nothing was written
+
+
+def test_empty_view_copy_and_export_guards(card, qapp, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    assert card.model.rowCount() == 0
+    sentinel = "sentinel: must survive an empty copy"
+    qapp.clipboard().setText(sentinel)
+    card._on_copy()
+    assert qapp.clipboard().text() == sentinel     # clipboard untouched
+    assert "Nothing to copy" in card.pane.toast.text()
+
+    def _no_dialog(*a, **k):
+        raise AssertionError("dialog must not open for an empty view")
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(_no_dialog))
+    card._on_export()
+    assert "Nothing to export" in card.pane.toast.text()
+
+
+def test_export_failure_toasts_instead_of_crashing(card, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    card.append("[Launch] doomed line")
+    QApplication.processEvents()
+    dest = tmp_path / "no_such_dir" / "out.log"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(dest), "")))
+    card._on_export()                              # must not raise
+    assert card.pane.toast.text().startswith("Export failed:")
+
+
+def test_clear_scopes(card):
+    card._on_scope_changed(0)
+    card.model.clear_scope(None)
+    card.append("[Service] input line")
+    card.append("raw line")
+    QApplication.processEvents()
+    card._on_scope_changed(2)                 # Input
+    card._on_clear()
+    assert "Input cleared" in card.pane.toast.text()
+    card._on_scope_changed(0)                 # All — raw line survived
+    assert card.model.rowCount() == 1
+    card._on_clear()
+    assert card.model.rowCount() == 0
+    assert "Logs cleared" in card.pane.toast.text()
