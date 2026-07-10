@@ -56,3 +56,46 @@ def test_dot_animates_only_while_visible(card):
     card.show()
     QApplication.processEvents()
     assert card.dot._anim is not None
+
+
+def test_scope_segment_filters_and_clears_stale_state(card):
+    card.append("[Service] input line")
+    card.append("[TTR API] api line")
+    QApplication.processEvents()
+    card.segment.index_changed.emit(2)           # Input — drives the real connect
+    assert card.proxy.scope() == "input"
+    assert card.proxy.rowCount() == 1
+
+
+def test_search_filters_as_you_type(card):
+    card.append("[Credentials] Keyring ready")
+    card.append("[Credentials] storage available")
+    card.search.setText("keyring")
+    QApplication.processEvents()
+    assert card.proxy.rowCount() == 1
+    assert "matching" in card.status.text()
+    card.search.setText("")
+    QApplication.processEvents()
+    assert "matching" not in card.status.text()
+
+
+def test_follow_button_toggles_pane(card):
+    card.follow_btn.click()
+    assert not card.pane.is_following()
+    card.follow_btn.click()
+    assert card.pane.is_following()
+
+
+def test_empty_state_message_includes_query(card):
+    card.append("something")
+    card.search.setText("zzz-nope")
+    QApplication.processEvents()
+    assert card.pane.empty_label.isVisible()
+    assert 'zzz-nope' in card.pane.empty_label.text()
+    card.search.setText("")
+    QApplication.processEvents()
+
+
+def test_pane_scrollbar_is_the_kit_autohide(card):
+    from utils.widgets.auto_hide_scrollbar import AutoHideScrollBar
+    assert isinstance(card.pane.view.verticalScrollBar(), AutoHideScrollBar)

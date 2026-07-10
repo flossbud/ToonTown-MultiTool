@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QApplication, QFrame, QLabel, QListView,
 
 from utils.icon_factory import make_arrow_down_icon
 from utils.theme_manager import V2_ACCENTS
+from utils.widgets import install_modern_scrollbar
 from utils.widgets.logs_console._tokens import get_logs_tokens
 from utils.widgets.logs_console.delegate import LogLineDelegate
 from utils.widgets.logs_console.model import LINE_ROLE
@@ -56,6 +57,11 @@ class LogConsolePane(QFrame):
         self.view.setMouseTracking(True)
         self.view.setCursor(Qt.PointingHandCursor)
         self.view.setToolTip("Click to copy line")
+        # Kit scrollbar (house pattern — same call as settings_tab.py /
+        # launch_tab.py): replaces the vertical bar in place, so grabbing
+        # it AFTER this call is required to bind the follow FSM to the
+        # installed AutoHideScrollBar, not the QScrollBar it replaced.
+        install_modern_scrollbar(self.view, is_dark=True)
         lay.addWidget(self.view)
 
         sb = self.view.verticalScrollBar()
@@ -214,6 +220,7 @@ class LogConsolePane(QFrame):
         self._t = get_logs_tokens(is_dark)
         self.delegate.apply_theme(is_dark)
         self._style_overlays()
+        self.view.verticalScrollBar().set_theme(is_dark)
         self.update()
 
     def resizeEvent(self, event) -> None:

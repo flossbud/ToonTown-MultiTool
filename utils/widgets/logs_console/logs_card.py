@@ -5,16 +5,20 @@ follow-up tasks in the same plan."""
 from __future__ import annotations
 
 from PySide6.QtCore import QEasingCurve, QPointF, Qt, QVariantAnimation
-from PySide6.QtGui import QColor, QPainter
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtGui import QColor, QPainter, QPalette
+from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QPushButton,
+                               QVBoxLayout, QWidget)
 
 from utils.icon_factory import make_nav_terminal
+from utils.theme_manager import get_v2_tokens
 from utils.widgets.card_surface import CardSurface
 from utils.widgets.logs_console._tokens import get_logs_tokens
 from utils.widgets.logs_console.model import LogLineModel
 from utils.widgets.logs_console.pane import LogConsolePane
 from utils.widgets.logs_console.proxy import LogFilterProxy
 from utils.widgets.logs_console.records import make_line
+from utils.widgets.pill_controls import SegmentedPill
+from utils.widgets.portrait_badge import _qcolor_from_rgba
 
 PULSE_MS = 2800
 
@@ -120,6 +124,31 @@ class LogsCard(QWidget):
         srl.addStretch()
         self.surface.set_sub_widget(status_row)
 
+        # Toolbar: source scope · search · follow/pause (spec toolbar row).
+        self.SCOPES = [("All", "all"), ("Terminal", "raw"),
+                       ("Input", "input"), ("TTR API", "api")]
+        toolbar = QWidget()
+        toolbar.setStyleSheet("background: transparent;")
+        tbl = QHBoxLayout(toolbar)
+        tbl.setContentsMargins(0, 0, 0, 0)
+        tbl.setSpacing(8)
+        self.segment = SegmentedPill([label for label, _ in self.SCOPES])
+        self.segment.index_changed.connect(self._on_scope_changed)
+        tbl.addWidget(self.segment)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Filter…")
+        self.search.setFixedHeight(30)
+        self.search.setClearButtonEnabled(False)
+        self.search.textChanged.connect(self._on_query_changed)
+        tbl.addWidget(self.search, 1)
+        self.follow_btn = QPushButton()
+        self.follow_btn.setFixedSize(30, 30)
+        self.follow_btn.setCursor(Qt.PointingHandCursor)
+        self.follow_btn.clicked.connect(
+            lambda: self.pane.set_following(not self.pane.is_following()))
+        tbl.addWidget(self.follow_btn)
+        self.surface.add_row(toolbar)
+
         self.pane = LogConsolePane(self.proxy)
         self.surface.add_row(self.pane, stretch=1)
 
@@ -127,6 +156,7 @@ class LogsCard(QWidget):
         self.proxy.rowsRemoved.connect(self._refresh_status)
         self.proxy.modelReset.connect(self._refresh_status)
         self.pane.follow_changed.connect(self._refresh_status)
+        self.pane.follow_changed.connect(self._refresh_follow_icon)
 
         self.apply_theme(True)
         self.dot.start()
@@ -146,11 +176,55 @@ class LogsCard(QWidget):
             f"background: transparent; font-size: 11px; "
             f"color: {self._t['status_text']};")
 
+        t = self._t
+        self.segment.apply_theme(is_dark, accent_key="purple")
+        self.search.setStyleSheet(
+            "QLineEdit {"
+            f" background: {t['search_bg']}; border: 1px solid {t['search_border']};"
+            f" border-radius: 15px; color: {t['search_text']}; padding: 0 13px;"
+            " font-family: 'Consolas','Menlo','DejaVu Sans Mono','Liberation Mono',monospace;"
+            " font-size: 11.5px; }"
+            f"QLineEdit:focus {{ border: 1px solid {t['search_focus']}; }}")
+        pal = self.search.palette()
+        pal.setColor(QPalette.PlaceholderText,
+                     _qcolor_from_rgba(t["search_placeholder"]))
+        self.search.setPalette(pal)
+        tk = get_v2_tokens(is_dark)
+        self.follow_btn.setStyleSheet(
+            "QPushButton {"
+            f" background: {tk['btn_bg']}; border: 1px solid {tk['btn_border']};"
+            " border-radius: 15px; }"
+            f"QPushButton:hover {{ background: {tk['ctrl_hover']}; }}")
+        self._refresh_follow_icon()
+
     # ── internals ───────────────────────────────────────────────────────
+    def _on_scope_changed(self, idx: int) -> None:
+        self.proxy.set_scope(self.SCOPES[idx][1])
+        self._refresh_status()
+        self._refresh_empty_state()
+
+    def _on_query_changed(self, text: str) -> None:
+        self.proxy.set_query(text)
+        self._refresh_status()
+        self._refresh_empty_state()
+
+    def _refresh_empty_state(self) -> None:
+        q = self.search.text().strip()
+        self.pane.set_empty_text(
+            f'No matching lines for "{q}".' if q else "No matching lines.")
+        self.pane.refresh_empty_state()
+
     def _narrowed(self) -> bool:
-        """True when search or tag chips narrow the view ('matching').
-        The toolbar/chips tasks make this real."""
-        return False
+        return bool(self.search.text().strip())   # chips task ORs in active chips
+
+    def _refresh_follow_icon(self, *_args) -> None:
+        from utils.icon_factory import make_pause_icon, make_play_icon
+        color = QColor("#ffffff" if self._is_dark else "#475569")
+        icon = (make_pause_icon(11, color) if self.pane.is_following()
+                else make_play_icon(11, color))
+        self.follow_btn.setIcon(icon)
+        self.follow_btn.setToolTip("Pause auto-scroll" if self.pane.is_following()
+                                   else "Resume auto-scroll")
 
     def _refresh_status(self, *_args) -> None:
         n = self.proxy.rowCount()
