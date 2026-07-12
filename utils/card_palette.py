@@ -30,6 +30,14 @@ VIVID_TOP_F, VIVID_BOT_F = 0.58, 0.72
 VIVID_BADGE_F = 0.50
 
 
+def light_chip_colors(c: dict) -> "tuple[str, str, str, str]":
+    """Recessed-chip (bg, border, hover, disabled) for the light theme.
+    Single source of truth - MultitoonTab._chip_colors() consumes this, and
+    the palette's chip_off_* fields unpack it. #d8dee7 is the deliberate
+    one-step darkening of bg_card_inner_hover for hover feedback."""
+    return (c["bg_card_inner_hover"], c["border_light"], "#d8dee7", c["bg_input_dark"])
+
+
 @dataclass(frozen=True)
 class CardPalette:
     is_dark: bool
@@ -125,6 +133,7 @@ def card_palette(
         )
     top_lit = lighten_rgb(base, VIVID_TOP_F)
     empty = accent == QColor(c["border_light"])
+    chip_bg, chip_border, chip_hover, chip_disabled = light_chip_colors(c)
     return CardPalette(
         is_dark=False,
         body_top_lit=top_lit,
@@ -157,10 +166,10 @@ def card_palette(
         track_lit=QColor(c["bg_card"]),
         track_off=QColor(c["bg_card"]),
         status_cutout=QColor(top_lit),
-        chip_off_bg=c["bg_card_inner_hover"],          # #e2e8f0 solid
-        chip_off_border=c["border_light"],             # #cbd5e1
-        chip_off_hover="#d8dee7",
-        chip_off_disabled=c["bg_input_dark"],           # #e8ecf1
+        chip_off_bg=chip_bg,
+        chip_off_border=chip_border,
+        chip_off_hover=chip_hover,
+        chip_off_disabled=chip_disabled,
         pill_light_chrome=True,
         pixmap_sat=LIGHT_PIXMAP_SAT,
         pixmap_bright=LIGHT_PIXMAP_BRIGHT,

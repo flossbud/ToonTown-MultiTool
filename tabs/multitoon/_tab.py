@@ -2075,9 +2075,8 @@ class MultitoonTab(QWidget):
         from utils.theme_manager import get_theme_colors, resolve_theme
         if resolve_theme(self.settings_manager) == "dark":
             return None
-        c = get_theme_colors(False)
-        # keep in sync with utils/card_palette.py chip_off_hover
-        return (c["bg_card_inner_hover"], c["border_light"], "#d8dee7", c["bg_input_dark"])
+        from utils.card_palette import light_chip_colors
+        return light_chip_colors(get_theme_colors(False))
 
     def refresh_theme(self):
         c = self._c()

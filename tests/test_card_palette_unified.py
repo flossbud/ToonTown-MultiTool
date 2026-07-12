@@ -103,3 +103,12 @@ def test_body_override_drives_fill_but_not_border():
     p = _pal(TTR, body, False)
     assert p.body_top_lit == lighten_rgb(body, 0.58)   # "Literal" whitening
     assert p.border_lit == TTR
+
+
+def test_light_chip_colors_match_palette_fields():
+    from utils.card_palette import light_chip_colors
+    c = get_theme_colors(False)
+    p = _pal(TTR, None, False)
+    assert light_chip_colors(c) == (
+        p.chip_off_bg, p.chip_off_border, p.chip_off_hover, p.chip_off_disabled
+    )
