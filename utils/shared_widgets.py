@@ -489,6 +489,10 @@ class SmoothProgressBar(QWidget):
         self._bg_color = QColor(hex_color)
         self.update()
 
+    def bg_color(self) -> QColor:
+        """The current track (background) color."""
+        return QColor(self._bg_color)
+
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)

@@ -33,6 +33,7 @@ class FeaturePill(QWidget):
         self._hover = 0.0
         self._dim = 0.0
         self._scale = 1.0
+        self._light_chrome = False
         self._hover_anim = QVariantAnimation(self)
         self._hover_anim.setDuration(_HOVER_MS)
         self._hover_anim.valueChanged.connect(self._on_hover_value)
@@ -54,6 +55,14 @@ class FeaturePill(QWidget):
         t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else float(t))
         if t != self._dim:
             self._dim = t
+            self.update()
+
+    def set_light_chrome(self, on: bool) -> None:
+        """Dark-on-light ink family for light theme (paper/vivid cards).
+        Injected by the style-writer; the pill never queries the theme."""
+        on = bool(on)
+        if on != self._light_chrome:
+            self._light_chrome = on
             self.update()
 
     def set_paint_scale(self, s: float) -> None:
@@ -99,12 +108,17 @@ class FeaturePill(QWidget):
 
         # Fill.
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(0, 0, 0, round(36 * dim_f)))
+        if self._light_chrome:
+            p.setBrush(QColor(15, 23, 42, round(14 * dim_f)))
+        else:
+            p.setBrush(QColor(0, 0, 0, round(36 * dim_f)))
         p.drawRoundedRect(1, 1, w - 2, h - 2, radius - 1, radius - 1)
 
         # Dashed border: alpha 0.3 -> 0.6 on hover.
         border_a = round((77 + (153 - 77) * self._hover) * dim_f)
-        pen = QPen(QColor(255, 255, 255, border_a), 1)
+        border_rgb = QColor("#cbd5e1") if self._light_chrome else QColor(255, 255, 255)
+        border_rgb.setAlpha(border_a)
+        pen = QPen(border_rgb, 1)
         pen.setStyle(Qt.CustomDashLine)
         pen.setDashPattern([3, 3])
         p.setPen(pen)
@@ -113,7 +127,8 @@ class FeaturePill(QWidget):
 
         # Content: sparkle + label, centered as a group.
         text_a = round((191 + (255 - 191) * self._hover) * dim_f)
-        ink = QColor(255, 255, 255, text_a)
+        ink = QColor("#64748b") if self._light_chrome else QColor(255, 255, 255)
+        ink.setAlpha(text_a)
         font = QFont(self.font())
         font.setPixelSize(max(8, round(12.5 * self._scale)))
         font.setBold(True)

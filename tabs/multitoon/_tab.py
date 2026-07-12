@@ -1303,10 +1303,13 @@ KA_ORANGE = "#ff9500"
 KA_ORANGE_BORDER = "#ffb04d"
 
 
-def _pin_toggle_qss(accent: str, on: bool) -> str:
+def _pin_toggle_qss(accent: str, on: bool,
+                    chip: "tuple[str, str, str, str] | None" = None) -> str:
     """QSS for a 34x36 pinwheel toggle button. Active fills with the toggle's
-    accent; inactive is a recessed dark chip. Icon colour is set separately
-    (QSS can't tint a QIcon). Both states brighten on hover."""
+    accent; inactive is a recessed chip. `chip` injects the (bg, border, hover,
+    disabled) off-state colours from the card palette; None keeps the legacy
+    dark rgbas. Icon colour is set separately (QSS can't tint a QIcon). Both
+    states brighten on hover."""
     if on:
         hov = lighten_rgb(QColor(accent), 0.15).name()
         return (
@@ -1314,24 +1317,39 @@ def _pin_toggle_qss(accent: str, on: bool) -> str:
             f" border-radius: 9px; }}"
             f"QPushButton:hover {{ background: {hov}; border: 1px solid {hov}; }}"
         )
+    bg, border, hover, disabled = chip or (
+        "rgba(0,0,0,0.24)", "rgba(0,0,0,0.30)", "rgba(255,255,255,0.10)", "rgba(0,0,0,0.30)"
+    )
     return (
-        "QPushButton { background: rgba(0,0,0,0.24);"
-        " border: 1px solid rgba(0,0,0,0.30); border-radius: 9px; }"
-        "QPushButton:hover { background: rgba(255,255,255,0.10); }"
-        "QPushButton:disabled { background: rgba(0,0,0,0.30);"
-        " border: 1px solid rgba(0,0,0,0.30); }"
+        f"QPushButton {{ background: {bg};"
+        f" border: 1px solid {border}; border-radius: 9px; }}"
+        f"QPushButton:hover {{ background: {hover}; }}"
+        f"QPushButton:disabled {{ background: {disabled};"
+        f" border: 1px solid {border}; }}"
     )
 
 
-def _pin_ka_off_qss() -> str:
-    """QSS for the 28px keep-alive lightning toggle in its off state."""
+def _pin_ka_off_qss(chip: "tuple[str, str, str, str] | None" = None) -> str:
+    """QSS for the 28px keep-alive lightning toggle in its off state. `chip`
+    injects the palette (bg, border, hover, disabled) so a light card gets a
+    solid recessed chip; None keeps the legacy dark chip with white borders."""
+    if chip is None:
+        return (
+            "QPushButton { background: rgba(0,0,0,0.35);"
+            " border: 1px solid rgba(255,255,255,0.16); border-radius: 14px; }"
+            "QPushButton:hover { background: rgba(255,255,255,0.10);"
+            " border: 1px solid rgba(255,255,255,0.28); }"
+            "QPushButton:disabled { background: rgba(0,0,0,0.35);"
+            " border: 1px solid rgba(255,255,255,0.10); }"
+        )
+    bg, border, hover, disabled = chip
     return (
-        "QPushButton { background: rgba(0,0,0,0.35);"
-        " border: 1px solid rgba(255,255,255,0.16); border-radius: 14px; }"
-        "QPushButton:hover { background: rgba(255,255,255,0.10);"
-        " border: 1px solid rgba(255,255,255,0.28); }"
-        "QPushButton:disabled { background: rgba(0,0,0,0.35);"
-        " border: 1px solid rgba(255,255,255,0.10); }"
+        f"QPushButton {{ background: {bg};"
+        f" border: 1px solid {border}; border-radius: 14px; }}"
+        f"QPushButton:hover {{ background: {hover};"
+        f" border: 1px solid {border}; }}"
+        f"QPushButton:disabled {{ background: {disabled};"
+        f" border: 1px solid {border}; }}"
     )
 
 
@@ -1357,13 +1375,20 @@ def _ka_fill_border(is_rf: bool, progress: float) -> tuple[str, str]:
     return fill, border
 
 
-def _pin_cs_chip_qss(border: str) -> str:
-    """QSS for the mouse-sync button's dark-chip states (armed/error): a recessed
-    chip with a coloured ring, brightening on hover like the off chip."""
+def _pin_cs_chip_qss(border: str,
+                     chip: "tuple[str, str, str, str] | None" = None) -> str:
+    """QSS for the mouse-sync button's chip states (armed/error): a recessed
+    chip with a coloured ring, brightening on hover like the off chip. `chip`
+    injects the palette (bg, _, hover, _); the coloured ring stays the caller's
+    `border` argument. None keeps the legacy dark chip."""
+    if chip is None:
+        bg, hover = "rgba(0,0,0,0.24)", "rgba(255,255,255,0.10)"
+    else:
+        bg, _b, hover, _d = chip
     return (
-        f"QPushButton {{ background: rgba(0,0,0,0.24);"
+        f"QPushButton {{ background: {bg};"
         f" border: 1px solid {border}; border-radius: 9px; }}"
-        f"QPushButton:hover {{ background: rgba(255,255,255,0.10); }}"
+        f"QPushButton:hover {{ background: {hover}; }}"
     )
 
 
@@ -2045,6 +2070,15 @@ class MultitoonTab(QWidget):
     def _slot_colors(self, c):
         return [c['slot_1'], c['slot_2'], c['slot_3'], c['slot_4']]
 
+    def _chip_colors(self) -> "tuple[str, str, str, str] | None":
+        """Palette chip tuple for the current theme (None = dark legacy)."""
+        from utils.theme_manager import get_theme_colors, resolve_theme
+        if resolve_theme(self.settings_manager) == "dark":
+            return None
+        c = get_theme_colors(False)
+        # keep in sync with utils/card_palette.py chip_off_hover
+        return (c["bg_card_inner_hover"], c["border_light"], "#d8dee7", c["bg_input_dark"])
+
     def refresh_theme(self):
         c = self._c()
         is_dark = resolve_theme(self.settings_manager) == "dark"
@@ -2158,9 +2192,15 @@ class MultitoonTab(QWidget):
         from utils.icon_factory import make_nav_power
         btn.setText("")
         btn.setEnabled(window_available and self.service_running)
-        ink = QColor("#ffffff") if active else QColor(255, 255, 255, 209)
+        chip = self._chip_colors()
+        if active:
+            ink = QColor("#ffffff")
+        elif chip is not None:
+            ink = QColor(c['text_disabled'])         # dark ink on the light chip
+        else:
+            ink = QColor(255, 255, 255, 209)
         btn.setIcon(make_nav_power(17, ink))
-        btn.setStyleSheet(_pin_toggle_qss(c['accent_green'], active))
+        btn.setStyleSheet(_pin_toggle_qss(c['accent_green'], active, chip=chip))
 
         self._apply_chat_btn_style(index, c)
         self._apply_keep_alive_btn_style(index, c)
@@ -2184,7 +2224,8 @@ class MultitoonTab(QWidget):
         chat_btn.setEnabled(usable)
         chat_btn.setIcon(make_chat_icon(17))
         chat_btn.setStyleSheet(
-            _pin_toggle_qss(c['accent_blue_btn'], usable and self.chat_enabled[index])
+            _pin_toggle_qss(c['accent_blue_btn'], usable and self.chat_enabled[index],
+                            chip=self._chip_colors())
         )
 
     @Slot(bool)
@@ -2314,8 +2355,10 @@ class MultitoonTab(QWidget):
             ka_btn.setToolTip(
                 "Keep-Alive is disabled. Enable it in Settings → Keep-Alive."
             )
-            ka_btn.setIcon(make_lightning_icon(13, QColor(255, 255, 255, 90)))
-            ka_btn.setStyleSheet(_pin_ka_off_qss())
+            chip = self._chip_colors()
+            ka_ink = QColor(c['text_disabled']) if chip is not None else QColor(255, 255, 255, 90)
+            ka_btn.setIcon(make_lightning_icon(13, ka_ink))
+            ka_btn.setStyleSheet(_pin_ka_off_qss(chip=chip))
             if bar:
                 bar.set_fill_color(KA_ORANGE)
                 bar.set_progress(0.0)
@@ -2332,8 +2375,10 @@ class MultitoonTab(QWidget):
             progress = compact.cell_dim_progress(index) if compact is not None else settled
             self._apply_keep_alive_dim_progress(index, progress)
         else:
-            ka_btn.setIcon(make_lightning_icon(13, QColor(255, 255, 255, 128)))
-            ka_btn.setStyleSheet(_pin_ka_off_qss())
+            chip = self._chip_colors()
+            ka_ink = QColor(c['text_disabled']) if chip is not None else QColor(255, 255, 255, 128)
+            ka_btn.setIcon(make_lightning_icon(13, ka_ink))
+            ka_btn.setStyleSheet(_pin_ka_off_qss(chip=chip))
             # Fill width is 0 when keep-alive is off.
             if bar:
                 bar.set_fill_color(KA_ORANGE)
@@ -2356,6 +2401,10 @@ class MultitoonTab(QWidget):
         ka_btn.setStyleSheet(_pin_ka_on_qss(fill, border))
         if bar:
             bar.set_fill_color(fill)
+        pal = self._compact.card_palette(index) if hasattr(self, "_compact") else None
+        if bar and pal is not None:
+            track = lerp_color(pal.track_lit, pal.track_off, max(0.0, min(1.0, progress)))
+            bar.set_bg_color(track.name())
 
     # ── Glow animations ────────────────────────────────────────────────────
 
@@ -3175,7 +3224,7 @@ class MultitoonTab(QWidget):
             btn.setEnabled(False)
             btn.setChecked(False)
             btn.setIcon(self._click_sync_icons["disabled"])
-            btn.setStyleSheet(_pin_toggle_qss(c['accent_pink'], False))
+            btn.setStyleSheet(_pin_toggle_qss(c['accent_pink'], False, chip=self._chip_colors()))
             btn.setToolTip("Click sync: no toon detected in this slot")
             return
         btn.setEnabled(True)
@@ -3184,12 +3233,12 @@ class MultitoonTab(QWidget):
         if state == "active":
             btn.setStyleSheet(_pin_toggle_qss(c['accent_pink'], True))
         elif state == "armed":
-            # Dark chip with a pink ring: armed but not yet mirroring.
-            btn.setStyleSheet(_pin_cs_chip_qss(c['accent_pink_border']))
+            # Recessed chip with a pink ring: armed but not yet mirroring.
+            btn.setStyleSheet(_pin_cs_chip_qss(c['accent_pink_border'], chip=self._chip_colors()))
         elif state == "error":
-            btn.setStyleSheet(_pin_cs_chip_qss(c['accent_red_border']))
+            btn.setStyleSheet(_pin_cs_chip_qss(c['accent_red_border'], chip=self._chip_colors()))
         else:  # off (also the unknown-state fallback)
-            btn.setStyleSheet(_pin_toggle_qss(c['accent_pink'], False))
+            btn.setStyleSheet(_pin_toggle_qss(c['accent_pink'], False, chip=self._chip_colors()))
         tips = {
             "off": "Click sync: mirror clicks to this toon",
             "armed": "Click sync: waiting for a second toon",

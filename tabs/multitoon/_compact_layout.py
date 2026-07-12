@@ -1641,6 +1641,11 @@ class _CompactLayout(QWidget):
         # MultitoonTab (single style-writer per control); the cell's dim
         # effect desaturates them in place when the card is off/stopped.
         self._style_ka_pill(cell_idx)
+        # Progress-bar track: lerp lit->off by the card's dim target so it
+        # matches the theme (light = white both endpoints; dark = #0d0d0d).
+        if i < len(tab.ka_progress_bars):
+            track = lerp_color(pal.track_lit, pal.track_off, target)
+            tab.ka_progress_bars[i].set_bg_color(track.name())
         self._style_keyset(i)
 
         # Portrait background + status dot.
@@ -1654,6 +1659,8 @@ class _CompactLayout(QWidget):
             bg=pal.keyset_off_bg, text=pal.keyset_off_text,
             border=pal.keyset_off_border, label=pal.keyset_off_label,
         )
+        if i < len(tab.feature_pills):
+            tab.feature_pills[i].set_light_chrome(pal.pill_light_chrome)
         status_dot = tab.toon_labels[i][1]
         if active:
             status_dot.set_cutout_border(pal.status_cutout.name(), width=3.0)
@@ -1679,6 +1686,12 @@ class _CompactLayout(QWidget):
         if 0 <= i < len(self._cells):
             return float(self._cells[i].get("dim_progress", 0.0))
         return 0.0
+
+    def card_palette(self, i: int):
+        """CardPalette of slot i (None before the first brand)."""
+        if 0 <= i < len(self._cells):
+            return self._cells[self._slot_to_cell[i]].get("palette")
+        return None
 
     def _apply_dim_progress(self, cell: dict, i: int, progress: float) -> None:
         """Push `progress` to every dimmed element of cell i, in lockstep."""
@@ -1727,12 +1740,17 @@ class _CompactLayout(QWidget):
         cell = self._cells[cell_idx]
         ka_pill = cell.get("ka_pill")
         if ka_pill is not None:
+            # Glass fragments come from the card palette (theme-aware); fall
+            # back to the legacy dark rgbas before the first brand lands.
+            pal = cell.get("palette")
+            glass_bg = pal.ka_glass_bg if pal is not None else "rgba(0,0,0,0.24)"
+            glass_border = pal.ka_glass_border if pal is not None else "rgba(0,0,0,0.30)"
             # Radius tracks the (scaled) pill height so the capsule stays a true
             # pill at every scale (1.0: round(38/2)==19, unchanged).
             radius = round(self._metrics.ka_pill_h / 2)
             ka_pill.setStyleSheet(
-                f"QFrame#ka_pill_{cell_idx} {{ background: rgba(0,0,0,0.24);"
-                f" border: 1px solid rgba(0,0,0,0.30); border-radius: {radius}px; }}"
+                f"QFrame#ka_pill_{cell_idx} {{ background: {glass_bg};"
+                f" border: 1px solid {glass_border}; border-radius: {radius}px; }}"
             )
 
     def _style_keyset(self, i: int) -> None:
