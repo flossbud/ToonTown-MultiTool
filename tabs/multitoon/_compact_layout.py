@@ -292,6 +292,7 @@ class _QuadCardBackground(QWidget):
         self._cutout = cutout
         self._accent = QColor("#555555")
         self._body: QColor | None = None
+        self._palette = None   # CardPalette; None = legacy dark-formula fallback
         self._dim_progress = 1.0
         self._peek_opacity = 1.0  # transparent-mode hover-peek body translucency
         # Painted-body radii + border width, sourced from a CardMetrics so the
@@ -300,11 +301,15 @@ class _QuadCardBackground(QWidget):
         self._cutout_r = CUTOUT_R
         self._border = CARD_BORDER
 
-    def configure(self, accent: QColor, body: "QColor | None" = None) -> None:
-        """Set the card's accent + optional body-fill colour. The dim LEVEL is
-        independent - see set_dim_progress()."""
+    def configure(self, accent: QColor, body: "QColor | None" = None,
+                  palette=None) -> None:
+        """Set the card's accent + optional body-fill colour, and optionally a
+        CardPalette carrying explicit lit/off endpoints. Without a palette the
+        legacy dark formulas apply (pre-brand default paint, old tests). The
+        dim LEVEL is independent - see set_dim_progress()."""
         self._accent = QColor(accent)
         self._body = QColor(body) if body is not None else None
+        self._palette = palette
         self.update()
 
     def set_dim_progress(self, t: float) -> None:
@@ -339,11 +344,18 @@ class _QuadCardBackground(QWidget):
             self.update()
 
     def _resolved_colors(self):
-        """Effective (top, bot, border) at the current _dim_progress. progress 0 ==
-        lit (unchanged), 1 == full dim_color; in between is a per-channel lerp. The
-        0.28/0.14 gradient darken is uniform and commutes with the lerp (to within
-        1-unit integer rounding at intermediate values)."""
+        """Effective (top, bot, border) at the current _dim_progress. With a
+        palette: pure endpoint lerp (0 == lit fields, 1 == off fields). Legacy
+        (no palette): base = lerp toward dim_color, then the 0.28/0.14 gradient
+        darken - identical output to the palette's dark branch at the endpoints
+        and within 1-unit rounding in between (darken_rgb commutes with lerp)."""
         t = self._dim_progress
+        p = self._palette
+        if p is not None:
+            top = lerp_color(p.body_top_lit, p.body_top_off, t)
+            bot = lerp_color(p.body_bot_lit, p.body_bot_off, t)
+            border = lerp_color(p.border_lit, p.border_off, t)
+            return top, bot, border
         base_lit = self._body if self._body is not None else self._accent
         base = lerp_color(base_lit, dim_color(base_lit), t)
         border = lerp_color(QColor(self._accent), dim_color(self._accent), t)
@@ -393,6 +405,7 @@ class _PortraitFrame(QWidget):
         self.setFixedSize(self._size, self._size)
         self.setStyleSheet("background: transparent;")
         self._ring = QColor("#555555")
+        self._palette = None   # CardPalette; None = legacy dark-formula fallback
         self._dim_progress = 1.0
         self._peek_opacity = 1.0   # extra hover-peek dim for the circular frame
 
@@ -402,8 +415,9 @@ class _PortraitFrame(QWidget):
             self._peek_opacity = opacity
             self.update()
 
-    def configure(self, ring: QColor) -> None:
+    def configure(self, ring: QColor, palette=None) -> None:
         self._ring = QColor(ring)
+        self._palette = palette
         self.update()
 
     def set_dim_progress(self, t: float) -> None:
@@ -430,7 +444,10 @@ class _PortraitFrame(QWidget):
 
     def _resolved_ring(self):
         """Effective ring colour at the current _dim_progress."""
-        return lerp_color(QColor(self._ring), dim_color(self._ring), self._dim_progress)
+        p = self._palette
+        if p is not None:
+            return lerp_color(p.border_lit, p.border_off, self._dim_progress)
+        return lerp_color(QColor(self._ring), dim_color(QColor(self._ring)), self._dim_progress)
 
     def paintEvent(self, event):
         p = QPainter(self)
