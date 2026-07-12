@@ -4,6 +4,8 @@ attribute, `append_log(message)` (now with optional `level`), and the
 credential-diagnostics passthrough (credential lines are captured even
 before Enable Logging is on, so AppImage users can inspect keyring
 behavior)."""
+from __future__ import annotations
+
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from utils.widgets.logs_console.logs_card import LogsCard
