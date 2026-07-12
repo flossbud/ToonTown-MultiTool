@@ -1349,6 +1349,9 @@ class SettingsTab(QWidget):
             self._refresh_keep_alive_enabled_state(True)
             return
         if self._show_keep_alive_warning_dialog():
+            # Record consent so neither this dialog nor the multitoon
+            # popover's inline confirm asks again on a later re-enable.
+            self.settings_manager.set("keep_alive_consent_acknowledged", True)
             self.settings_manager.set("keep_alive_enabled", True)
             self._refresh_keep_alive_enabled_state(True)
         else:
@@ -1650,6 +1653,12 @@ class SettingsTab(QWidget):
         checker.update_available.connect(self._on_check_complete_update)
         checker.no_update.connect(self._on_check_complete_no_update)
         checker.check_failed.connect(self._on_check_complete_failed)
+
+    def show_features_category(self):
+        """Switch to the Features page without pulsing any card. Target of the
+        multitoon feature popover's 'Manage features in Settings' link."""
+        self._show_category("features")
+        self.settings_manager.set(SETTINGS_ACTIVE_CATEGORY, "features")
 
     def highlight_keep_alive_group(self):
         """Switch to the Features page and pulse the Keep-Alive card's border.

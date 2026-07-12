@@ -433,6 +433,13 @@ V2_ACCENTS = {
     "purple": {"c": "#8749E0", "b": "#a87cf0"},
 }
 
+# Keep-Alive feature accent (feature-discovery popover + pill spec,
+# Redesign/design_handoff_new_feature). The theme's own orange (#c47a2a)
+# reads too brown for the lightning affordance; the design uses this
+# brighter pair. Theme-agnostic, like V2_ACCENTS.
+KEEP_ALIVE_ACCENT = "#ff9500"
+KEEP_ALIVE_ACCENT_BORDER = "#ffb04d"
+
 # Nav identity colors for the Glass Dock selected-tab tint. Exact hex from the
 # nav redesign bundle; constant across themes (like V2_ACCENTS). Blue/green
 # already match V2_ACCENTS; Launcher red + Keysets gold intentionally differ.
