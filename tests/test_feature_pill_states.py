@@ -80,3 +80,129 @@ def test_pill_release_outside_does_not_emit(qapp):
                      Qt.LeftButton, Qt.NoButton, Qt.NoModifier)
     QApplication.sendEvent(pill, ev)
     assert hits == []
+
+
+# ---- Tab integration: label state machine driven through REAL settings
+# writes (the fake fires callbacks like the real SettingsManager), never by
+# calling handlers directly (false-green law). ----
+
+from PySide6.QtCore import QObject, Signal
+from utils.settings_keys import CLICK_SYNC_ENABLED
+
+
+class _SignalingFakeSettings:
+    def __init__(self, initial=None):
+        self._data = dict(initial or {})
+        self._callbacks = []
+
+    def get(self, key, default=None):
+        return self._data.get(key, default)
+
+    def set(self, key, value):
+        self._data[key] = value
+        for cb in self._callbacks:
+            try:
+                cb(key, value)
+            except Exception:
+                pass
+
+    def on_change(self, callback):
+        self._callbacks.append(callback)
+
+
+class _FakeWindowManager(QObject):
+    window_ids_updated = Signal(list)
+
+    def __init__(self):
+        super().__init__()
+        self.ttr_window_ids = []
+
+    def get_window_ids(self):
+        return []
+
+    def clear_window_ids(self):
+        pass
+
+    def assign_windows(self):
+        pass
+
+    def enable_detection(self):
+        pass
+
+    def disable_detection(self):
+        pass
+
+
+def _tab(qapp, initial=None):
+    from tabs.multitoon_tab import MultitoonTab
+    sm = _SignalingFakeSettings(initial)
+    return MultitoonTab(settings_manager=sm, window_manager=_FakeWindowManager()), sm
+
+
+def test_pills_built_and_placed_in_all_cells(qapp):
+    tab, _ = _tab(qapp)
+    assert len(tab.feature_pills) == 4
+    for i in range(4):
+        holder = tab._compact._card_slots[i]["pill_holder"]
+        assert holder.itemAt(0).widget() is tab.feature_pills[i]
+
+
+def test_label_both_off_enable_features(qapp):
+    tab, _ = _tab(qapp)
+    for pill in tab.feature_pills:
+        assert pill.label() == "Enable features"
+        assert pill.isHidden() is False
+
+
+def test_label_one_on_more_features(qapp):
+    tab, sm = _tab(qapp)
+    sm.set(CLICK_SYNC_ENABLED, True)
+    for pill in tab.feature_pills:
+        assert pill.label() == "More features"
+
+
+def test_both_on_hides_all_pills(qapp):
+    tab, sm = _tab(qapp)
+    sm.set(CLICK_SYNC_ENABLED, True)
+    sm.set("keep_alive_enabled", True)
+    for pill in tab.feature_pills:
+        assert pill.isHidden() is True
+
+
+def test_flag_off_again_restores_pill(qapp):
+    tab, sm = _tab(qapp, {"click_sync_enabled": True, "keep_alive_enabled": True})
+    for pill in tab.feature_pills:
+        assert pill.isHidden() is True
+    sm.set("keep_alive_enabled", False)
+    for pill in tab.feature_pills:
+        assert pill.isHidden() is False
+        assert pill.label() == "More features"
+
+
+def test_popover_switch_reveals_controls_on_all_cards(qapp):
+    """The payoff moment end to end: the popover's switch write makes the
+    click-sync toggle visible on every card via the real settings chain."""
+    tab, sm = _tab(qapp)
+    assert all(btn.isHidden() for btn in tab.click_sync_buttons)
+    tab._open_feature_popover(0)
+    tab._feature_popover._on_switch_clicked("sync")
+    assert all(not btn.isHidden() for btn in tab.click_sync_buttons)
+    tab._feature_popover.hide()
+
+
+def test_popover_open_syncs_and_reflects_external_change(qapp):
+    tab, sm = _tab(qapp)
+    tab._open_feature_popover(0)
+    assert tab._feature_popover._switches["sync"]._checked is False
+    sm.set(CLICK_SYNC_ENABLED, True)   # e.g. Settings page flipped it
+    assert tab._feature_popover._switches["sync"]._checked is True
+    tab._feature_popover.hide()
+
+
+def test_footer_signal_reaches_tab_signal(qapp):
+    tab, _ = _tab(qapp)
+    hits = []
+    tab.features_settings_requested.connect(lambda: hits.append(True))
+    tab._open_feature_popover(0)
+    tab._feature_popover._footer_btn.click()
+    assert hits == [True]

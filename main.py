@@ -710,8 +710,8 @@ class MultiToonTool(QMainWindow):
         self.multitoon_tab.toggle_service_button.clicked.connect(
             lambda _checked=False: self._refresh_header_session_status()
         )
-        self.multitoon_tab.keep_alive_help_requested.connect(
-            self._on_keep_alive_help_requested
+        self.multitoon_tab.features_settings_requested.connect(
+            self._on_features_settings_requested
         )
         self.multitoon_tab.keep_alive_inhibit_status.connect(
             self._on_keep_alive_inhibit_status
@@ -1774,11 +1774,11 @@ class MultiToonTool(QMainWindow):
         self.log("[Credentials] All stored credentials have been cleared from Keyring and session memory.")
 
     @Slot()
-    def _on_keep_alive_help_requested(self):
-        """User clicked 'Go to Settings' in the Keep-Alive help popover.
-        Navigate to the Settings tab and highlight the Keep-Alive group."""
-        self.nav_select(2)  # Settings tab index — see stack widget order in __init__
-        self.settings_tab.highlight_keep_alive_group()
+    def _on_features_settings_requested(self):
+        """User clicked 'Manage features in Settings' in the multitoon
+        feature popover. Navigate to Settings -> Features."""
+        self.nav_select(2)  # Settings tab index - see stack widget order in __init__
+        self.settings_tab.show_features_category()
 
     def _on_keep_alive_inhibit_status(self, status):
         """Show a one-time-per-launch warning when Keep-Alive is running but the
