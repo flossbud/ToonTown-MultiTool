@@ -84,8 +84,8 @@ def test_light_off_is_paper_tokens():
     assert p.keyset_off_label == QColor(c["text_muted"])
     assert p.ka_glass_bg == "rgba(0,0,0,0.06)"
     assert p.ka_glass_border == "rgba(0,0,0,0.13)"
-    assert p.track_lit == lighten_rgb(TTR, 0.48)
-    assert p.track_off == QColor(c["bg_input_dark"])
+    assert p.track_lit == QColor(c["bg_card"])
+    assert p.track_off == QColor(c["bg_card"])
     assert p.pill_light_chrome is True
     assert (p.pixmap_sat, p.pixmap_bright) == (0.35, 1.0)
 

@@ -28,7 +28,6 @@ LIGHT_PIXMAP_SAT, LIGHT_PIXMAP_BRIGHT = 0.35, 1.0   # desaturate, never darken
 # Vivid lit mix fractions (2026-07-09 spec; mirror of dark's 0.28/0.14 family).
 VIVID_TOP_F, VIVID_BOT_F = 0.58, 0.72
 VIVID_BADGE_F = 0.50
-VIVID_TRACK_F = 0.48
 
 
 @dataclass(frozen=True)
@@ -152,8 +151,11 @@ def card_palette(
         keyset_off_label=QColor(c["text_muted"]),
         ka_glass_bg="rgba(0,0,0,0.06)",
         ka_glass_border="rgba(0,0,0,0.13)",
-        track_lit=lighten_rgb(base, VIVID_TRACK_F),
-        track_off=QColor(c["bg_input_dark"]),
+        # User amendment 2026-07-12: the unfilled track reads WHITE in light
+        # mode (both states), not a toon tint / paper token. bg_card is the
+        # light theme's white surface token.
+        track_lit=QColor(c["bg_card"]),
+        track_off=QColor(c["bg_card"]),
         status_cutout=QColor(top_lit),
         chip_off_bg=c["bg_card_inner_hover"],          # #e2e8f0 solid
         chip_off_border=c["border_light"],             # #cbd5e1
