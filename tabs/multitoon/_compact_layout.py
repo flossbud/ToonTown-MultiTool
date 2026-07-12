@@ -1565,7 +1565,8 @@ class _CompactLayout(QWidget):
             return
         from utils.theme_manager import get_theme_colors, resolve_theme
         from utils.toon_customization_resolve import resolve_accent
-        c = get_theme_colors(resolve_theme(self._tab.settings_manager) == "dark")
+        is_dark = resolve_theme(self._tab.settings_manager) == "dark"
+        c = get_theme_colors(is_dark)
         # Slot i's content lives in shell _slot_to_cell[i] (identity unless a
         # non-contiguous arrangement routed it elsewhere). Chrome for this slot
         # goes onto that shell; the shared per-slot widgets stay indexed by i.
@@ -1591,6 +1592,9 @@ class _CompactLayout(QWidget):
             accent = QColor(c["border_light"])
         from utils.toon_customization_resolve import resolve_body
         body_override = resolve_body(entry)
+        from utils.card_palette import card_palette
+        pal = card_palette(accent, body_override, c, is_dark)
+        cell["palette"] = pal
 
         from utils.effects_flags import effects_disabled
         active = bool(enabled) and window_available and is_toon
@@ -1602,8 +1606,8 @@ class _CompactLayout(QWidget):
 
         # Colours are set unconditionally; the dim LEVEL is driven separately so
         # it can animate. (configure no longer takes a dimmed flag - see Task 2.)
-        cell["bg"].configure(accent, body=body_override)
-        cell["portrait_frame"].configure(accent)
+        cell["bg"].configure(accent, body=body_override, palette=pal)
+        cell["portrait_frame"].configure(accent, palette=pal)
         self._purge_legacy_cell_effect(cell)
 
         prev = cell.get("dim_target")
@@ -1641,10 +1645,10 @@ class _CompactLayout(QWidget):
 
         # Portrait background + status dot.
         tab.slot_badges[i].set_border_color(None)
-        tab.slot_badges[i].set_colors("#101010", "#ffffff")
+        tab.slot_badges[i].set_colors(pal.badge_bg_lit.name(), pal.badge_ink_lit.name())
         status_dot = tab.toon_labels[i][1]
         if active:
-            status_dot.set_cutout_border(darken_rgb(accent, 0.21).name(), width=3.0)
+            status_dot.set_cutout_border(pal.status_cutout.name(), width=3.0)
             status_dot.set_state("active", "Connected")
             status_dot.show()
         else:
@@ -1680,15 +1684,27 @@ class _CompactLayout(QWidget):
             tab.set_selectors[i].set_dim_progress(progress)
         if i < len(tab.feature_pills):
             tab.feature_pills[i].set_dim_progress(progress)
-        # Name/stat text: white mutes via alpha (dim_color would mis-tint white).
-        name_a = 1.0 + (0.62 - 1.0) * progress
-        stat_a = 0.9 + (0.5 - 0.9) * progress
+        # Name/stat ink: lerp rgb + alpha between the palette's lit and off
+        # endpoints. Dark palette = white with the legacy 1.0->0.62 / 0.9->0.5
+        # alpha ramp, producing byte-identical stylesheets.
+        pal = cell.get("palette")
+        if pal is not None:
+            name_rgb = lerp_color(pal.name_rgb_lit, pal.name_rgb_off, progress)
+            name_a = pal.name_a_lit + (pal.name_a_off - pal.name_a_lit) * progress
+            stat_rgb = lerp_color(pal.stat_rgb_lit, pal.stat_rgb_off, progress)
+            stat_a = pal.stat_a_lit + (pal.stat_a_off - pal.stat_a_lit) * progress
+        else:
+            name_rgb = stat_rgb = QColor("#ffffff")
+            name_a = 1.0 + (0.62 - 1.0) * progress
+            stat_a = 0.9 + (0.5 - 0.9) * progress
         tab.toon_labels[i][0].setStyleSheet(
-            f"background: transparent; border: none; color: rgba(255,255,255,{name_a:.3f});"
+            "background: transparent; border: none; "
+            f"color: rgba({name_rgb.red()},{name_rgb.green()},{name_rgb.blue()},{name_a:.3f});"
         )
         stat_style = (
             "background: transparent; border: none; text-align: left; "
-            f"padding: 0; color: rgba(255,255,255,{stat_a:.3f}); font-weight: 600;"
+            f"padding: 0; color: rgba({stat_rgb.red()},{stat_rgb.green()},{stat_rgb.blue()},{stat_a:.3f}); "
+            "font-weight: 600;"
         )
         tab.laff_labels[i].setStyleSheet(stat_style)
         tab.bean_labels[i].setStyleSheet(stat_style)
