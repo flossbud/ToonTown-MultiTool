@@ -218,8 +218,14 @@ class FeatureDiscoveryPopover(QWidget):
         self._tos_confirm.setObjectName("fp_tos_confirm")
         self._tos_confirm.setCursor(Qt.PointingHandCursor)
         self._tos_confirm.clicked.connect(self._on_tos_confirm)
-        btns.addWidget(self._tos_cancel, 10)
-        btns.addWidget(self._tos_confirm, 14)   # 1 : 1.4 flex per the bundle
+        # Confirm gets NO stretch: with stretch factors the layout allocates
+        # proportionally and can starve the button below its text width
+        # (live finding: "I understand, enable" clipped at the box's font
+        # metrics). Stretch 0 + QPushButton's Minimum policy make the size
+        # hint a hard floor, so the label can never clip; Cancel absorbs the
+        # remaining width (visually close to the bundle's 1 : 1.4).
+        btns.addWidget(self._tos_cancel, 1)
+        btns.addWidget(self._tos_confirm, 0)
         lay.addLayout(btns)
         return panel
 

@@ -193,3 +193,18 @@ def test_open_at_clamps_to_screen(qapp):
     assert _panel_top(pop) >= geo.top()
     assert _panel_bottom(pop) <= geo.bottom()
     pop.hide()
+
+
+def test_tos_confirm_button_never_starved_below_hint(qapp):
+    """Regression (live finding): fixed stretch factors starved the confirm
+    button below its text width at the box's font metrics, clipping the
+    label. The layout must always grant at least the size hint."""
+    from PySide6.QtCore import QRect
+    sm = _SignalingFakeSettings()
+    pop = _popover(sm)
+    pop.open_at(QRect(400, 300, 158, 38), above=False)
+    pop._on_switch_clicked("ka")   # expand the ToS panel
+    qapp.processEvents()
+    btn = pop._tos_confirm
+    assert btn.width() >= btn.sizeHint().width()
+    pop.hide()
