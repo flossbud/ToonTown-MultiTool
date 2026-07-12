@@ -1661,8 +1661,7 @@ class SettingsTab(QWidget):
         self.settings_manager.set(SETTINGS_ACTIVE_CATEGORY, "features")
 
     def highlight_keep_alive_group(self):
-        """Switch to the Features page and pulse the Keep-Alive card's border.
-        Called by Launch-tab's per-slot help affordance."""
+        """Switch to the Features page and pulse the Keep-Alive card's border."""
         self._show_category("features")
         self.settings_manager.set(SETTINGS_ACTIVE_CATEGORY, "features")
         card = getattr(self, "_keep_alive_panel", None)

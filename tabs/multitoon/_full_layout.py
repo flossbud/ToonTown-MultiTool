@@ -806,7 +806,7 @@ class _FullContent(QWidget):
         )
 
         # Buttons: constructor defaults are 88x32 enable, 32x32
-        # chat/KA/help, 14px icons.
+        # chat/KA, 14px icons.
         self._tab.toon_buttons[i].setFixedHeight(32)
         self._tab.toon_buttons[i].setFixedWidth(88)
         self._tab.chat_buttons[i].setFixedHeight(32)
@@ -815,14 +815,9 @@ class _FullContent(QWidget):
         self._tab.click_sync_buttons[i].setFixedWidth(32)
         self._tab.keep_alive_buttons[i].setFixedHeight(32)
         self._tab.keep_alive_buttons[i].setFixedWidth(32)
-        # Help button: keep it at the same 32×32 reference as chat/KA so
-        # the discovery affordance reads in the same row geometry.
-        self._tab.help_buttons[i].setFixedHeight(32)
-        self._tab.help_buttons[i].setFixedWidth(32)
         self._tab.chat_buttons[i].setIconSize(QSize(14, 14))
         self._tab.click_sync_buttons[i].setIconSize(QSize(14, 14))
         self._tab.keep_alive_buttons[i].setIconSize(QSize(14, 14))
-        self._tab.help_buttons[i].setIconSize(QSize(14, 14))
         self._tab.laff_labels[i].setIconSize(QSize(17, 17))
         self._tab.bean_labels[i].setIconSize(QSize(17, 17))
 
@@ -900,7 +895,6 @@ class _FullContent(QWidget):
         slot["ctrl_row"].addWidget(self._tab.toon_buttons[i])
         slot["ka_group_layout"].addWidget(self._tab.chat_buttons[i])
         slot["ka_group_layout"].addWidget(self._tab.click_sync_buttons[i])
-        slot["ka_group_layout"].addWidget(self._tab.help_buttons[i])
         slot["ka_group_layout"].addWidget(self._tab.keep_alive_buttons[i])
         slot["ka_group_layout"].addWidget(self._tab.ka_progress_bars[i], 1)
         slot["middle"].addWidget(slot["ka_group"], 1)
@@ -1065,20 +1059,16 @@ class _FullContent(QWidget):
     def _collapsed_ka_group_width(self, slot_index: int) -> int:
         """Width that ka_group must hold when KA is collapsed.
 
-        ka_group's row contains chat + click-sync + help + (hidden ka +
-        hidden bar). When collapsed, chat and help are visible (plus the
-        click-sync button when its master switch shows it), so the frame
-        must be wide enough to fit them plus inter-widget spacing plus
-        contentsMargins.
+        ka_group's row contains chat + click-sync + (hidden ka + hidden
+        bar). When collapsed, only chat is visible (plus the click-sync
+        button when its master switch shows it), so the frame must be wide
+        enough to fit them plus inter-widget spacing plus contentsMargins.
 
         Each child's effective layout width is its `sizeHint().width()`
         clamped into `[minimumWidth, maximumWidth]`. Children with
         setFixedWidth/setFixedSize have min == max == fixed value, so the
         clamp pulls the sizeHint to the constrained value — matching how
-        Qt itself computes the parent's natural sizeHint. Without the
-        clamp, KeepAliveHelpButton (whose QToolButton sizeHint is 26 for
-        an empty button while its setFixedSize forces 32) under-allocates
-        and the help button is clipped on the right.
+        Qt itself computes the parent's natural sizeHint.
         """
         def _layout_width(w):
             sh = w.sizeHint().width()
@@ -1088,16 +1078,9 @@ class _FullContent(QWidget):
 
         chat_btn = self._tab.chat_buttons[slot_index]
         cs_btn = self._tab.click_sync_buttons[slot_index]
-        help_btn = self._tab.help_buttons[slot_index]
         layout = self._card_slots[slot_index]["ka_group"].layout()
         margins = layout.contentsMargins()
-        width = (
-            _layout_width(chat_btn)
-            + _layout_width(help_btn)
-            + layout.spacing()
-            + margins.left()
-            + margins.right()
-        )
+        width = _layout_width(chat_btn) + margins.left() + margins.right()
         # The click-sync button only takes layout space when shown by the
         # Settings master switch. isHidden() (not isVisible()) matches how
         # QLayout allocates space — isVisible() is False for the whole tree
@@ -1161,10 +1144,9 @@ class _FullContent(QWidget):
             ka_btn = self._tab.keep_alive_buttons[i]
             ka_bar = self._tab.ka_progress_bars[i]
 
-            # Width ka_group needs when collapsed (chat + help visible). See
-            # _collapsed_ka_group_width — formula must include the help
-            # button now that v2.1.1's discovery affordance occupies the slot
-            # alongside chat whenever KA is master-disabled.
+            # Width ka_group needs when collapsed (chat-only, plus
+            # click-sync when its master switch shows it). See
+            # _collapsed_ka_group_width.
             chat_only_width = self._collapsed_ka_group_width(i)
 
             if target_visible:

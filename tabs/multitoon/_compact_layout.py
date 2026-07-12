@@ -1203,14 +1203,11 @@ class _CompactLayout(QWidget):
             self._populate_cell(i, cell)
 
         # Hidden-but-alive shared widgets the pinwheel design omits (kept so
-        # MultitoonTab's logic and hotkeys keep working): the CC/TTR chip, the
-        # click-sync help affordance, and the profile/config row.
+        # MultitoonTab's logic and hotkeys keep working): the CC/TTR chip and
+        # the profile/config row.
         for i in range(4):
             if i < len(self._tab.game_badges):
                 self._tab.game_badges[i].hide()
-            if i < len(self._tab.help_buttons):
-                self._tab.help_buttons[i].setParent(self._cells[i]["cell"])
-                self._tab.help_buttons[i].hide()
         for w in (
             getattr(self._tab, "config_label", None),
             getattr(self._tab, "profile_pills_label", None),
