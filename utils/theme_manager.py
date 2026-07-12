@@ -1051,9 +1051,21 @@ def _color_scheme_from_portal(timeout: float = 1.0) -> str | None:
     value = body[0]
     while isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], str):
         value = value[1]
+    return _portal_value_to_scheme(value)
+
+
+def _portal_value_to_scheme(value) -> "str | None":
+    """Map an org.freedesktop.appearance color-scheme value to 'dark'/'light'.
+
+    Per the spec: 0 = no preference, 1 = prefer dark, 2 = prefer light.
+    No-preference reads as LIGHT: GNOME reports 0 for its default (light)
+    appearance, and desktops universally render no-preference as the light
+    look. The old 0 -> None mapping made a light GNOME system fall through
+    to the palette heuristic, which echoes the app's own theme (the
+    system->dark->system trap, live-found 2026-07-12)."""
     if value == 1:
         return "dark"
-    if value == 2:
+    if value in (0, 2):
         return "light"
     return None
 
@@ -1067,6 +1079,13 @@ def _color_scheme_from_portal(timeout: float = 1.0) -> str | None:
 # without a Qt platform theme plugin (1 s blocking D-Bus per paint).
 _SYSTEM_COLOR_SCHEME_CACHE: tuple[str, float] | None = None
 _SYSTEM_COLOR_SCHEME_CACHE_TTL: float = 1.0
+
+# Last scheme obtained from an HONEST source: Qt styleHints, the portal, or
+# the pristine (pre-apply_theme) palette. Consulted when every detector goes
+# quiet while the app owns its palette - reading the live palette then would
+# echo apply_theme()'s own output back as "the OS", so a single manual Dark
+# pinned "System" to dark forever (live-found 2026-07-12).
+_OS_SCHEME_LAST_HONEST: "str | None" = None
 
 
 def invalidate_system_color_scheme_cache() -> None:
@@ -1091,19 +1110,26 @@ def detect_system_color_scheme() -> str:
     Result is memoised for _SYSTEM_COLOR_SCHEME_CACHE_TTL seconds; the cache
     is invalidated explicitly by SystemThemeWatcher and ages out on the TTL.
     """
-    global _SYSTEM_COLOR_SCHEME_CACHE
+    global _SYSTEM_COLOR_SCHEME_CACHE, _OS_SCHEME_LAST_HONEST
     cached = _SYSTEM_COLOR_SCHEME_CACHE
     if cached is not None and time.monotonic() - cached[1] < _SYSTEM_COLOR_SCHEME_CACHE_TTL:
         return cached[0]
     answer = _color_scheme_from_qt()
     if answer is None:
         answer = _color_scheme_from_portal()
-    if answer is None:
+    if answer is not None:
+        _OS_SCHEME_LAST_HONEST = answer
+    else:
         app = QApplication.instance()
-        if app is not None:
+        if app is not None and _APPLIED_THEME is None:
+            # Pristine palette: apply_theme() has not overridden it yet, so
+            # it still reflects whatever the platform handed us at startup.
             answer = "dark" if app.palette().color(QPalette.Base).value() < 128 else "light"
+            _OS_SCHEME_LAST_HONEST = answer
         else:
-            answer = "light"
+            # The app owns its palette now (apply_theme ran); reading it back
+            # would echo OUR theme, not the OS. Hold the last honest value.
+            answer = _OS_SCHEME_LAST_HONEST or "light"
     _SYSTEM_COLOR_SCHEME_CACHE = (answer, time.monotonic())
     return answer
 
