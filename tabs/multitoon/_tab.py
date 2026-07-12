@@ -4013,6 +4013,19 @@ class MultitoonTab(QWidget):
         if self._mode == "full" and hasattr(self, "_full") and self._full is not None:
             self._full._animate_keep_alive_visibility(target_visible)
         elif hasattr(self, "_compact"):
+            # The pinwheel snaps. Write the shared per-slot widgets in the
+            # SAME transition that snaps the container: the gate above
+            # (_maybe_animate_keep_alive_visibility) tracks the BUTTON's
+            # hidden state, so every actuator run must write it or the gate
+            # desyncs and later transitions early-return, leaving an empty
+            # shown capsule (live finding: on -> off -> on lost the
+            # controls). Mirrors _reconcile_keep_alive_visibility_instant's
+            # lockstep shape.
+            for i in range(4):
+                if i < len(self.keep_alive_buttons):
+                    self.keep_alive_buttons[i].setVisible(target_visible)
+                if i < len(self.ka_progress_bars):
+                    self.ka_progress_bars[i].setVisible(target_visible)
             self._compact._animate_keep_alive_visibility(target_visible)
         else:
             for i in range(4):
