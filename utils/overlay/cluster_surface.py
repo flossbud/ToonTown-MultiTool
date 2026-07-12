@@ -297,9 +297,20 @@ class RadialSurface(ClusterSurface):
     the controller additionally pins this surface above the cluster with
     WM_TRANSIENT_FOR - see ClusterOverlayController._pin_surface_above_cluster
     (GNOME 50 live probe, 2026-07-12).
+
+    The (c) guarantee is ALSO KWin-only, and the DOCK fallback below restores
+    it on mutter: _NET_WM_WINDOW_TYPE is an ordered preference list and mutter
+    takes the first atom it RECOGNIZES, so KWin still matches the KDE OSD atom
+    (behavior unchanged) while mutter types the surface DOCK - exempt, like
+    the cluster, from constrain_titlebar_visible/fully_onscreen, which
+    otherwise clamp the canvas's top edge to the workarea and shove the ring
+    off the emblem near the top screen edge (GNOME 50 live: requested
+    y=-115, clamped to y=0). Same keep-above TOP layer on mutter as before;
+    the transient pin still orders it above the cluster within that layer.
     """
 
     WM_WINDOW_TYPE = "_KDE_NET_WM_WINDOW_TYPE_ON_SCREEN_DISPLAY"
+    WM_WINDOW_TYPE_FALLBACKS = ("_NET_WM_WINDOW_TYPE_DOCK",)
 
 
 class PanelSurface(ClusterSurface):
@@ -328,9 +339,14 @@ class PanelSurface(ClusterSurface):
     same-layer siblings; their relative order is click-to-front UX, not a
     correctness invariant - the hard invariant (both above the cluster, so
     the internal dim can never cover either) holds by layer.
+
+    Same mutter DOCK fallback + WM_TRANSIENT_FOR pin as the radial (see
+    ``RadialSurface``): on GNOME the OSD atom is unrecognized, so the layer
+    and clamp-exemption guarantees need the fallback type and the pin.
     """
 
     WM_WINDOW_TYPE = "_KDE_NET_WM_WINDOW_TYPE_ON_SCREEN_DISPLAY"
+    WM_WINDOW_TYPE_FALLBACKS = ("_NET_WM_WINDOW_TYPE_DOCK",)
 
     def set_shape_refresh(self, callback) -> None:
         """Register a controller callback invoked on every resize so the click

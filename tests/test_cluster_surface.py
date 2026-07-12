@@ -397,3 +397,15 @@ def test_content_unblank_repaints_before_opacity(qapp):
     assert events == [("repaint",), ("opacity", 1.0)]
     s.hide()
     s.deleteLater()
+
+
+def test_radial_and_panel_declare_mutter_dock_fallback_type(qapp):
+    """The radial/panel _NET_WM_WINDOW_TYPE must stay an ordered pair: the KDE
+    OSD atom FIRST (KWin's probed layer/animation/clamp matrix depends on it)
+    with the DOCK fallback SECOND (mutter takes the first atom it recognizes;
+    without it the surface types NORMAL/DIALOG and mutter's titlebar-visible
+    constraint clamps the canvas's top edge to the workarea, shoving the ring
+    off the emblem near the top screen edge - GNOME 50 live, 2026-07-12)."""
+    for cls in (RadialSurface, PanelSurface):
+        assert cls.WM_WINDOW_TYPE == "_KDE_NET_WM_WINDOW_TYPE_ON_SCREEN_DISPLAY"
+        assert cls.WM_WINDOW_TYPE_FALLBACKS == ("_NET_WM_WINDOW_TYPE_DOCK",)

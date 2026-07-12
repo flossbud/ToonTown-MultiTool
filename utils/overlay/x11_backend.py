@@ -104,16 +104,28 @@ class X11OverlayBackend(OverlayBackend):
                 X.PropModeReplace,
             )
             wtype = getattr(window, "WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DOCK")
+            # _NET_WM_WINDOW_TYPE is an ordered PREFERENCE LIST: the WM takes
+            # the first atom it recognizes. KWin knows the KDE OSD atom and
+            # keeps its probed layer behavior; mutter does not (it skips
+            # unknown atoms - window-props.c reload_net_wm_window_type), so
+            # without a recognized fallback it types the surface NORMAL (or
+            # DIALOG once WM_TRANSIENT_FOR is set) and constrain_titlebar_
+            # visible clamps its top edge to the workarea - which shoved the
+            # ring canvas 115px off the emblem when the anchor sat near the
+            # top screen edge (GNOME 50 live, 2026-07-12). Surfaces declare
+            # mutter-recognized fallbacks via WM_WINDOW_TYPE_FALLBACKS.
+            wtype_fallbacks = getattr(window, "WM_WINDOW_TYPE_FALLBACKS", ())
             win.change_property(
                 a("_NET_WM_WINDOW_TYPE"),
                 Xatom.ATOM,
                 32,
-                [a(wtype)],
+                [a(wtype)] + [a(f) for f in wtype_fallbacks],
                 X.PropModeReplace,
             )
             d.flush()
             overlay_trace("x11 set_initial_state: pre-map _NET_WM_STATE"
-                          f"(above+skip) + _NET_WM_WINDOW_TYPE({wtype}) applied")
+                          f"(above+skip) + _NET_WM_WINDOW_TYPE({wtype}"
+                          f"{''.join(',' + f for f in wtype_fallbacks)}) applied")
         except Exception:
             pass
 
