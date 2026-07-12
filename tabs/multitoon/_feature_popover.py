@@ -35,6 +35,13 @@ _PAD = 14
 _RADIUS = 12
 _FADE_MS = 140
 _ANCHOR_GAP = 8
+# Painted drop-shadow envelope (spec: 0 12px 32px rgba(0,0,0,0.55)). The
+# popup is translucent, so the panel sits inside a transparent margin the
+# shadow is painted into. Painted, never QGraphicsDropShadowEffect (house
+# law: no graphics effects alongside custom paint).
+_SHADOW_PAD = 28
+_SHADOW_YOFF = 6
+_SHADOW_LAYERS = 14
 
 
 def prefer_above(anchor_center_y: int, screen_center_y: int) -> bool:
@@ -97,12 +104,13 @@ class FeatureDiscoveryPopover(QWidget):
         self._fade.setStartValue(0.0)
         self._fade.setEndValue(1.0)
         self._build()
-        self.setFixedWidth(_WIDTH)
+        self.setFixedWidth(_WIDTH + 2 * _SHADOW_PAD)
 
     # -- structure -------------------------------------------------------------
     def _build(self) -> None:
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setContentsMargins(_SHADOW_PAD, _SHADOW_PAD,
+                                 _SHADOW_PAD, _SHADOW_PAD)
         self._panel = QFrame(self)
         self._panel.setObjectName("feature_popover_panel")
         outer.addWidget(self._panel)
@@ -284,6 +292,25 @@ class FeatureDiscoveryPopover(QWidget):
         self.raise_()
         self._fade.start()
 
+    def paintEvent(self, event):
+        # Soft shadow: layered rounded rects fading outward, biased downward
+        # by _SHADOW_YOFF. The opaque panel covers the stack's center.
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QPainter
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        panel = QRectF(self._panel.geometry())
+        for i in range(_SHADOW_LAYERS, 0, -1):
+            t = i / _SHADOW_LAYERS          # 1.0 outermost -> ~0 tightest
+            spread = t * (_SHADOW_PAD - 6)
+            alpha = round(4 + 52 * (1.0 - t) ** 1.5)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(0, 0, 0, alpha))
+            rect = panel.adjusted(-spread, -spread + _SHADOW_YOFF,
+                                  spread, spread + _SHADOW_YOFF)
+            p.drawRoundedRect(rect, _RADIUS + spread, _RADIUS + spread)
+        p.end()
+
     def showEvent(self, event):
         # A bare show() (no open_at) must still render styled and in sync.
         super().showEvent(event)
@@ -298,13 +325,17 @@ class FeatureDiscoveryPopover(QWidget):
         anchor = self._anchor_rect
         screen = QGuiApplication.screenAt(anchor.center())
         geo = screen.availableGeometry() if screen else QRect(0, 0, 1920, 1080)
+        # Anchor gap and screen clamps apply to the visible PANEL, not the
+        # transparent shadow margin around it.
         x = anchor.center().x() - self.width() // 2
-        x = max(geo.left() + 4, min(x, geo.right() - self.width() - 4))
+        x = max(geo.left() + 4 - _SHADOW_PAD,
+                min(x, geo.right() - self.width() + _SHADOW_PAD - 4))
         if self._above:
-            y = anchor.top() - _ANCHOR_GAP - self.height()
+            y = anchor.top() - _ANCHOR_GAP - self.height() + _SHADOW_PAD
         else:
-            y = anchor.bottom() + _ANCHOR_GAP
-        y = max(geo.top() + 4, min(y, geo.bottom() - self.height() - 4))
+            y = anchor.bottom() + _ANCHOR_GAP - _SHADOW_PAD
+        y = max(geo.top() + 4 - _SHADOW_PAD,
+                min(y, geo.bottom() - self.height() + _SHADOW_PAD - 4))
         self.move(x, y)
 
     # -- theming ------------------------------------------------------------------

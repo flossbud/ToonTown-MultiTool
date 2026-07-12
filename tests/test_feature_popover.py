@@ -147,6 +147,16 @@ def test_reopen_resets_tos_panel(qapp):
     pop.hide()
 
 
+def _panel_top(pop):
+    # Placement asserts target the visible PANEL: the widget itself carries a
+    # transparent painted-shadow margin around it.
+    return pop.y() + pop._panel.geometry().top()
+
+
+def _panel_bottom(pop):
+    return pop.y() + pop._panel.geometry().bottom()
+
+
 def test_open_at_places_above_and_below_anchor(qapp):
     from PySide6.QtCore import QRect
     from PySide6.QtGui import QGuiApplication
@@ -158,11 +168,11 @@ def test_open_at_places_above_and_below_anchor(qapp):
     geo = QGuiApplication.primaryScreen().availableGeometry()
     anchor = QRect(geo.center().x() - 79, geo.center().y() - 19, 158, 38)
     pop.open_at(anchor, above=False)
-    assert pop.y() >= anchor.bottom()
+    assert _panel_top(pop) >= anchor.bottom()
     below_y = pop.y()
     pop.hide()
     pop.open_at(anchor, above=True)
-    assert pop.y() + pop.height() <= anchor.top()
+    assert _panel_bottom(pop) <= anchor.top()
     assert pop.y() < below_y
     pop.hide()
 
@@ -180,6 +190,6 @@ def test_open_at_clamps_to_screen(qapp):
     # near-bottom anchor still cannot fit and must clamp.
     anchor = QRect(geo.center().x() - 79, geo.bottom() - 60, 158, 38)
     pop.open_at(anchor, above=False)
-    assert pop.y() >= geo.top()
-    assert pop.y() + pop.height() <= geo.bottom()
+    assert _panel_top(pop) >= geo.top()
+    assert _panel_bottom(pop) <= geo.bottom()
     pop.hide()
