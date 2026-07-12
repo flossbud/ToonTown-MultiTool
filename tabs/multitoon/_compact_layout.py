@@ -1650,6 +1650,10 @@ class _CompactLayout(QWidget):
             sat=pal.pixmap_sat, bright=pal.pixmap_bright,
             bg_off=pal.badge_bg_off, ink_off=pal.badge_ink_off,
         )
+        tab.set_selectors[i].set_off_colors(
+            bg=pal.keyset_off_bg, text=pal.keyset_off_text,
+            border=pal.keyset_off_border, label=pal.keyset_off_label,
+        )
         status_dot = tab.toon_labels[i][1]
         if active:
             status_dot.set_cutout_border(pal.status_cutout.name(), width=3.0)

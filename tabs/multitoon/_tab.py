@@ -895,6 +895,10 @@ class SetSelectorWidget(QWidget):
         self._toon_game: str | None = None  # set by parent tab via set_toon_game()
         self._has_conflict: bool = False
         self._conflict_tooltip: str = ""
+        self._off_bg = None      # QColor endpoints injected by the style-writer;
+        self._off_text = None    # None -> legacy dim_color() self-derivation
+        self._off_border = None
+        self._off_label = None
 
         self.setFixedHeight(38)
         self.setMinimumWidth(130)
@@ -917,13 +921,33 @@ class SetSelectorWidget(QWidget):
     def set_dimmed(self, on: bool) -> None:
         self.set_dim_progress(1.0 if on else 0.0)
 
+    def set_off_colors(self, bg=None, text=None, border=None, label=None) -> None:
+        """Inject theme-aware OFF endpoints (all-or-nothing per the palette;
+        pass all four or none). None reverts to the legacy dim_color path."""
+        new = (bg, text, border, label)
+        if new == (self._off_bg, self._off_text, self._off_border, self._off_label):
+            return
+        self._off_bg = QColor(bg) if bg is not None else None
+        self._off_text = QColor(text) if text is not None else None
+        self._off_border = QColor(border) if border is not None else None
+        self._off_label = QColor(label) if label is not None else None
+        self.update()
+
     def _resolved_colors(self):
         """Effective (bg, text, border) QColors at the current _dim_progress."""
         t = self._dim_progress
-        bg = lerp_color(QColor(self._bg), dim_color(QColor(self._bg)), t)
-        text = lerp_color(QColor(self._text_color), dim_color(QColor(self._text_color)), t)
-        border = lerp_color(QColor(self._border_color), dim_color(QColor(self._border_color)), t)
+        bg_off = self._off_bg if self._off_bg is not None else dim_color(QColor(self._bg))
+        text_off = self._off_text if self._off_text is not None else dim_color(QColor(self._text_color))
+        border_off = self._off_border if self._off_border is not None else dim_color(QColor(self._border_color))
+        bg = lerp_color(QColor(self._bg), bg_off, t)
+        text = lerp_color(QColor(self._text_color), text_off, t)
+        border = lerp_color(QColor(self._border_color), border_off, t)
         return bg, text, border
+
+    def _resolved_label_color(self) -> QColor:
+        white = QColor("#ffffff")
+        off = self._off_label if self._off_label is not None else dim_color(white)
+        return lerp_color(white, off, self._dim_progress)
 
     def set_has_conflict(self, has: bool, conflict_pairs: list[tuple[str, str]] | None = None):
         if has == self._has_conflict:
@@ -1017,8 +1041,7 @@ class SetSelectorWidget(QWidget):
         p.setFont(font)
         text_rect = QRectF(az, 0, self.width() - az * 2, self.height())
         if self._enabled:
-            white = QColor("#ffffff")
-            label_color = lerp_color(white, dim_color(white), self._dim_progress)
+            label_color = self._resolved_label_color()
         else:
             label_color = text_c
         p.setPen(with_alpha("#000000", 0.4))
