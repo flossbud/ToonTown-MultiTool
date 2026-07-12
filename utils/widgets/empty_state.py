@@ -66,7 +66,14 @@ class EmptyState(QWidget):
             "official launcher above if you just want to update."
         )
         self.subtitle_label.setWordWrap(True)
-        self.subtitle_label.setMaximumWidth(330)
+        # FIXED width, not maximum: the wrap width must be the same in both
+        # layout passes. With a max width, QVBoxLayout's heightForWidth pass
+        # budgets this row at the FULL body width (2 wrapped lines) while the
+        # arrange pass clamps the label to its much narrower size hint (~5
+        # lines) - the center-aligned text then paints clipped at both ends
+        # (fresh-install screenshot, Fedora/GNOME 2026-07-12; the mismatch is
+        # font-independent). A fixed width makes every pass wrap at 330.
+        self.subtitle_label.setFixedWidth(330)
         self.subtitle_label.setAlignment(Qt.AlignCenter)
         outer.addWidget(self.subtitle_label, alignment=Qt.AlignCenter)
         outer.addSpacing(16)

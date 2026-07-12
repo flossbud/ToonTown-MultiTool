@@ -224,3 +224,23 @@ def test_set_activity_preserves_reorder_chip_intent(qapp):
     sec.set_activity([True])
     sec.show()
     assert sec.pager.reorder_btn.isVisible()
+
+
+def test_empty_state_subtitle_never_clips(qapp):
+    """REGRESSION (fresh-install, Fedora/GNOME 2026-07-12): the empty-state
+    subtitle painted clipped at both ends. QVBoxLayout's heightForWidth pass
+    budgeted the word-wrapped label's row at the FULL body width (2 lines)
+    while the arrange pass clamped the label to a much narrower width (~5
+    lines). The label must always be allocated at least the height its text
+    needs at the width it actually received - which only holds when its wrap
+    width is FIXED so both passes agree."""
+    sec = LaunchSection(game="ttr", icon_path="assets/ttr.png")
+    sec.set_page([], page=0, page_count=1, base_index=0, activity=[False],
+                 show_empty_state=True, at_ceiling=False, total_count=0)
+    sec.resize(700, max(sec.sizeHint().height(), sec.minimumHeight()))
+    sec.show()
+    qapp.processEvents()
+    lbl = sec.empty_state.subtitle_label
+    assert lbl.height() >= lbl.heightForWidth(lbl.width())
+    sec.hide()
+    sec.deleteLater()
