@@ -249,6 +249,58 @@ class X11OverlayBackend(OverlayBackend):
         except Exception:
             pass
 
+    def pin_above(self, window, parent) -> None:
+        """Pin *window* above *parent* in the WM's stack: WM_TRANSIENT_FOR ->
+        parent, then an explicit _NET_RESTACK_WINDOW (source=pager, Above).
+
+        KWin never needs this (the radial/panel OSD layer sits strictly above
+        the dock cluster's layer), but mutter does not recognize the KDE OSD
+        type atom: it types those surfaces NORMAL, and keep-above lands them
+        AND the dock cluster in the same META_LAYER_TOP - so GNOME's
+        raise-on-click on the cluster (the emblem press that OPENS the ring)
+        stacked the cluster, and its internal radial dim, over the ring's
+        buttons (live-probed via _NET_CLIENT_LIST_STACKING on GNOME 50 /
+        mutter, 2026-07-12). WM_TRANSIENT_FOR is the WM-agnostic structural
+        constraint: the WM re-applies transient-above-parent on EVERY restack,
+        so raising the parent carries this window along (the mechanism
+        utils/x11_transient.confine ghost-probed 2026-07-02). The constraint
+        is only a lower bound enforced when the WM restacks, so the explicit
+        _NET_RESTACK_WINDOW fixes the CURRENT order too. Qt rewrites
+        WM_TRANSIENT_FOR on every show(), so callers must (re)assert AFTER
+        map. Best-effort: a failure leaves the KWin-correct behavior as is.
+        """
+        if not self.is_available():
+            return
+        try:
+            from Xlib import X, Xatom
+            from Xlib.protocol import event as xevent
+            d = self._display
+            child_id = int(window.winId())
+            parent_id = int(parent.winId())
+            win = d.create_resource_object("window", child_id)
+            win.change_property(
+                d.intern_atom("WM_TRANSIENT_FOR"),
+                Xatom.WINDOW,
+                32,
+                [parent_id],
+                X.PropModeReplace,
+            )
+            # data.l = [source(2=pager/user), sibling, detail, 0, 0]
+            ev = xevent.ClientMessage(
+                window=win,
+                client_type=d.intern_atom("_NET_RESTACK_WINDOW"),
+                data=(32, [2, parent_id, X.Above, 0, 0]),
+            )
+            d.screen().root.send_event(
+                ev,
+                event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask,
+            )
+            d.flush()
+            overlay_trace(f"x11 pin_above: WM_TRANSIENT_FOR {child_id:#x} -> "
+                          f"{parent_id:#x} + restack above (radial-pin build)")
+        except Exception:
+            pass
+
     def apply_input_shape(self, window, path, dpr: float) -> None:
         """Apply a logical-coord QPainterPath as the X11 ShapeInput region.
 

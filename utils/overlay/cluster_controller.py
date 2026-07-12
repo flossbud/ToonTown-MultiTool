@@ -647,10 +647,16 @@ class ClusterOverlayController:
         self._build_internal_dim()
         # Pre-map the PERSISTENT radial + panel top-levels now, empty (transparent
         # + click-through) - any compositor window-open animation plays once here
-        # on invisible windows. Their OSD window type keeps them in a strictly
-        # higher KWin layer than this dock cluster, so no raise order can ever
-        # put the cluster (and its internal dim) above them. Best-effort: both
-        # ensures self-clean on failure and re-run lazily at open.
+        # on invisible windows. On KWin their OSD window type keeps them in a
+        # strictly higher layer than this dock cluster, so no raise order can put
+        # the cluster (and its internal dim) above them - but mutter does not
+        # recognize the KDE OSD atom and stacks all three in ONE keep-above
+        # layer, where GNOME's raise-on-click on the cluster inverted the order
+        # (the emblem press fogged the ring under the dim). Each ensure therefore
+        # ALSO pins its surface above the cluster via WM_TRANSIENT_FOR
+        # (_pin_surface_above_cluster), which every WM re-applies on every
+        # restack. Best-effort: both ensures self-clean on failure and re-run
+        # lazily at open.
         self._ensure_radial_surface()
         self._ensure_panel_surface()
         # Taskbar representative: the app's taskbar/Alt-Tab entry while the
@@ -2940,6 +2946,29 @@ class ClusterOverlayController:
         except Exception:
             pass
 
+    def _pin_surface_above_cluster(self, surface) -> None:
+        """Pin a MAPPED radial/panel top-level above the cluster window.
+
+        On KWin their OSD layer already sits strictly above the dock cluster's
+        layer, but mutter does not recognize the KDE OSD atom: it types both
+        surfaces NORMAL, keep-above lands them AND the cluster in the same
+        META_LAYER_TOP, and GNOME's raise-on-click on the cluster (the emblem
+        press that opens the ring) stacked the cluster's internal dim over the
+        ring's buttons (live-probed on GNOME 50, 2026-07-12). The backend's
+        WM_TRANSIENT_FOR pin is the WM-agnostic structural fix: the WM
+        re-applies transient-above-parent on EVERY restack, so no raise of the
+        cluster can put it above a pinned surface (see
+        ``X11OverlayBackend.pin_above``). Best-effort: never raises; a no-op
+        on backends without the concept (their level model already orders the
+        surfaces) or when either window is gone."""
+        cluster = self._surface
+        if surface is None or cluster is None:
+            return
+        try:
+            self._backend.pin_above(surface, cluster)
+        except Exception:
+            pass
+
     def _ensure_radial_surface(self):
         """The PERSISTENT radial top-level: created + MAPPED once per overlay
         session (empty, fully transparent via the source-clear paint, and
@@ -2955,8 +2984,11 @@ class ClusterOverlayController:
         one map happens at enter() on an EMPTY invisible window; opening the
         ring later only hosts content into the already-mapped surface. The
         radial/panel are OSD-typed besides (not matched by that effect -
-        source-verified + live-probed), and their OSD layer keeps them above
-        the dock cluster through any raise order.
+        source-verified + live-probed), and on KWin their OSD layer keeps them
+        above the dock cluster through any raise order. Mutter does not
+        recognize the KDE OSD atom (no layer separation - see
+        ``_pin_surface_above_cluster``), so the map is followed by a
+        WM_TRANSIENT_FOR pin to the cluster window.
 
         Returns the surface, or None when construction failed (the caller then
         fails closed). Best-effort self-cleaning: a mid-build failure never
@@ -2992,6 +3024,11 @@ class ClusterOverlayController:
             # X11's default FULL-RECT input region and would swallow every
             # click over its (invisible) canvas.
             self._apply_radial_input_shape(QPainterPath())
+            # Pin above the cluster window NOW (the window is mapped): on
+            # mutter the OSD type gives no layer separation, and the first
+            # emblem press would otherwise raise the cluster - and its
+            # internal dim - over this ring.
+            self._pin_surface_above_cluster(surface)
             # Running-code stamp (anchor-tracking build): live validation must be
             # able to prove THIS lifecycle is running and identify the window.
             try:
@@ -3059,6 +3096,8 @@ class ClusterOverlayController:
             surface.show()
             self._panel_surface = surface
             self._apply_panel_input_shape(QPainterPath())   # click-through while empty
+            # Same mutter no-layer-separation pin as the radial surface.
+            self._pin_surface_above_cluster(surface)
             return surface
         except Exception:
             from utils.overlay.backend import overlay_trace
@@ -3374,6 +3413,11 @@ class ClusterOverlayController:
             unblank = getattr(surface, "set_content_blanked", None)
             if unblank is not None:
                 unblank(False)
+            # Re-assert the above-cluster pin at the moment it becomes
+            # user-visible (Qt rewrites WM_TRANSIENT_FOR whenever it re-shows
+            # a native window, so the ensure-time pin can be clobbered by a
+            # later native-window change).
+            self._pin_surface_above_cluster(surface)
             # Click-off dismissal: watch global presses for the ring's lifetime
             # (best-effort; self-guarded + backend-gated).
             self._start_radial_dismiss_capture()
@@ -3812,6 +3856,10 @@ class ClusterOverlayController:
             # Re-size + re-center the ALREADY-MAPPED window (no map, no animation).
             surface.set_overlay_geometry(
                 QRect(int(ax - size / 2), int(ay - size / 2), size, size))
+            # Re-assert the above-cluster pin BEFORE the raise (best-effort,
+            # never raises), so raise_ stays the last word on the panel's
+            # order over the radial (sibling order is click-to-front UX).
+            self._pin_surface_above_cluster(surface)
             surface.raise_()
             # NON-EMPTY click region covering the WHOLE panel. Shaped from the
             # surface's REALIZED size, NOT the requested emblem*6 square:

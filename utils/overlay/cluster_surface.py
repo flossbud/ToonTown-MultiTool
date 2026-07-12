@@ -291,6 +291,12 @@ class RadialSurface(ClusterSurface):
     OPEN ring could cover system UI like the screenshot picker; the persistent
     cluster (dock) stays below such UI, and the ring is transient user-invoked
     chrome.
+
+    The (a) guarantee is KWIN-ONLY: mutter does not recognize this KDE atom
+    (it types the window NORMAL, sharing the cluster's keep-above layer), so
+    the controller additionally pins this surface above the cluster with
+    WM_TRANSIENT_FOR - see ClusterOverlayController._pin_surface_above_cluster
+    (GNOME 50 live probe, 2026-07-12).
     """
 
     WM_WINDOW_TYPE = "_KDE_NET_WM_WINDOW_TYPE_ON_SCREEN_DISPLAY"

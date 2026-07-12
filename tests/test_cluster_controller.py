@@ -262,13 +262,19 @@ class _StubSurface(QWidget):
 
 class _RecordingBackend(NoOpOverlayBackend):
     """NoOp backend that records every apply_input_shape call as
-    (window, path, dpr) so the scaling tests can inspect the broad/exact shapes."""
+    (window, path, dpr) so the scaling tests can inspect the broad/exact shapes,
+    and every pin_above call as (window, parent) so the radial/panel
+    above-cluster pin tests can assert the stacking constraint was requested."""
 
     def __init__(self):
         self.shapes: list = []
+        self.pins: list = []
 
     def apply_input_shape(self, window, path, dpr) -> None:
         self.shapes.append((window, path, dpr))
+
+    def pin_above(self, window, parent) -> None:
+        self.pins.append((window, parent))
 
 
 class _OccupancyStubProvider(QObject):
@@ -1727,6 +1733,43 @@ def test_internal_dim_built_hidden_child_of_grid_host_on_enter(qapp):
     assert ctrl._dim is not None
     assert ctrl._dim.parent() is provider._grid_host
     assert ctrl._dim.isHidden() is True
+    ctrl.leave()
+
+
+def test_enter_pins_radial_and_panel_above_cluster(qapp, monkeypatch):
+    """enter() pins BOTH persistent top-levels (radial + panel) above the
+    cluster window via backend.pin_above. On KWin the OSD layer already
+    guarantees the order, but mutter does not recognize the KDE OSD atom -
+    all three windows share its keep-above layer, and GNOME's raise-on-click
+    on the cluster (any emblem press) stacked the cluster's internal dim over
+    the ring's buttons. The pin makes radial-above-cluster structural."""
+    _patch_radial(monkeypatch)
+    backend = _RecordingBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    ctrl.enter()
+
+    cluster = ctrl._surface
+    assert ctrl._radial_surface is not None
+    assert ctrl._panel_surface is not None
+    assert (ctrl._radial_surface, cluster) in backend.pins
+    assert (ctrl._panel_surface, cluster) in backend.pins
+    ctrl.leave()
+
+
+def test_open_radial_menu_reasserts_pin_above_cluster(qapp, monkeypatch):
+    """open_radial_menu() re-asserts the radial's above-cluster pin at the
+    moment the ring becomes user-visible (Qt rewrites WM_TRANSIENT_FOR on any
+    native re-show, so the ensure-time pin alone could go stale)."""
+    _patch_radial(monkeypatch)
+    backend = _RecordingBackend()
+    ctrl, provider, window, created = _make(backend=backend)
+    ctrl.enter()
+    baseline = len(backend.pins)
+
+    menu = ctrl.open_radial_menu()
+
+    assert menu is not None
+    assert (ctrl._radial_surface, ctrl._surface) in backend.pins[baseline:]
     ctrl.leave()
 
 
