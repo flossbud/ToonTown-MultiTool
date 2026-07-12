@@ -1646,6 +1646,10 @@ class _CompactLayout(QWidget):
         # Portrait background + status dot.
         tab.slot_badges[i].set_border_color(None)
         tab.slot_badges[i].set_colors(pal.badge_bg_lit.name(), pal.badge_ink_lit.name())
+        tab.slot_badges[i].set_dim_appearance(
+            sat=pal.pixmap_sat, bright=pal.pixmap_bright,
+            bg_off=pal.badge_bg_off, ink_off=pal.badge_ink_off,
+        )
         status_dot = tab.toon_labels[i][1]
         if active:
             status_dot.set_cutout_border(pal.status_cutout.name(), width=3.0)

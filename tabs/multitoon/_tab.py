@@ -94,6 +94,10 @@ class ToonPortraitWidget(QWidget):
         self._dim_progress = 0.0
         self._dim_cache = None        # QPixmap; built lazily while dimmed
         self._dim_cache_size = None   # QSize the cache was built for
+        self._dim_sat = None       # None -> card_dim defaults (legacy dark filter)
+        self._dim_bright = None
+        self._bg_off = None        # QColor; fallback-circle backing when fully off
+        self._text_off = None
         self._bg      = QColor("#4a4a4a")
         self._text    = QColor("#ffffff")
         self._border_color = None
@@ -155,6 +159,24 @@ class ToonPortraitWidget(QWidget):
         self._bg   = QColor(bg)
         self._text = QColor(text)
         self._dim_cache = None
+        self.update()
+
+    def set_dim_appearance(self, sat: "float | None" = None,
+                           bright: "float | None" = None,
+                           bg_off: "QColor | None" = None,
+                           ink_off: "QColor | None" = None) -> None:
+        """Theme-aware OFF appearance, injected by the style-writer. `sat`/
+        `bright` feed dim_pixmap (None = legacy dark filter); `bg_off`/`ink_off`
+        replace the fallback circle's colors in the dimmed render (None = keep
+        the lit colors, i.e. legacy). Invalidate the dim cache on change."""
+        new = (sat, bright, bg_off, ink_off)
+        if new == (self._dim_sat, self._dim_bright, self._bg_off, self._text_off):
+            return
+        self._dim_sat, self._dim_bright = sat, bright
+        self._bg_off = QColor(bg_off) if bg_off is not None else None
+        self._text_off = QColor(ink_off) if ink_off is not None else None
+        self._dim_cache = None
+        self._dim_cache_size = None
         self.update()
 
     def set_border_color(self, color: str):
@@ -495,9 +517,23 @@ class ToonPortraitWidget(QWidget):
         buf = QPixmap(size)
         buf.fill(Qt.transparent)
         bp = QPainter(buf)
-        self._render_content(bp)
+        if self._bg_off is not None:
+            # Render the off variant: swap the fallback-circle colors for the
+            # buffer render only (the lit paint path is untouched).
+            saved = (self._bg, self._text)
+            self._bg = QColor(self._bg_off)
+            self._text = QColor(self._text_off) if self._text_off is not None else self._text
+            try:
+                self._render_content(bp)
+            finally:
+                self._bg, self._text = saved
+        else:
+            self._render_content(bp)
         bp.end()
-        self._dim_cache = dim_pixmap(buf)
+        if self._dim_sat is not None:
+            self._dim_cache = dim_pixmap(buf, sat=self._dim_sat, bright=self._dim_bright)
+        else:
+            self._dim_cache = dim_pixmap(buf)
         self._dim_cache_size = size
         return self._dim_cache
 

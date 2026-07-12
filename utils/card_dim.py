@@ -16,14 +16,15 @@ BRIGHT = 0.75   # brightness(0.75): uniform darken
 DIM_FADE_MS = 200   # lit -> dim fade duration; paired with QEasingCurve.OutCubic
 
 
-def dim_color(c: QColor) -> QColor:
-    """Apply saturate(SAT) then brightness(BRIGHT) to a single colour, luma-
-    preserving (Rec.601 weights, matching _build_grey and PIL's ImageEnhance.Color).
+def dim_color(c: QColor, sat: float = SAT, bright: float = BRIGHT) -> QColor:
+    """Apply saturate(sat) then brightness(bright), luma-preserving (Rec.601
+    weights, matching _build_grey and PIL's ImageEnhance.Color). Defaults are
+    the historic dark-theme filter; the light palette passes (0.35, 1.0).
     Alpha is preserved."""
     lum = 0.3 * c.red() + 0.59 * c.green() + 0.11 * c.blue()
 
     def ch(v: int) -> int:
-        return max(0, min(255, round((v * SAT + lum * (1.0 - SAT)) * BRIGHT)))
+        return max(0, min(255, round((v * sat + lum * (1.0 - sat)) * bright)))
 
     return QColor(ch(c.red()), ch(c.green()), ch(c.blue()), c.alpha())
 
@@ -40,10 +41,12 @@ def lerp_color(a: QColor, b: QColor, t: float) -> QColor:
                   m(a.blue(), b.blue()), m(a.alpha(), b.alpha()))
 
 
-def dim_pixmap(pm: QPixmap) -> QPixmap:
+def dim_pixmap(pm: QPixmap, sat: float = SAT, bright: float = BRIGHT) -> QPixmap:
     """Return a dimmed copy of `pm` (dim_color per opaque pixel; fully-transparent
     pixels untouched). Caller MUST cache the result - this is a full-image pass and
-    is only acceptable on static (inactive) content.
+    is only acceptable on static (inactive) content. `sat`/`bright` default to the
+    historic dark-theme filter constants (SAT/BRIGHT); the light palette passes
+    (0.35, 1.0) to desaturate without darkening.
 
     Operates on raw image bytes rather than per-pixel QColor objects (~5-6x faster:
     a 160px portrait drops from ~52ms to ~9ms, within one animation frame, so the
@@ -57,7 +60,7 @@ def dim_pixmap(pm: QPixmap) -> QPixmap:
     h = img.height()
     stride = img.bytesPerLine()          # row stride may exceed w*4 (padding)
     mv = memoryview(img.bits()).cast("B")  # writable; bits() detaches shared data
-    inv = 1.0 - SAT
+    inv = 1.0 - sat
     for y in range(h):
         row = y * stride
         for x in range(w):
@@ -67,10 +70,10 @@ def dim_pixmap(pm: QPixmap) -> QPixmap:
             r = mv[i]
             g = mv[i + 1]
             b = mv[i + 2]
-            base = (0.3 * r + 0.59 * g + 0.11 * b) * inv   # luma * (1 - SAT)
-            vr = round((r * SAT + base) * BRIGHT)
-            vg = round((g * SAT + base) * BRIGHT)
-            vb = round((b * SAT + base) * BRIGHT)
+            base = (0.3 * r + 0.59 * g + 0.11 * b) * inv   # luma * (1 - sat)
+            vr = round((r * sat + base) * bright)
+            vg = round((g * sat + base) * bright)
+            vb = round((b * sat + base) * bright)
             mv[i] = 0 if vr < 0 else (255 if vr > 255 else vr)
             mv[i + 1] = 0 if vg < 0 else (255 if vg > 255 else vg)
             mv[i + 2] = 0 if vb < 0 else (255 if vb > 255 else vb)
