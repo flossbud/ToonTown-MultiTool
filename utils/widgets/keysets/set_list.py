@@ -18,9 +18,12 @@ from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
-from utils.color_math import darken_rgb, with_alpha
 from utils.shared_widgets import ElidingLabel
 from .game_meta import set_accent
+from .palette import (
+    add_set_qss, rail_chip_qss, rail_header_ink, rail_item, rail_item_ink,
+    rail_panel_qss,
+)
 
 MAX_SETS = 8
 _PREVIEW_KEYS = ("forward", "left", "reverse", "right")
@@ -33,20 +36,14 @@ def _preview_label(value: str) -> str:
 
 class _Keycap(QLabel):
     """A tiny mono preview keycap in a SetListItem's key row. Flat fill/border
-    - no gradient needed, so plain QSS suffices (no custom paint)."""
+    - no gradient needed, so plain QSS suffices (no custom paint). Styling is
+    applied by the owning SetListItem (theme + selection state), not here."""
 
     def __init__(self, text: str, parent=None):
         super().__init__(text, parent)
         self.setAlignment(Qt.AlignCenter)
         self.setFixedHeight(19)
         self.setMinimumWidth(19)
-        self.setStyleSheet(
-            "background-color: rgba(0,0,0,0.28); "
-            "border: 1px solid rgba(255,255,255,0.14); border-radius: 5px; "
-            "color: rgba(255,255,255,0.9); font-weight: 700; font-size: 9px; "
-            "font-family: 'Consolas', 'Menlo', 'DejaVu Sans Mono', 'Liberation Mono', monospace; "
-            "padding: 0 4px;"
-        )
 
 
 class SetListItem(QWidget):
@@ -55,12 +52,13 @@ class SetListItem(QWidget):
     badge, name label, and keycaps are transparent-background children."""
 
     def __init__(self, panel: "SetListPanel", index: int, name: str,
-                 keys: dict, selected: bool, parent=None):
+                 keys: dict, selected: bool, parent=None, *, is_dark: bool = True):
         super().__init__(parent)
         self._panel = panel
         self._index = index
         self._c, self._b = set_accent(index)
         self._selected = selected
+        self._is_dark = is_dark
 
         self.setCursor(Qt.PointingHandCursor)
         self.setAttribute(Qt.WA_StyledBackground, False)
@@ -80,32 +78,48 @@ class SetListItem(QWidget):
             "border-radius: 6px; color: #ffffff; font-weight: 800; font-size: 11px;"
         )
         top.addWidget(badge, 0)
-        name_lbl = ElidingLabel(name)
-        name_lbl.setStyleSheet(
-            "background: transparent; border: none; color: #ffffff; "
-            "font-size: 13px; font-weight: 700;"
-        )
-        top.addWidget(name_lbl, 1)
+        self._name_lbl = ElidingLabel(name)
+        top.addWidget(self._name_lbl, 1)
         outer.addLayout(top)
 
         preview = QHBoxLayout()
         preview.setContentsMargins(0, 0, 0, 0)
         preview.setSpacing(4)
+        self._chips: list[_Keycap] = []
         for key in _PREVIEW_KEYS:
             value = keys.get(key)
             if not value:
                 continue
-            preview.addWidget(_Keycap(_preview_label(value)), 0)
+            chip = _Keycap(_preview_label(value))
+            preview.addWidget(chip, 0)
+            self._chips.append(chip)
         preview.addStretch(1)
         outer.addLayout(preview)
 
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self._restyle_children()
+
+    def _restyle_children(self) -> None:
+        ink = rail_item_ink(self._selected, self._is_dark)
+        self._name_lbl.setStyleSheet(
+            "background: transparent; border: none; color: %s; "
+            "font-size: 13px; font-weight: 700;" % ink)
+        chip_qss = rail_chip_qss(self._selected, self._is_dark)
+        for chip in self._chips:
+            chip.setStyleSheet(chip_qss)
+
+    def apply_theme(self, is_dark: bool) -> None:
+        if is_dark != self._is_dark:
+            self._is_dark = is_dark
+            self._restyle_children()
+            self.update()
 
     def set_selected(self, selected: bool) -> None:
         selected = bool(selected)
         if selected == self._selected:
             return
         self._selected = selected
+        self._restyle_children()
         self.update()
 
     # ── input ────────────────────────────────────────────────────────────
@@ -127,16 +141,13 @@ class SetListItem(QWidget):
         path = QPainterPath()
         path.addRoundedRect(r, _ITEM_RADIUS, _ITEM_RADIUS)
 
-        c, b = QColor(self._c), QColor(self._b)
+        top, bot, border_col = rail_item(self._c, self._b, self._selected, self._is_dark)
         if self._selected:
-            top, bot, border_col = darken_rgb(c, 0.95), darken_rgb(c, 0.72), QColor(b)
-            glow = QColor(b)
+            glow = QColor(self._b)
             glow.setAlphaF(0.35)
             p.setBrush(Qt.NoBrush)
             p.setPen(QPen(glow, 7))
             p.drawPath(path)
-        else:
-            top, bot, border_col = darken_rgb(c, 0.30), darken_rgb(c, 0.15), with_alpha(b, 0.55)
 
         grad = QLinearGradient(r.topLeft().x(), r.topLeft().y(),
                                r.x() + r.width() * 0.38, r.y() + r.height())
@@ -168,10 +179,7 @@ class SetListPanel(QFrame):
         self._items: list[SetListItem] = []
 
         self.setFixedWidth(self.WIDTH)
-        self.setStyleSheet(
-            "SetListPanel { background-color: rgba(0,0,0,0.24); "
-            "border: 1px solid rgba(0,0,0,0.30); border-radius: 20px; }"
-        )
+        self.setStyleSheet(rail_panel_qss(is_dark))
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 10, 10)
@@ -185,8 +193,9 @@ class SetListPanel(QFrame):
         header.addWidget(self._dot, 0)
         self._header_label = QLabel()
         self._header_label.setStyleSheet(
-            "background: transparent; border: none; color: rgba(255,255,255,0.5); "
+            "background: transparent; border: none; color: %s; "
             "font-size: 10px; font-weight: 700; letter-spacing: 0.9px;"
+            % rail_header_ink(is_dark)
         )
         header.addWidget(self._header_label, 1)
         outer.addLayout(header)
@@ -198,15 +207,19 @@ class SetListPanel(QFrame):
 
         self._add_btn = QPushButton("+  Add Set")
         self._add_btn.setCursor(Qt.PointingHandCursor)
-        self._add_btn.setFixedHeight(32)
-        self._add_btn.setStyleSheet(
-            "QPushButton { background: transparent; color: #aaaaaa; "
-            "border: 1.5px dashed rgba(255,255,255,0.22); border-radius: 12px; "
-            "font-size: 12.5px; font-weight: 600; margin-top: 9px; }"
-            "QPushButton:hover { background: rgba(255,255,255,0.07); }"
-        )
+        # 41 = 9px gap zone + 32px capsule; the QSS margin used to carve the
+        # gap out of a 32px box and squish the capsule.
+        self._add_btn.setFixedHeight(41)
+        self._add_btn.setStyleSheet(self._add_set_stylesheet(is_dark))
         self._add_btn.clicked.connect(self.add_requested.emit)
         outer.addWidget(self._add_btn)
+
+    @staticmethod
+    def _add_set_stylesheet(is_dark: bool) -> str:
+        # palette QSS stays margin-free; the gap-carving margin is applied
+        # here, at the call site, now that the fixed height has room for it.
+        return add_set_qss(is_dark).replace(
+            "QPushButton {", "QPushButton { margin-top: 9px;", 1)
 
     # ── public API ───────────────────────────────────────────────────────
     def set_data(self, *, game_short: str, game_accent: str, sets: list[dict],
@@ -223,7 +236,8 @@ class SetListPanel(QFrame):
 
         for i, keys in enumerate(sets):
             name = set_names[i] if i < len(set_names) else f"Set {i + 1}"
-            item = SetListItem(self, i, name, keys, i == selected_index, self)
+            item = SetListItem(self, i, name, keys, i == selected_index, self,
+                                is_dark=self._is_dark)
             self._list_layout.addWidget(item)
             self._items.append(item)
 
@@ -231,4 +245,13 @@ class SetListPanel(QFrame):
 
     def apply_theme(self, is_dark: bool) -> None:
         self._is_dark = is_dark
+        self.setStyleSheet(rail_panel_qss(is_dark))
+        self._header_label.setStyleSheet(
+            "background: transparent; border: none; color: %s; "
+            "font-size: 10px; font-weight: 700; letter-spacing: 0.9px;"
+            % rail_header_ink(is_dark)
+        )
+        self._add_btn.setStyleSheet(self._add_set_stylesheet(is_dark))
+        for item in self._items:
+            item.apply_theme(is_dark)
         self.update()
