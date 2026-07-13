@@ -15,10 +15,10 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, Signal, QRectF
-from PySide6.QtGui import QColor, QFont, QPainter, QPen, QBrush
+from PySide6.QtGui import QFont, QPainter, QPen, QBrush
 
 from . import keyboard_data
-from utils.color_math import with_alpha
+from .palette import keycap, spotlight_ring
 
 
 def _mono_font(px: int) -> QFont:
@@ -90,18 +90,7 @@ class _KeyCap(QWidget):
     def _colors(self):
         """(fill, border, text) QColors for the current state."""
         accent_b = self._kb._accent_b or "#3399ff"
-        if self.state == "conflict":
-            return QColor("#e05252"), QColor("#f28b8b"), QColor("#ffffff")
-        if self.state == "movement":
-            return (QColor(accent_b), with_alpha("#ffffff", 0.55),
-                    QColor("#ffffff"))
-        if self.state == "aux":
-            return (with_alpha("#ffffff", 0.22), with_alpha("#ffffff", 0.40),
-                    QColor("#ffffff"))
-        # unassigned
-        fill_a = 0.18 if self._hover else 0.28
-        return (with_alpha("#000000", fill_a), with_alpha("#ffffff", 0.08),
-                with_alpha("#ffffff", 0.40))
+        return keycap(self.state, accent_b, self._hover, self._kb._is_dark)
 
     def paintEvent(self, _e):
         p = QPainter(self)
@@ -119,7 +108,7 @@ class _KeyCap(QWidget):
         if self.spotlight:
             ring = QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
             p.setBrush(Qt.NoBrush)
-            p.setPen(QPen(with_alpha("#ffffff", 0.9), 2))
+            p.setPen(QPen(spotlight_ring(self._kb._is_dark), 2))
             p.drawRoundedRect(ring, max(3, radius - 1), max(3, radius - 1))
 
         # Centered mono label.
