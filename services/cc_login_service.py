@@ -44,7 +44,7 @@ CC_DEFAULT_REALM = "production"
 
 CC_HEADERS = {
     "Content-Type": "application/json",
-    "User-Agent": "ToontownMultiTool/0.8.0-alpha.1",
+    "User-Agent": "ToontownMultiTool/0.8.0-alpha.2",
 }
 
 
