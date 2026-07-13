@@ -150,3 +150,26 @@ def test_light_token_pins():
     assert c["text_muted"] == "#475569"        # rail header / aux keycap border
     assert c["text_disabled"] == "#64748b"     # add-set label
     assert c["text_primary"] == "#0f172a"      # primary ink
+
+
+def test_pencil_css_both_branches():
+    dark = kp.pencil_css(True)
+    assert "rgba(255,255,255,0.55)" in dark and "hover { color: #ffffff; }" in dark
+    light = kp.pencil_css(False)
+    assert "rgba(15,23,42,0.5)" in light and "hover { color: #0f172a; }" in light
+
+
+def test_conflict_banner_css_both_branches():
+    dark = kp.conflict_banner_css(True, 10)
+    assert "rgba(224,82,82,0.14)" in dark and "#ff9a9a" in dark and "border-radius: 10px" in dark
+    light = kp.conflict_banner_css(False, 10)
+    assert "rgba(224,82,82,0.10)" in light and "#b91c1c" in light
+
+
+def test_vivid_constants_cross_pinned_to_card_palette():
+    # Same Vivid family as the Multitoon cards - locked together with zero
+    # runtime coupling (importing card_palette from keysets would point the
+    # dependency the wrong way).
+    from utils import card_palette
+    assert kp.VIVID_TOP_F == card_palette.VIVID_TOP_F
+    assert kp.VIVID_BOT_F == card_palette.VIVID_BOT_F
