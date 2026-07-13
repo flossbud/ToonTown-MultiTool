@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from utils.color_math import darken_rgb, with_alpha
 from ._assets import asset_path
 from .game_meta import GAME_META
+from .palette import picker_card_fill, picker_ink
 
 _CARD_W = 360
 _CARD_RADIUS = 18
@@ -150,33 +151,40 @@ class GameBannerCard(QWidget):
         text_col = QVBoxLayout()
         text_col.setContentsMargins(0, 0, 0, 0)
         text_col.setSpacing(1)
-        title_lbl = QLabel(self._meta.title)
-        title_lbl.setStyleSheet(
-            "background: transparent; border: none; color: #ffffff; "
-            "font-size: 13.5px; font-weight: 700;"
-        )
-        text_col.addWidget(title_lbl)
+        self._title_lbl = QLabel(self._meta.title)
+        text_col.addWidget(self._title_lbl)
         self._sub_lbl = QLabel(self.subtitle_text())
-        self._sub_lbl.setStyleSheet(
-            "background: transparent; border: none; "
-            "color: rgba(255,255,255,0.6); font-size: 11px;"
-        )
         text_col.addWidget(self._sub_lbl)
         footer.addLayout(text_col, 1)
 
-        edit_lbl = QLabel("Edit ›")
-        edit_lbl.setStyleSheet(
-            "background: transparent; border: none; "
-            "color: rgba(255,255,255,0.7); font-size: 11.5px; font-weight: 600;"
-        )
-        footer.addWidget(edit_lbl, 0, Qt.AlignVCenter)
+        self._edit_lbl = QLabel("Edit ›")
+        footer.addWidget(self._edit_lbl, 0, Qt.AlignVCenter)
 
         outer.addLayout(footer)
         outer.addStretch(1)
 
+        self._restyle()
+
     # ── public API ───────────────────────────────────────────────────────
     def subtitle_text(self) -> str:
         return f"{self._count} movement sets"
+
+    # ── theme ────────────────────────────────────────────────────────────
+    def _restyle(self) -> None:
+        dark = self._view._is_dark
+        self._title_lbl.setStyleSheet(
+            "background: transparent; border: none; color: %s; "
+            "font-size: 13.5px; font-weight: 700;" % picker_ink("title", dark)
+        )
+        self._sub_lbl.setStyleSheet(
+            "background: transparent; border: none; "
+            "color: %s; font-size: 11px;" % picker_ink("soft", dark)
+        )
+        self._edit_lbl.setStyleSheet(
+            "background: transparent; border: none; "
+            "color: %s; font-size: 11.5px; font-weight: 600;" % picker_ink("meta", dark)
+        )
+        self.update()
 
     # ── input ────────────────────────────────────────────────────────────
     def _emit_click(self) -> None:
@@ -209,7 +217,7 @@ class GameBannerCard(QWidget):
 
         p.save()
         p.setClipPath(path)
-        p.fillPath(path, QColor("#0d0f13"))
+        p.fillPath(path, picker_card_fill(self._view._is_dark))
 
         banner_rect = QRectF(0, 0, self.width(), _BANNER_H)
         if self._banner_pix is not None:
@@ -273,18 +281,10 @@ class GamePickerView(QWidget):
 
         self._title = QLabel("Choose a game")
         self._title.setAlignment(Qt.AlignCenter)
-        self._title.setStyleSheet(
-            "background: transparent; border: none; color: #ffffff; "
-            "font-size: 18px; font-weight: 700;"
-        )
         outer.addWidget(self._title, 0, Qt.AlignHCenter)
 
         self._subtitle = QLabel("")
         self._subtitle.setAlignment(Qt.AlignCenter)
-        self._subtitle.setStyleSheet(
-            "background: transparent; border: none; "
-            "color: rgba(255,255,255,0.55); font-size: 12.5px;"
-        )
         outer.addWidget(self._subtitle, 0, Qt.AlignHCenter)
 
         # The flow-layout row must fill the available width so its cards lay
@@ -298,6 +298,8 @@ class GamePickerView(QWidget):
         self._row_layout = _CenteredFlowLayout(_ROW_GAP, self._row_widget)
         outer.addWidget(self._row_widget)
         outer.addStretch(1)
+
+        self._restyle()
 
     # ── public API ───────────────────────────────────────────────────────
     def set_games(self, entries: list[tuple[str, int]]) -> None:
@@ -320,6 +322,19 @@ class GamePickerView(QWidget):
             self._row_layout.addWidget(card)
             self._cards[key] = card
 
+    def _restyle(self) -> None:
+        self._title.setStyleSheet(
+            "background: transparent; border: none; color: %s; "
+            "font-size: 18px; font-weight: 700;" % picker_ink("title", self._is_dark)
+        )
+        self._subtitle.setStyleSheet(
+            "background: transparent; border: none; "
+            "color: %s; font-size: 12.5px;" % picker_ink("subtitle", self._is_dark)
+        )
+        for card in self._cards.values():
+            card._restyle()
+
     def apply_theme(self, is_dark: bool) -> None:
         self._is_dark = is_dark
+        self._restyle()
         self.update()

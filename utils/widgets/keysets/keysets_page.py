@@ -239,15 +239,8 @@ class KeysetsPage(QWidget):
 
     def _style_back_button(self, is_dark: bool) -> None:
         # Ghost breadcrumb link (borderless), not a boxed corner pill.
-        self._back_btn.setStyleSheet(
-            "QPushButton {"
-            " background: transparent; border: none;"
-            " color: rgba(255,255,255,0.66);"
-            " padding: 4px 10px 4px 4px;"
-            " font-size: 13.5px; font-weight: 600; text-align: left;"
-            "}"
-            "QPushButton:hover { color: #ffffff; }"
-        )
+        from .palette import back_button_qss
+        self._back_btn.setStyleSheet(back_button_qss(is_dark))
 
     # ── Re-gate on show ──────────────────────────────────────────────────────
     def showEvent(self, e) -> None:
