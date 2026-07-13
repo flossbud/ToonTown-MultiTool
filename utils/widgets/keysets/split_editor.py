@@ -24,11 +24,15 @@ from PySide6.QtWidgets import (
 )
 
 from utils import logical_actions
-from utils.color_math import darken_rgb, with_alpha
+from utils.color_math import with_alpha
 from utils.widgets.pill_controls import PillButton
 from . import keyboard_data
 from .game_meta import GAME_META, set_accent
 from .movement_key_field import MovementKeyField
+from .palette import (
+    card_ink, card_ink_faint, card_ink_soft, conflict_banner_css, detail_card,
+    field_row, field_value, pencil_css,
+)
 from .set_list import SetListPanel
 from .visual_keyboard import VisualKeyboard
 
@@ -94,11 +98,20 @@ class _DetailCard(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._c, self._b = "#0077ff", "#3399ff"
+        self._is_dark = True
         self.setAttribute(Qt.WA_StyledBackground, False)
 
     def set_accent(self, c: str, b: str) -> None:
         self._c, self._b = c, b
         self.update()
+
+    def set_theme(self, is_dark: bool) -> None:
+        if is_dark != self._is_dark:
+            self._is_dark = is_dark
+            self.update()
+
+    def _colors(self):
+        return detail_card(self._c, self._b, self._is_dark)
 
     def paintEvent(self, _e) -> None:
         if self.width() <= 0 or self.height() <= 0:
@@ -108,16 +121,16 @@ class _DetailCard(QWidget):
         r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
         path = QPainterPath()
         path.addRoundedRect(r, 20, 20)
-        c = QColor(self._c)
+        top, bot, border = self._colors()
         grad = QLinearGradient(r.topLeft(),
                                QPointF(r.x() + r.width() * 0.38, r.y() + r.height()))
-        grad.setColorAt(0.0, darken_rgb(c, 0.30))
-        grad.setColorAt(1.0, darken_rgb(c, 0.15))
+        grad.setColorAt(0.0, top)
+        grad.setColorAt(1.0, bot)
         p.fillPath(path, grad)
         p.save()
         p.setClipPath(path)
         p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(with_alpha(self._b, 0.55), 4))
+        p.setPen(QPen(border, 4))
         p.drawPath(path)
         p.restore()
         p.end()
@@ -135,6 +148,7 @@ class FieldRow(QFrame):
         self._editor = editor
         self._action = action
         self._active = False
+        self._conflict = False
         self.setCursor(Qt.PointingHandCursor)
 
         h = QHBoxLayout(self)
@@ -142,8 +156,8 @@ class FieldRow(QFrame):
         h.setSpacing(12)
         self._label = QLabel(label_text)
         self._label.setStyleSheet(
-            "background: transparent; border: none; color: #ffffff; "
-            "font-size: 13px; font-weight: 600;")
+            "background: transparent; border: none; color: %s; "
+            "font-size: 13px; font-weight: 600;" % card_ink(self._editor._is_dark))
         h.addWidget(self._label, 1)
         self._field = MovementKeyField(parent=self)
         self._field.key_captured.connect(
@@ -178,24 +192,26 @@ class FieldRow(QFrame):
     def set_field(self, value: str, conflict: bool, mac: bool, locked: bool) -> None:
         self._field.set_key(value)
         self._field.set_locked(locked)
+        self._conflict = conflict
         self._style_field(conflict)
 
+    def refresh_theme(self) -> None:
+        """Re-apply label/row/field styling for the editor's current theme."""
+        self._label.setStyleSheet(
+            "background: transparent; border: none; color: %s; "
+            "font-size: 13px; font-weight: 600;" % card_ink(self._editor._is_dark))
+        self._apply_row_style()
+        self._style_field(self._conflict)
+
     def _apply_row_style(self) -> None:
-        b = self._editor._accent_b
-        if self._active:
-            bg = with_alpha(b, 0.12).name(QColor.HexArgb)
-            border = with_alpha(b, 0.5).name(QColor.HexArgb)
-        else:
-            bg, border = "rgba(0,0,0,0.24)", "rgba(0,0,0,0.30)"
+        bg, border = field_row(self._active, self._editor._accent_b,
+                               self._editor._is_dark)
         self.setStyleSheet(
             "FieldRow { background: %s; border: 1px solid %s; border-radius: %dpx; }"
             % (bg, border, _ROW_RADIUS))
 
     def _style_field(self, conflict: bool) -> None:
-        if conflict:
-            bg, border, txt = "rgba(224,82,82,0.16)", "#e05252", "#ff9a9a"
-        else:
-            bg, border, txt = "rgba(0,0,0,0.35)", "rgba(255,255,255,0.14)", "#ffffff"
+        bg, border, txt = field_value(conflict, self._editor._is_dark)
         self._field.setStyleSheet(
             "QLineEdit { min-width: 100px; border-radius: 8px; padding: 0 9px; "
             "font-family: 'Consolas','Menlo','DejaVu Sans Mono','Liberation Mono',monospace; "
@@ -204,7 +220,7 @@ class FieldRow(QFrame):
 
 
 # ── section label ────────────────────────────────────────────────────────────
-def _section_label(text: str) -> QLabel:
+def _section_label(text: str, is_dark: bool) -> QLabel:
     lbl = QLabel(text.upper())
     f = QFont()
     f.setPixelSize(10)
@@ -212,7 +228,7 @@ def _section_label(text: str) -> QLabel:
     f.setLetterSpacing(QFont.AbsoluteSpacing, 0.9)
     lbl.setFont(f)
     lbl.setStyleSheet(
-        "background: transparent; border: none; color: rgba(255,255,255,0.5);")
+        "background: transparent; border: none; color: %s;" % card_ink_faint(is_dark))
     lbl.setContentsMargins(2, 0, 2, 6)
     return lbl
 
@@ -234,6 +250,7 @@ class SplitEditor(QWidget):
         self._accent_c, self._accent_b = set_accent(0)
         self._detect_cb = None
         self._rows: dict[str, FieldRow] = {}
+        self._section_labels: list[QLabel] = []
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -273,25 +290,15 @@ class SplitEditor(QWidget):
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.setSpacing(7)
         self._title = QLabel("")
-        self._title.setStyleSheet(
-            "background: transparent; border: none; color: #ffffff; "
-            "font-size: 16px; font-weight: 700;")
         title_row.addWidget(self._title, 0)
         self._pencil = QPushButton("✎")
         self._pencil.setCursor(Qt.PointingHandCursor)
         self._pencil.setFixedSize(20, 20)
-        self._pencil.setStyleSheet(
-            "QPushButton { background: transparent; border: none; "
-            "color: rgba(255,255,255,0.55); font-size: 13px; }"
-            "QPushButton:hover { color: #ffffff; }")
         self._pencil.clicked.connect(self._rename)
         title_row.addWidget(self._pencil, 0)
         title_row.addStretch(1)
         title_col.addLayout(title_row)
         self._sub = QLabel("")
-        self._sub.setStyleSheet(
-            "background: transparent; border: none; "
-            "color: rgba(255,255,255,0.62); font-size: 11px;")
         title_col.addWidget(self._sub)
         header.addLayout(title_col, 1)
 
@@ -323,18 +330,11 @@ class SplitEditor(QWidget):
 
         self._conflict_banner = QLabel(_CONFLICT_TEXT)
         self._conflict_banner.setWordWrap(True)
-        self._conflict_banner.setStyleSheet(
-            "background: rgba(224,82,82,0.14); border: 1px solid #e05252; "
-            "border-radius: %dpx; color: #ff9a9a; font-size: 11.5px; "
-            "padding: 8px 12px;" % _ROW_RADIUS)
         self._conflict_banner.setVisible(False)
         cv.addWidget(self._conflict_banner)
 
         self._helper = QLabel(_HELPER_TEXT)
         self._helper.setWordWrap(True)
-        self._helper.setStyleSheet(
-            "background: transparent; border: none; "
-            "color: rgba(255,255,255,0.62); font-size: 11px;")
         self._helper.setVisible(False)
         cv.addWidget(self._helper)
 
@@ -344,7 +344,9 @@ class SplitEditor(QWidget):
         col = QVBoxLayout()
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(0)
-        col.addWidget(_section_label(title))
+        lbl = _section_label(title, self._is_dark)
+        self._section_labels.append(lbl)
+        col.addWidget(lbl)
         rows = QVBoxLayout()
         rows.setContentsMargins(0, 0, 0, 0)
         rows.setSpacing(4)
@@ -375,6 +377,31 @@ class SplitEditor(QWidget):
         self._keyboard.apply_theme(is_dark)
         self._detect_btn.apply_theme(is_dark)
         self._delete_btn.apply_theme(is_dark)
+        self._card.set_theme(is_dark)
+        self._restyle_chrome()
+        self._restyle_section_labels()
+        for row in self._rows.values():
+            row.refresh_theme()
+
+    def _restyle_chrome(self) -> None:
+        d = self._is_dark
+        self._title.setStyleSheet(
+            "background: transparent; border: none; color: %s; "
+            "font-size: 16px; font-weight: 700;" % card_ink(d))
+        self._pencil.setStyleSheet(pencil_css(d))
+        self._sub.setStyleSheet(
+            "background: transparent; border: none; "
+            "color: %s; font-size: 11px;" % card_ink_soft(d))
+        self._conflict_banner.setStyleSheet(conflict_banner_css(d, _ROW_RADIUS))
+        self._helper.setStyleSheet(
+            "background: transparent; border: none; "
+            "color: %s; font-size: 11px;" % card_ink_soft(d))
+
+    def _restyle_section_labels(self) -> None:
+        css = ("background: transparent; border: none; color: %s;"
+               % card_ink_faint(self._is_dark))
+        for lbl in self._section_labels:
+            lbl.setStyleSheet(css)
 
     # ── build ────────────────────────────────────────────────────────────────
     def _build_rows(self) -> None:
