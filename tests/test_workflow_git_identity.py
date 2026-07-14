@@ -41,3 +41,16 @@ def test_workflows_commit_only_as_the_maintainer():
         "Workflows must commit as the maintainer, not a bot:\n"
         + "\n".join(f"  {f}:{ln}  user.{k} = {v!r}" for (f, ln, k, v) in offenders)
     )
+
+
+if __name__ == "__main__":
+    # Standalone runner so CI can enforce the guard with plain `python3`
+    # (no pytest / venv needed - it is a pure stdlib file scan).
+    import sys
+
+    try:
+        test_workflows_commit_only_as_the_maintainer()
+    except AssertionError as exc:
+        print(exc)
+        sys.exit(1)
+    print("OK: every workflow git identity is the maintainer")

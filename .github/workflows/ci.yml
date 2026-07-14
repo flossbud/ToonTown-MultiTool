@@ -17,6 +17,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  guard-attribution:
+    # Fail the build if any workflow would commit under a non-human identity,
+    # so a bot can never re-enter the Contributors list. Pure stdlib file scan
+    # -- no venv, no Qt, runs in seconds.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - name: No bot identities in workflows
+        run: python3 tests/test_workflow_git_identity.py
+
   build-linux:
     uses: ./.github/workflows/build-linux.yml
     with:
