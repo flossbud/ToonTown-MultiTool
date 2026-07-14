@@ -34,6 +34,7 @@ from services.cc_login_service import (
     CCLoginWorker,
     find_cc_engine_path,
     get_cc_engine_executable_name,
+    cc_binary_path,
     revoke_launcher_token,
 )
 from services.cc_launcher import CCLauncher
@@ -528,14 +529,13 @@ class LaunchTab(QWidget):
     def _get_engine_dir(self, game: str) -> str:
         """Read the engine directory for a game from settings, with auto-detect fallback."""
         if game == "ttr":
-            key, exe_fn, find_fn = "ttr_engine_dir", get_engine_executable_name, find_engine_path
+            key, bin_fn, find_fn = "ttr_engine_dir", engine_binary_path, find_engine_path
         else:
-            key, exe_fn, find_fn = "cc_engine_dir", get_cc_engine_executable_name, find_cc_engine_path
+            key, bin_fn, find_fn = "cc_engine_dir", cc_binary_path, find_cc_engine_path
 
         path = self.settings_manager.get(key, "") if self.settings_manager else ""
         if path:
-            engine_bin = (engine_binary_path(path) if game == "ttr"
-                          else os.path.join(path, exe_fn()))
+            engine_bin = bin_fn(path)
             if os.path.isfile(engine_bin):
                 return path
         detected = find_fn()
@@ -552,7 +552,7 @@ class LaunchTab(QWidget):
         if not engine_dir:
             print("[Launch] _build_cc_install: engine_dir empty -> None")
             return None
-        exe = os.path.join(engine_dir, get_cc_engine_executable_name())
+        exe = cc_binary_path(engine_dir)
         if not os.path.isfile(exe):
             print(f"[Launch] _build_cc_install: exe missing at {exe!r} -> None")
             return None
@@ -1440,13 +1440,12 @@ class LaunchTab(QWidget):
 
         # Check engine path
         engine_dir = self._get_engine_dir(game)
-        exe_fn = get_engine_executable_name if game == "ttr" else get_cc_engine_executable_name
         if not engine_dir:
             engine_bin = ""
         elif game == "ttr":
             engine_bin = engine_binary_path(engine_dir)
         else:
-            engine_bin = os.path.join(engine_dir, exe_fn())
+            engine_bin = cc_binary_path(engine_dir)
         if not engine_dir or not os.path.isfile(engine_bin):
             _dbg(f"[Credentials] _on_launch: engine not found (dir='{engine_dir}' bin='{engine_bin}')")
             msg = "Game path not set. Configure in Settings."

@@ -127,19 +127,46 @@ CC_ENGINE_SEARCH_PATHS = [
 
 
 def get_cc_engine_executable_name() -> str:
-    """Return the name of the Corporate Clash binary."""
-    return "CorporateClash.exe"
+    """Return the platform-specific name of the Corporate Clash binary."""
+    import sys
+    return "CorporateClash.exe" if sys.platform == "win32" else "corporateclash"
+
+
+def cc_binary_path(engine_dir: str) -> str:
+    """Absolute path to the Corporate Clash binary given the game-data directory.
+
+    On macOS the binary is nested inside the .app bundle while engine_dir is the
+    data dir (settings.json / logs / the engine's cwd live there). On
+    Linux/Windows the binary sits directly in engine_dir. Pure path math — never
+    touches the filesystem; callers do the existence check.
+    """
+    import sys
+    if sys.platform == "darwin":
+        return os.path.join(
+            engine_dir, "CorporateClash.app", "Contents", "MacOS", "corporateclash"
+        )
+    return os.path.join(engine_dir, get_cc_engine_executable_name())
 
 
 def find_cc_engine_path() -> str | None:
     """Auto-detect CorporateClash binary.
 
-    Returns the directory containing CorporateClash.exe for the
-    preference-sorted first match, or None if none found.
+    Returns the directory containing the Corporate Clash binary (the game-data
+    directory) for the preference-sorted first match, or None if none found.
 
-    Detection now covers Bottles, Lutris, Steam Proton, plain Wine prefixes,
-    and the existing Windows-native search list.
+    On macOS, looks in ~/Library/Application Support/Corporate Clash and verifies
+    the binary exists in the nested .app bundle. On other platforms, detection
+    covers Bottles, Lutris, Steam Proton, plain Wine prefixes, and the existing
+    Windows-native search list.
     """
+    import sys
+    if sys.platform == "darwin":
+        # macOS: check the standard Application Support location
+        macos_data_dir = os.path.expanduser(
+            "~/Library/Application Support/Corporate Clash"
+        )
+        if os.path.isfile(cc_binary_path(macos_data_dir)):
+            return macos_data_dir
     installs = discover_cc_installs()
     if not installs:
         return None

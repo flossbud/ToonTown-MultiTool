@@ -33,6 +33,7 @@ _enum_cache = {"t": -1.0, "recs": []}
 _GAME_MARKERS = (
     ("Toontown Rewritten", "ttr"),
     ("Corporate Clash", "cc"),
+    ("CorporateClash", "cc"),
 )
 
 # Authoritative engine bundle ids -> game tag. A window owned by one of these is
