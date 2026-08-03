@@ -1124,17 +1124,12 @@ class _CompactLayout(QWidget):
         sel_holder.setContentsMargins(0, 0, 0, 0)
         sel_holder.setSpacing(0)
 
-        pill_holder = QHBoxLayout()
-        pill_holder.setContentsMargins(0, 0, 0, 0)
-        pill_holder.setSpacing(0)
-
         ctrl_col = QVBoxLayout()
         ctrl_col.setSpacing(10)
         ctrl_col.setContentsMargins(0, 0, 0, 0)
         ctrl_col.addLayout(toggle_row)
         ctrl_col.addWidget(ka_pill)
         ctrl_col.addLayout(sel_holder)
-        ctrl_col.addLayout(pill_holder)
         ctrl_wrap = QWidget()
         ctrl_wrap.setFixedWidth(self._metrics.ctrl_w)
         # Transparent so the controls sit directly on the accent body instead
@@ -1195,7 +1190,6 @@ class _CompactLayout(QWidget):
             "ka_group": ka_pill,  # alias consumed by MultitoonTab
             "ka_lay": ka_lay,
             "sel_holder": sel_holder,
-            "pill_holder": pill_holder,
             "name_holder": name_holder,
             "stats_row": stats_row,
             "cfg": cfg,
@@ -1401,12 +1395,6 @@ class _CompactLayout(QWidget):
         clear_layout(cell["sel_holder"])
         cell["sel_holder"].addWidget(sel)
 
-        # Feature-discovery pill leaf (bottom of the controls column).
-        # Visibility/label are owned by MultitoonTab._refresh_feature_pills.
-        if i < len(tab.feature_pills):
-            clear_layout(cell["pill_holder"])
-            cell["pill_holder"].addWidget(tab.feature_pills[i])
-
         # Name leaf: name expands to the card's outer edge so it elides.
         name_label, _ = tab.toon_labels[i]
         name_label.setAlignment(align | Qt.AlignVCenter)
@@ -1540,11 +1528,6 @@ class _CompactLayout(QWidget):
         if hasattr(sel, "set_paint_scale"):
             sel.set_paint_scale(m.scale)
 
-        # Feature pill: same 38px-class capsule as the keyset stepper.
-        if i < len(tab.feature_pills):
-            pill = tab.feature_pills[i]
-            pill.setFixedHeight(m.keyset_h)
-            pill.set_paint_scale(m.scale)
         # Feature chip: a toggle-sized square in the toggle row.
         if i < len(tab.feature_chips):
             chip = tab.feature_chips[i]
@@ -1673,8 +1656,6 @@ class _CompactLayout(QWidget):
             bg=pal.keyset_off_bg, text=pal.keyset_off_text,
             border=pal.keyset_off_border, label=pal.keyset_off_label,
         )
-        if i < len(tab.feature_pills):
-            tab.feature_pills[i].set_light_chrome(pal.pill_light_chrome)
         if i < len(tab.feature_chips):
             tab.feature_chips[i].set_light_chrome(pal.pill_light_chrome)
         status_dot = tab.toon_labels[i][1]
@@ -1719,8 +1700,6 @@ class _CompactLayout(QWidget):
             tab.slot_badges[i].set_dim_progress(progress)
         if i < len(tab.set_selectors):
             tab.set_selectors[i].set_dim_progress(progress)
-        if i < len(tab.feature_pills):
-            tab.feature_pills[i].set_dim_progress(progress)
         if i < len(tab.feature_chips):
             tab.feature_chips[i].set_dim_progress(progress)
         # Name/stat ink: lerp rgb + alpha between the palette's lit and off

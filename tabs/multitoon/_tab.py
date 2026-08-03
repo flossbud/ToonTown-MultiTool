@@ -1448,7 +1448,6 @@ class MultitoonTab(QWidget):
         self._chat_button_game_wants_visible = [True] * 4
         self.keep_alive_buttons = []
         self.ka_progress_bars = []
-        self.feature_pills = []
         self.feature_chips = []
         self._feature_popover = None
         self.ka_groups = []
@@ -1733,11 +1732,7 @@ class MultitoonTab(QWidget):
             ka_bar = SmoothProgressBar()
             self.ka_progress_bars.append(ka_bar)
 
-            pill = FeaturePill()
-            pill.clicked.connect(lambda idx=i: self._open_feature_popover(idx))
-            self.feature_pills.append(pill)
-
-            chip = FeaturePill(compact=True)
+            chip = FeaturePill()
             chip.clicked.connect(lambda idx=i: self._open_feature_popover(idx))
             self.feature_chips.append(chip)
 
@@ -1779,7 +1774,6 @@ class MultitoonTab(QWidget):
 
         # Apply initial KA widget visibility based on master setting.
         self._init_keep_alive_visibility()
-        self._refresh_feature_pills()
 
     def set_layout_mode(self, mode: str) -> None:
         # The Multitoon tab uses a single fluid pinwheel layout at every window
@@ -3905,11 +3899,9 @@ class MultitoonTab(QWidget):
             # is no-op when widgets already match the setting.
             if self.isVisible():
                 self._maybe_animate_keep_alive_visibility()
-            self._refresh_feature_pills()
             if self._feature_popover is not None and self._feature_popover.isVisible():
                 self._feature_popover.sync_from_settings()
         elif key == CLICK_SYNC_ENABLED:
-            self._refresh_feature_pills()
             if self._feature_popover is not None and self._feature_popover.isVisible():
                 self._feature_popover.sync_from_settings()
 
@@ -4055,28 +4047,9 @@ class MultitoonTab(QWidget):
         if hasattr(self, "_full") and self._full is not None:
             self._full._set_keep_alive_collapsed(not target_visible)
 
-    def _refresh_feature_pills(self) -> None:
-        """Three-state discovery affordance. Both flags off -> the full-width
-        'Enable features' bubble at the bottom of the controls column. Exactly
-        one on -> the icon-only chip in the toggle row instead, which keeps the
-        column at its 132px ceiling (bubble + keep-alive pill together overflow
-        the card). Both on -> neither; the affordance is self-cleaning. Reads
-        the SAME keys Settings writes; called at build and on every relevant
-        settings change."""
-        sm = self.settings_manager
-        cs = bool(sm and sm.get(CLICK_SYNC_ENABLED, False))
-        ka = bool(sm and sm.get("keep_alive_enabled", False))
-        any_on = cs or ka
-        both_on = cs and ka
-        for pill in self.feature_pills:
-            pill.set_label("Enable features")
-            pill.setVisible(not any_on)
-        for chip in self.feature_chips:
-            chip.setVisible(any_on and not both_on)
-
     def _open_feature_popover(self, idx: int) -> None:
-        """Open the feature popover anchored to slot idx's visible discovery
-        affordance. Above/below follows the affordance's position on SCREEN
+        """Open the feature popover anchored to slot idx's discovery chip.
+        Above/below follows the chip's position on SCREEN
         (works identically framed and in Float UI, where cards are separate
         top-level surfaces). The popover is created once and only ever
         re-anchored: settings-change handlers run synchronously inside its own
@@ -4087,9 +4060,7 @@ class MultitoonTab(QWidget):
             self._feature_popover = FeatureDiscoveryPopover(self.settings_manager)
             self._feature_popover.settings_requested.connect(
                 self.features_settings_requested.emit)
-        pill = self.feature_pills[idx]
-        chip = self.feature_chips[idx] if idx < len(self.feature_chips) else None
-        source = chip if (chip is not None and not chip.isHidden()) else pill
+        source = self.feature_chips[idx]
         top_left = source.mapToGlobal(source.rect().topLeft())
         anchor = QRect(top_left, source.size())
         screen = QGuiApplication.screenAt(anchor.center())

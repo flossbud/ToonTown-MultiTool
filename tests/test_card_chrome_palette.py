@@ -115,7 +115,7 @@ def test_light_track_color_is_white(make_tab):
 def test_feature_pill_light_chrome_flag(make_tab):
     tab = make_tab("light")
     tab._compact.set_card_brand(0, "ttr", enabled=False)
-    assert tab.feature_pills[0]._light_chrome is True
+    assert tab.feature_chips[0]._light_chrome is True
     tab2 = make_tab("dark")
     tab2._compact.set_card_brand(0, "ttr", enabled=False)
-    assert tab2.feature_pills[0]._light_chrome is False
+    assert tab2.feature_chips[0]._light_chrome is False

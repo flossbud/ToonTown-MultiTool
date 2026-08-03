@@ -1,8 +1,7 @@
-"""Offscreen render probe for the feature-discovery states. Writes PNGs of
-(1) the pinwheel with both flags off (pill 'Enable features'), (2) Click Sync
-only (icon-only chip), (2b) Keep-Alive only (icon-only chip), (3) both on
-(discovery affordances gone), and (4) the popover with the ToS confirm expanded.
-For visual review against the bundle screenshots.
+"""Offscreen render probe for the always-visible feature-discovery chip. Writes
+PNGs with (1) both flags off, (2) Click Sync only, (3) Keep-Alive only, and
+(4) both flags on, followed by (5) the chip popover with its ToS confirmation
+expanded. Every pinwheel state keeps one sparkle chip in each card's toggle row.
 
 Run (on the box):
   TTMT_NO_VENV_REEXEC=1 QT_QPA_PLATFORM=offscreen \
@@ -81,20 +80,20 @@ def main(out_dir: str) -> None:
     tab.resize(844, 668)
     tab.show()
     app.processEvents()
-    tab.grab().save(os.path.join(out_dir, "01-both-off.png"))
+    tab.grab().save(os.path.join(out_dir, "01-both-off-chip.png"))
 
     sm.set("click_sync_enabled", True)
     app.processEvents()
-    tab.grab().save(os.path.join(out_dir, "02-one-on.png"))
+    tab.grab().save(os.path.join(out_dir, "02-click-sync-only-chip.png"))
 
     sm.set("click_sync_enabled", False)
     sm.set("keep_alive_enabled", True)
     app.processEvents()
-    tab.grab().save(os.path.join(out_dir, "02b-keep-alive-only.png"))
+    tab.grab().save(os.path.join(out_dir, "03-keep-alive-only-chip.png"))
 
     sm.set("click_sync_enabled", True)
     app.processEvents()
-    tab.grab().save(os.path.join(out_dir, "03-both-on-pill-gone.png"))
+    tab.grab().save(os.path.join(out_dir, "04-both-on-chip.png"))
 
     sm.set("click_sync_enabled", False)
     sm.set("keep_alive_enabled", False)
@@ -103,7 +102,7 @@ def main(out_dir: str) -> None:
     pop = tab._feature_popover
     pop._on_switch_clicked("ka")   # opens the ToS confirm
     app.processEvents()
-    pop.grab().save(os.path.join(out_dir, "04-popover-tos.png"))
+    pop.grab().save(os.path.join(out_dir, "05-chip-popover-tos.png"))
 
     svc = getattr(tab, "input_service", None)
     if svc is not None:
