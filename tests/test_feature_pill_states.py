@@ -82,13 +82,21 @@ def test_pill_release_outside_does_not_emit(qapp):
     assert hits == []
 
 
-def test_compact_pill_is_fixed_square(qapp):
+def test_compact_pill_has_fixed_size_policy(qapp):
     from tabs.multitoon._feature_pill import FeaturePill
     from PySide6.QtWidgets import QSizePolicy
     chip = FeaturePill(compact=True)
     assert chip.sizePolicy().horizontalPolicy() == QSizePolicy.Fixed
     assert chip.sizePolicy().verticalPolicy() == QSizePolicy.Fixed
-    assert chip.width() == chip.height()
+
+
+def test_non_compact_pill_expands_horizontally(qapp):
+    """The full-width bubble must still stretch across the controls column."""
+    from tabs.multitoon._feature_pill import FeaturePill
+    from PySide6.QtWidgets import QSizePolicy
+    pill = FeaturePill()
+    assert pill.sizePolicy().horizontalPolicy() == QSizePolicy.Expanding
+    assert pill.sizePolicy().verticalPolicy() == QSizePolicy.Fixed
 
 
 def test_compact_pill_click_emits(qapp):
