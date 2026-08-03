@@ -234,13 +234,18 @@ def test_chip_click_opens_popover_for_its_own_slot(qapp):
     assert seen == [0, 1, 2, 3]
 
 
-def test_chip_is_sized_from_card_metrics(qapp):
+@pytest.mark.parametrize("scale", [1.0, 1.5])
+def test_chip_is_sized_from_card_metrics(qapp, scale):
     from utils.overlay.card_metrics import CardMetrics
     tab, _ = _tab(qapp)
-    m = CardMetrics(1.0)
-    for chip in tab.feature_chips:
-        assert chip.width() == m.toggle_w
-        assert chip.height() == m.toggle_h
+    try:
+        m = CardMetrics(scale)
+        tab._compact.apply_metrics(m)
+        for chip in tab.feature_chips:
+            assert chip.width() == m.toggle_w
+            assert chip.height() == m.toggle_h
+    finally:
+        tab.input_service.shutdown()
 
 
 def test_chip_receives_paint_scale_from_layout(qapp):
