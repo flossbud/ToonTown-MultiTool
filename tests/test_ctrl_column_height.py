@@ -41,16 +41,19 @@ def _column_height(tab, i):
 def test_controls_column_never_exceeds_the_ceiling(qapp, click_sync, keep_alive):
     from tabs.multitoon_tab import MultitoonTab
     sm = _SignalingFakeSettings({
-        "click_sync_enabled": click_sync,
+        CLICK_SYNC_ENABLED: click_sync,
         "keep_alive_enabled": keep_alive,
     })
     tab = MultitoonTab(settings_manager=sm, window_manager=_FakeWindowManager())
-    for i in range(4):
-        h = _column_height(tab, i)
-        assert h <= CEILING, (
-            f"slot {i} column is {h}px with click_sync={click_sync} "
-            f"keep_alive={keep_alive}; ceiling is {CEILING}px"
-        )
+    try:
+        for i in range(4):
+            h = _column_height(tab, i)
+            assert h <= CEILING, (
+                f"slot {i} column is {h}px with click_sync={click_sync} "
+                f"keep_alive={keep_alive}; ceiling is {CEILING}px"
+            )
+    finally:
+        tab.input_service.shutdown()
 
 
 def test_keep_alive_only_was_the_regression(qapp):
@@ -58,4 +61,7 @@ def test_keep_alive_only_was_the_regression(qapp):
     from tabs.multitoon_tab import MultitoonTab
     sm = _SignalingFakeSettings({"keep_alive_enabled": True})
     tab = MultitoonTab(settings_manager=sm, window_manager=_FakeWindowManager())
-    assert _column_height(tab, 0) <= CEILING
+    try:
+        assert _column_height(tab, 0) <= CEILING
+    finally:
+        tab.input_service.shutdown()
