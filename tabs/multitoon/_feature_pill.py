@@ -27,19 +27,26 @@ _SPARKLE = [(12, 2), (14.2, 8.8), (21, 11), (14.2, 13.2),
 class FeaturePill(QWidget):
     clicked = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, compact: bool = False):
         super().__init__(parent)
         self._label = "Enable features"
         self._hover = 0.0
         self._dim = 0.0
         self._scale = 1.0
         self._light_chrome = False
+        self._compact = bool(compact)
         self._hover_anim = QVariantAnimation(self)
         self._hover_anim.setDuration(_HOVER_MS)
         self._hover_anim.valueChanged.connect(self._on_hover_value)
         self.setCursor(Qt.PointingHandCursor)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setFixedHeight(38)
+        if self._compact:
+            # Square chip that lives in the toggle row; the real size is set
+            # from CardMetrics (toggle_w/toggle_h) by _size_cell.
+            self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            self.setFixedSize(34, 34)
+        else:
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            self.setFixedHeight(38)
         self.setStyleSheet("background: transparent;")
 
     # -- API consumed by MultitoonTab / _CompactLayout ----------------------
@@ -98,6 +105,19 @@ class FeaturePill(QWidget):
         self.update()
 
     # -- paint -----------------------------------------------------------------
+    def _draw_sparkle(self, p, x: float, y: float, glyph: float, ink: QColor) -> None:
+        """Paint the four-point sparkle with its top-left at (x, y), sized to
+        `glyph`. Shared by both paint modes."""
+        path = QPainterPath()
+        pts = [(x + px / 24.0 * glyph, y + py / 24.0 * glyph) for px, py in _SPARKLE]
+        path.moveTo(*pts[0])
+        for pt in pts[1:]:
+            path.lineTo(*pt)
+        path.closeSubpath()
+        p.setPen(Qt.NoPen)
+        p.setBrush(ink)
+        p.drawPath(path)
+
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -125,31 +145,27 @@ class FeaturePill(QWidget):
         p.setBrush(Qt.NoBrush)
         p.drawRoundedRect(1, 1, w - 2, h - 2, radius - 1, radius - 1)
 
-        # Content: sparkle + label, centered as a group.
+        # Content: sparkle, plus the label unless this is the compact chip.
         text_a = round((191 + (255 - 191) * self._hover) * dim_f)
         ink = QColor("#64748b") if self._light_chrome else QColor(255, 255, 255)
         ink.setAlpha(text_a)
+        glyph = round(12 * self._scale)
+
+        if self._compact:
+            self._draw_sparkle(p, (w - glyph) / 2.0, (h - glyph) / 2.0, glyph, ink)
+            p.end()
+            return
+
         font = QFont(self.font())
         font.setPixelSize(max(8, round(12.5 * self._scale)))
         font.setBold(True)
         p.setFont(font)
         fm = QFontMetrics(font)
-        glyph = round(12 * self._scale)
         gap = round(7 * self._scale)
         text_w = fm.horizontalAdvance(self._label)
         total = glyph + gap + text_w
         x = (w - total) / 2.0
-        gy = (h - glyph) / 2.0
-
-        path = QPainterPath()
-        pts = [(x + px / 24.0 * glyph, gy + py / 24.0 * glyph) for px, py in _SPARKLE]
-        path.moveTo(*pts[0])
-        for pt in pts[1:]:
-            path.lineTo(*pt)
-        path.closeSubpath()
-        p.setPen(Qt.NoPen)
-        p.setBrush(ink)
-        p.drawPath(path)
+        self._draw_sparkle(p, x, (h - glyph) / 2.0, glyph, ink)
 
         p.setPen(ink)
         p.drawText(round(x + glyph + gap), 0, text_w + 4, h,

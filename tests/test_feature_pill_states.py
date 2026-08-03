@@ -82,6 +82,59 @@ def test_pill_release_outside_does_not_emit(qapp):
     assert hits == []
 
 
+def test_compact_pill_is_fixed_square(qapp):
+    from tabs.multitoon._feature_pill import FeaturePill
+    from PySide6.QtWidgets import QSizePolicy
+    chip = FeaturePill(compact=True)
+    assert chip.sizePolicy().horizontalPolicy() == QSizePolicy.Fixed
+    assert chip.sizePolicy().verticalPolicy() == QSizePolicy.Fixed
+    assert chip.width() == chip.height()
+
+
+def test_compact_pill_click_emits(qapp):
+    from tabs.multitoon._feature_pill import FeaturePill
+    chip = FeaturePill(compact=True)
+    chip.resize(34, 36)
+    hits = []
+    chip.clicked.connect(lambda: hits.append(True))
+    QTest.mouseClick(chip, Qt.LeftButton, pos=QPoint(17, 18))
+    assert hits == [True]
+
+
+def test_compact_pill_paints_no_text_across_envelope(qapp):
+    """The chip is sparkle-only. Painting must not depend on the label, so a
+    long label must produce a pixel-identical grab to an empty one."""
+    from tabs.multitoon._feature_pill import FeaturePill
+    from utils.overlay.card_metrics import CardMetrics
+    chip = FeaturePill(compact=True)
+    for scale in (0.5, 1.0, 1.75):
+        m = CardMetrics(scale)
+        chip.setFixedSize(m.toggle_w, m.toggle_h)
+        chip.set_paint_scale(m.scale)
+        for dim in (0.0, 1.0):
+            chip.set_dim_progress(dim)
+            assert not chip.grab().toImage().isNull()
+    m = CardMetrics(1.0)
+    chip.setFixedSize(m.toggle_w, m.toggle_h)
+    chip.set_paint_scale(1.0)
+    chip.set_dim_progress(0.0)
+    chip.set_label("")
+    empty = chip.grab().toImage()
+    chip.set_label("An unexpectedly long feature discovery label")
+    assert chip.grab().toImage() == empty
+
+
+def test_non_compact_pill_still_paints_label(qapp):
+    """Regression guard: the full-width bubble keeps its text."""
+    from tabs.multitoon._feature_pill import FeaturePill
+    pill = FeaturePill()
+    pill.resize(158, 38)
+    pill.set_label("")
+    empty = pill.grab().toImage()
+    pill.set_label("Enable features")
+    assert pill.grab().toImage() != empty
+
+
 # ---- Tab integration: label state machine driven through REAL settings
 # writes (the fake fires callbacks like the real SettingsManager), never by
 # calling handlers directly (false-green law). ----
