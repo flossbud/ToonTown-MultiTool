@@ -91,7 +91,7 @@ CTRL_W = _METRICS.ctrl_w
 TOGGLE_W, TOGGLE_H = _METRICS.toggle_w, _METRICS.toggle_h
 KA_PILL_H = _METRICS.ka_pill_h
 KEYSET_H = _METRICS.keyset_h
-KA_DOT = _METRICS.ka_dot              # lightning toggle diameter inside the KA pill
+KA_DOT = _METRICS.ka_dot              # stopwatch toggle diameter inside the KA pill
 
 STATUS_TOP_MARGIN = _METRICS.status_top_margin
 
@@ -1254,7 +1254,7 @@ class _CompactLayout(QWidget):
         at *cell_index*.
 
         These are the only widgets that stay opaque + clickable in transparent
-        peek mode (the toggles, the keep-alive lightning button, and the keyset
+        peek mode (the toggles, the keep-alive stopwatch button, and the keyset
         selector). The keep-alive button alone blocks clicks - NOT its enclosing
         pill, so the progress bar and the pill's padding stay click-through.
         The feature-discovery pill is likewise click-through by design: it is
@@ -1384,7 +1384,7 @@ class _CompactLayout(QWidget):
         cell["toggle_row"].addWidget(tab.click_sync_buttons[i])
         cell["toggle_row"].addStretch(1)
 
-        # Keep-alive pill leaf: lightning toggle + progress bar.
+        # Keep-alive pill leaf: stopwatch toggle + progress bar.
         ka_btn = tab.keep_alive_buttons[i]
         ka_bar = tab.ka_progress_bars[i]
         ka_bar.setMaximumWidth(16777215)
@@ -1508,7 +1508,7 @@ class _CompactLayout(QWidget):
             b.setFixedSize(m.toggle_w, m.toggle_h)
             b.setIconSize(ts)
 
-        # Keep-alive pill height + lightning dot + progress bar.
+        # Keep-alive pill height + stopwatch dot + progress bar.
         cell["ka_pill"].setFixedHeight(m.ka_pill_h)
         # KA pill's own internal margins + spacing (layout-owned literals: 5/11
         # margins, 9 spacing at scale 1.0) scale with the metric so the pill's
@@ -1734,7 +1734,7 @@ class _CompactLayout(QWidget):
     # ── Control chrome owned by the layout ───────────────────────────────────
     def _style_ka_pill(self, cell_idx: int) -> None:
         """Style the keep-alive pill of SHELL `cell_idx` (a layout-owned container;
-        the lightning toggle + progress bar inside it are styled by MultitoonTab).
+        the stopwatch toggle + progress bar inside it are styled by MultitoonTab).
         Indexed by shell, not slot: the pill is part of the shell structure
         (objectName ka_pill_{cell_idx}), so content routed into this shell uses it."""
         cell = self._cells[cell_idx]
