@@ -1,7 +1,8 @@
 """Offscreen render probe for the feature-discovery states. Writes PNGs of
-(1) the pinwheel with both flags off (pill 'Enable features'), (2) one flag
-on ('More features'), (3) both on (pill gone), and (4) the popover with the
-ToS confirm expanded. For visual review against the bundle screenshots.
+(1) the pinwheel with both flags off (pill 'Enable features'), (2) Click Sync
+only (icon-only chip), (2b) Keep-Alive only (icon-only chip), (3) both on
+(discovery affordances gone), and (4) the popover with the ToS confirm expanded.
+For visual review against the bundle screenshots.
 
 Run (on the box):
   TTMT_NO_VENV_REEXEC=1 QT_QPA_PLATFORM=offscreen \
@@ -83,7 +84,12 @@ def main(out_dir: str) -> None:
     app.processEvents()
     tab.grab().save(os.path.join(out_dir, "02-one-on.png"))
 
+    sm.set("click_sync_enabled", False)
     sm.set("keep_alive_enabled", True)
+    app.processEvents()
+    tab.grab().save(os.path.join(out_dir, "02b-keep-alive-only.png"))
+
+    sm.set("click_sync_enabled", True)
     app.processEvents()
     tab.grab().save(os.path.join(out_dir, "03-both-on-pill-gone.png"))
 
@@ -99,7 +105,7 @@ def main(out_dir: str) -> None:
     svc = getattr(tab, "input_service", None)
     if svc is not None:
         svc.shutdown()
-    print(f"wrote 4 PNGs to {out_dir}")
+    print(f"wrote 5 PNGs to {out_dir}")
 
 
 if __name__ == "__main__":
