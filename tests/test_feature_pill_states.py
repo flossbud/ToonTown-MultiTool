@@ -193,6 +193,9 @@ class _FakeWindowManager(QObject):
     def disable_detection(self):
         pass
 
+    def get_active_window(self):
+        return None
+
 
 def _tab(qapp, initial=None):
     from tabs.multitoon_tab import MultitoonTab
@@ -220,11 +223,17 @@ def test_chips_built_and_placed_in_toggle_row(qapp):
         assert row.itemAt(row.count() - 1).widget() is None   # the stretch
 
 
-def test_chip_click_opens_popover(qapp):
+def test_chip_click_opens_popover_for_its_own_slot(qapp):
     tab, _ = _tab(qapp)
-    tab.feature_chips[2].clicked.emit()
-    assert tab._feature_popover is not None
-    tab._feature_popover.hide()
+    seen = []
+    original = tab._open_feature_popover
+    tab._open_feature_popover = lambda idx: seen.append(idx)
+    try:
+        for i in range(4):
+            tab.feature_chips[i].clicked.emit()
+    finally:
+        tab._open_feature_popover = original
+    assert seen == [0, 1, 2, 3]
 
 
 def test_chip_is_sized_from_card_metrics(qapp):
@@ -234,6 +243,30 @@ def test_chip_is_sized_from_card_metrics(qapp):
     for chip in tab.feature_chips:
         assert chip.width() == m.toggle_w
         assert chip.height() == m.toggle_h
+
+
+def test_chip_receives_paint_scale_from_layout(qapp):
+    from utils.overlay.card_metrics import CardMetrics
+    tab, _ = _tab(qapp)
+    m = CardMetrics(1.5)
+    tab._compact.apply_metrics(m)
+    assert [chip._scale for chip in tab.feature_chips] == [m.scale] * 4
+
+
+def test_chip_receives_light_chrome_from_card_brand(qapp):
+    tab, _ = _tab(qapp, {"theme": "light"})
+    for i in range(4):
+        tab._compact.set_card_brand(i, None, enabled=False)
+    assert [chip._light_chrome for chip in tab.feature_chips] == [True] * 4
+
+
+def test_chip_receives_dim_progress_from_card(qapp):
+    tab, _ = _tab(qapp)
+    progress = 0.375
+    for i in range(4):
+        cell = tab._compact._cells[tab._compact._slot_to_cell[i]]
+        tab._compact._apply_dim_progress(cell, i, progress)
+    assert [chip._dim for chip in tab.feature_chips] == [progress] * 4
 
 
 def test_label_both_off_enable_features(qapp):
