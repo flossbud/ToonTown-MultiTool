@@ -1108,9 +1108,9 @@ class _CompactLayout(QWidget):
 
         portrait_frame = _PortraitFrame(cell)
 
-        # Controls column: 3 toggles, KA pill, keyset pill.
+        # Controls column: 3 toggles + feature chip, KA pill, keyset pill.
         toggle_row = QHBoxLayout()
-        toggle_row.setSpacing(9)
+        toggle_row.setSpacing(7)
         toggle_row.setContentsMargins(0, 0, 0, 0)
 
         ka_pill = QFrame()
@@ -1124,17 +1124,12 @@ class _CompactLayout(QWidget):
         sel_holder.setContentsMargins(0, 0, 0, 0)
         sel_holder.setSpacing(0)
 
-        pill_holder = QHBoxLayout()
-        pill_holder.setContentsMargins(0, 0, 0, 0)
-        pill_holder.setSpacing(0)
-
         ctrl_col = QVBoxLayout()
         ctrl_col.setSpacing(10)
         ctrl_col.setContentsMargins(0, 0, 0, 0)
         ctrl_col.addLayout(toggle_row)
         ctrl_col.addWidget(ka_pill)
         ctrl_col.addLayout(sel_holder)
-        ctrl_col.addLayout(pill_holder)
         ctrl_wrap = QWidget()
         ctrl_wrap.setFixedWidth(self._metrics.ctrl_w)
         # Transparent so the controls sit directly on the accent body instead
@@ -1195,7 +1190,6 @@ class _CompactLayout(QWidget):
             "ka_group": ka_pill,  # alias consumed by MultitoonTab
             "ka_lay": ka_lay,
             "sel_holder": sel_holder,
-            "pill_holder": pill_holder,
             "name_holder": name_holder,
             "stats_row": stats_row,
             "cfg": cfg,
@@ -1257,9 +1251,9 @@ class _CompactLayout(QWidget):
         peek mode (the toggles, the keep-alive stopwatch button, and the keyset
         selector). The keep-alive button alone blocks clicks - NOT its enclosing
         pill, so the progress bar and the pill's padding stay click-through.
-        The feature-discovery pill is likewise click-through by design: it is
-        a discovery affordance, not a gameplay control, so it stays inert
-        during the transient see-through peek.
+        The feature-discovery affordances are likewise click-through by design:
+        neither the bubble nor the chip is a gameplay control, so both stay
+        inert during the transient see-through peek.
         Coordinates are relative to the shell cell root at the current
         (framed 1.0) size; the overlay controller scales them by the overlay zoom.
         Skips any widget that is missing or zero-sized (defensive).
@@ -1375,13 +1369,15 @@ class _CompactLayout(QWidget):
         _, status_dot = tab.toon_labels[i]
         status_dot.setParent(cell["portrait_frame"])
 
-        # Toggle row: enable / chat / click-sync.
+        # Toggle row: enable / chat / click-sync / feature chip.
         for b in (tab.toon_buttons[i], tab.chat_buttons[i], tab.click_sync_buttons[i]):
             b.setText("")
         clear_layout(cell["toggle_row"])
         cell["toggle_row"].addWidget(tab.toon_buttons[i])
         cell["toggle_row"].addWidget(tab.chat_buttons[i])
         cell["toggle_row"].addWidget(tab.click_sync_buttons[i])
+        if i < len(tab.feature_chips):
+            cell["toggle_row"].addWidget(tab.feature_chips[i])
         cell["toggle_row"].addStretch(1)
 
         # Keep-alive pill leaf: stopwatch toggle + progress bar.
@@ -1398,12 +1394,6 @@ class _CompactLayout(QWidget):
         sel.setMaximumWidth(16777215)
         clear_layout(cell["sel_holder"])
         cell["sel_holder"].addWidget(sel)
-
-        # Feature-discovery pill leaf (bottom of the controls column).
-        # Visibility/label are owned by MultitoonTab._refresh_feature_pills.
-        if i < len(tab.feature_pills):
-            clear_layout(cell["pill_holder"])
-            cell["pill_holder"].addWidget(tab.feature_pills[i])
 
         # Name leaf: name expands to the card's outer edge so it elides.
         name_label, _ = tab.toon_labels[i]
@@ -1482,7 +1472,14 @@ class _CompactLayout(QWidget):
         # the portrait-badge inset/border/pattern-tile/fallback-fonts
         # (tabs/multitoon/_tab.py).
         cell["content"].setSpacing(m.icon_px(12))
-        cell["toggle_row"].setSpacing(m.icon_px(9))
+        # Toggle-row spacing must fit FOUR fixed-width children (the three
+        # toggles plus the feature chip) inside the fixed ctrl_w. toggle_w,
+        # icon_px and ctrl_w each round independently from their own bases, so
+        # a fixed icon_px(7) overruns the container at some scales (0.5, 0.52,
+        # 0.84, 1.08, 1.40). Derive from the space that actually exists.
+        toggle_gap = max(0, min(m.icon_px(7),
+                                (m.ctrl_w - 4 * m.toggle_w) // 3))
+        cell["toggle_row"].setSpacing(toggle_gap)
         cell["ctrl_col"].setSpacing(m.icon_px(10))
         cell["body_row"].setSpacing(m.icon_px(10))
         cell["stats_row"].setSpacing(m.icon_px(16))
@@ -1531,11 +1528,11 @@ class _CompactLayout(QWidget):
         if hasattr(sel, "set_paint_scale"):
             sel.set_paint_scale(m.scale)
 
-        # Feature pill: same 38px-class capsule as the keyset stepper.
-        if i < len(tab.feature_pills):
-            pill = tab.feature_pills[i]
-            pill.setFixedHeight(m.keyset_h)
-            pill.set_paint_scale(m.scale)
+        # Feature chip: a toggle-sized square in the toggle row.
+        if i < len(tab.feature_chips):
+            chip = tab.feature_chips[i]
+            chip.setFixedSize(m.toggle_w, m.toggle_h)
+            chip.set_paint_scale(m.scale)
 
         # Name font.
         name_label, _ = tab.toon_labels[i]
@@ -1659,8 +1656,8 @@ class _CompactLayout(QWidget):
             bg=pal.keyset_off_bg, text=pal.keyset_off_text,
             border=pal.keyset_off_border, label=pal.keyset_off_label,
         )
-        if i < len(tab.feature_pills):
-            tab.feature_pills[i].set_light_chrome(pal.pill_light_chrome)
+        if i < len(tab.feature_chips):
+            tab.feature_chips[i].set_light_chrome(pal.pill_light_chrome)
         status_dot = tab.toon_labels[i][1]
         if active:
             status_dot.set_cutout_border(pal.status_cutout.name(), width=3.0)
@@ -1703,8 +1700,8 @@ class _CompactLayout(QWidget):
             tab.slot_badges[i].set_dim_progress(progress)
         if i < len(tab.set_selectors):
             tab.set_selectors[i].set_dim_progress(progress)
-        if i < len(tab.feature_pills):
-            tab.feature_pills[i].set_dim_progress(progress)
+        if i < len(tab.feature_chips):
+            tab.feature_chips[i].set_dim_progress(progress)
         # Name/stat ink: lerp rgb + alpha between the palette's lit and off
         # endpoints. Dark palette = white with the legacy 1.0->0.62 / 0.9->0.5
         # alpha ramp, producing byte-identical stylesheets.

@@ -1,6 +1,4 @@
-"""FeaturePill unit behavior (label, click signal, dim/scale API).
-Tab-level state-machine tests (label transitions driven through real
-settings writes) live in the same file and are added with the tab wiring."""
+"""FeaturePill chip unit behavior and MultitoonTab integration."""
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -17,74 +15,66 @@ def qapp():
     yield app
 
 
-def test_pill_defaults_and_label(qapp):
+def test_chip_click_emits(qapp):
     from tabs.multitoon._feature_pill import FeaturePill
-    pill = FeaturePill()
-    assert pill.label() == "Enable features"
-    pill.set_label("More features")
-    assert pill.label() == "More features"
-
-
-def test_pill_click_emits(qapp):
-    from tabs.multitoon._feature_pill import FeaturePill
-    pill = FeaturePill()
-    pill.resize(158, 38)
+    chip = FeaturePill()
+    chip.resize(34, 36)
     hits = []
-    pill.clicked.connect(lambda: hits.append(True))
-    QTest.mouseClick(pill, Qt.LeftButton, pos=QPoint(79, 19))
+    chip.clicked.connect(lambda: hits.append(True))
+    QTest.mouseClick(chip, Qt.LeftButton, pos=QPoint(17, 18))
     assert hits == [True]
 
 
-def test_pill_dim_and_scale_apis(qapp):
+def test_chip_dim_and_scale_apis(qapp):
     from tabs.multitoon._feature_pill import FeaturePill
-    pill = FeaturePill()
-    pill.set_dim_progress(0.5)
-    pill.set_dim_progress(2.0)   # clamps, no raise
-    pill.set_paint_scale(1.5)
-    pill.set_paint_scale(1.5)    # idempotent, no raise
+    chip = FeaturePill()
+    chip.set_dim_progress(0.5)
+    chip.set_dim_progress(2.0)   # clamps, no raise
+    chip.set_paint_scale(1.5)
+    chip.set_paint_scale(1.5)    # idempotent, no raise
 
 
-def test_pill_paint_smoke_across_envelope(qapp):
-    """Exercise the paint path at the real control-column size across the
-    CardMetrics scale envelope, fully dimmed, and with a long label. The
-    widget is almost entirely paint math; grab() renders offscreen and any
-    QPainter misuse raises or warns."""
+def test_chip_paint_smoke_across_scale_envelope(qapp):
+    """Exercise the sparkle-only paint path across CardMetrics' scale range."""
     from tabs.multitoon._feature_pill import FeaturePill
     from utils.overlay.card_metrics import CardMetrics
-    pill = FeaturePill()
+    chip = FeaturePill()
     for scale in (0.5, 1.0, 1.75):
         m = CardMetrics(scale)
-        pill.setFixedHeight(m.keyset_h)
-        pill.resize(m.ctrl_w, m.keyset_h)
-        pill.set_paint_scale(m.scale)
+        chip.setFixedSize(m.toggle_w, m.toggle_h)
+        chip.set_paint_scale(m.scale)
         for dim in (0.0, 1.0):
-            pill.set_dim_progress(dim)
-            img = pill.grab().toImage()
+            chip.set_dim_progress(dim)
+            img = chip.grab().toImage()
             assert not img.isNull()
-    pill.set_label("An unexpectedly long feature discovery label")
-    assert not pill.grab().toImage().isNull()
 
 
-def test_pill_release_outside_does_not_emit(qapp):
+def test_chip_release_outside_does_not_emit(qapp):
     from PySide6.QtCore import QPointF, QEvent
     from PySide6.QtGui import QMouseEvent
     from PySide6.QtWidgets import QApplication
     from tabs.multitoon._feature_pill import FeaturePill
-    pill = FeaturePill()
-    pill.resize(158, 38)
+    chip = FeaturePill()
+    chip.resize(34, 36)
     hits = []
-    pill.clicked.connect(lambda: hits.append(True))
+    chip.clicked.connect(lambda: hits.append(True))
     outside = QPointF(500.0, 500.0)
     ev = QMouseEvent(QEvent.MouseButtonRelease, outside,
-                     pill.mapToGlobal(outside.toPoint()),
+                     chip.mapToGlobal(outside.toPoint()),
                      Qt.LeftButton, Qt.NoButton, Qt.NoModifier)
-    QApplication.sendEvent(pill, ev)
+    QApplication.sendEvent(chip, ev)
     assert hits == []
 
 
-# ---- Tab integration: label state machine driven through REAL settings
-# writes (the fake fires callbacks like the real SettingsManager), never by
-# calling handlers directly (false-green law). ----
+def test_chip_has_fixed_size_policy(qapp):
+    from tabs.multitoon._feature_pill import FeaturePill
+    from PySide6.QtWidgets import QSizePolicy
+    chip = FeaturePill()
+    assert chip.sizePolicy().horizontalPolicy() == QSizePolicy.Fixed
+    assert chip.sizePolicy().verticalPolicy() == QSizePolicy.Fixed
+
+
+# ---- Tab integration -----------------------------------------------------
 
 from PySide6.QtCore import QObject, Signal
 from utils.settings_keys import CLICK_SYNC_ENABLED
@@ -132,6 +122,9 @@ class _FakeWindowManager(QObject):
     def disable_detection(self):
         pass
 
+    def get_active_window(self):
+        return None
+
 
 def _tab(qapp, initial=None):
     from tabs.multitoon_tab import MultitoonTab
@@ -139,44 +132,86 @@ def _tab(qapp, initial=None):
     return MultitoonTab(settings_manager=sm, window_manager=_FakeWindowManager()), sm
 
 
-def test_pills_built_and_placed_in_all_cells(qapp):
+def test_chips_built_and_placed_in_toggle_row(qapp):
     tab, _ = _tab(qapp)
-    assert len(tab.feature_pills) == 4
+    assert len(tab.feature_chips) == 4
     for i in range(4):
-        holder = tab._compact._card_slots[i]["pill_holder"]
-        assert holder.itemAt(0).widget() is tab.feature_pills[i]
+        row = tab._compact._card_slots[i]["toggle_row"]
+        widgets = [row.itemAt(n).widget() for n in range(row.count())]
+        assert tab.feature_chips[i] in widgets
+        # The chip sits after the three toggles and before the trailing stretch.
+        assert widgets.index(tab.feature_chips[i]) == 3
+        assert row.itemAt(row.count() - 1).widget() is None   # the stretch
 
 
-def test_label_both_off_enable_features(qapp):
+def test_chip_click_opens_popover_for_its_own_slot(qapp):
     tab, _ = _tab(qapp)
-    for pill in tab.feature_pills:
-        assert pill.label() == "Enable features"
-        assert pill.isHidden() is False
+    seen = []
+    original = tab._open_feature_popover
+    tab._open_feature_popover = lambda idx: seen.append(idx)
+    try:
+        for i in range(4):
+            tab.feature_chips[i].clicked.emit()
+    finally:
+        tab._open_feature_popover = original
+    assert seen == [0, 1, 2, 3]
 
 
-def test_label_one_on_more_features(qapp):
-    tab, sm = _tab(qapp)
-    sm.set(CLICK_SYNC_ENABLED, True)
-    for pill in tab.feature_pills:
-        assert pill.label() == "More features"
+@pytest.mark.parametrize("scale", [1.0, 1.5])
+def test_chip_is_sized_from_card_metrics(qapp, scale):
+    from utils.overlay.card_metrics import CardMetrics
+    tab, _ = _tab(qapp)
+    try:
+        m = CardMetrics(scale)
+        tab._compact.apply_metrics(m)
+        for chip in tab.feature_chips:
+            assert chip.width() == m.toggle_w
+            assert chip.height() == m.toggle_h
+    finally:
+        tab.input_service.shutdown()
 
 
-def test_both_on_hides_all_pills(qapp):
-    tab, sm = _tab(qapp)
-    sm.set(CLICK_SYNC_ENABLED, True)
-    sm.set("keep_alive_enabled", True)
-    for pill in tab.feature_pills:
-        assert pill.isHidden() is True
+def test_chip_receives_paint_scale_from_layout(qapp):
+    from utils.overlay.card_metrics import CardMetrics
+    tab, _ = _tab(qapp)
+    m = CardMetrics(1.5)
+    tab._compact.apply_metrics(m)
+    assert [chip._scale for chip in tab.feature_chips] == [m.scale] * 4
 
 
-def test_flag_off_again_restores_pill(qapp):
-    tab, sm = _tab(qapp, {"click_sync_enabled": True, "keep_alive_enabled": True})
-    for pill in tab.feature_pills:
-        assert pill.isHidden() is True
-    sm.set("keep_alive_enabled", False)
-    for pill in tab.feature_pills:
-        assert pill.isHidden() is False
-        assert pill.label() == "More features"
+def test_chip_receives_light_chrome_from_card_brand(qapp):
+    tab, _ = _tab(qapp, {"theme": "light"})
+    for i in range(4):
+        tab._compact.set_card_brand(i, None, enabled=False)
+    assert [chip._light_chrome for chip in tab.feature_chips] == [True] * 4
+
+
+def test_chip_receives_dim_progress_from_card(qapp):
+    tab, _ = _tab(qapp)
+    progress = 0.375
+    for i in range(4):
+        cell = tab._compact._cells[tab._compact._slot_to_cell[i]]
+        tab._compact._apply_dim_progress(cell, i, progress)
+    assert [chip._dim for chip in tab.feature_chips] == [progress] * 4
+
+
+def _visible(widgets):
+    return [not w.isHidden() for w in widgets]
+
+
+@pytest.mark.parametrize("click_sync,keep_alive", [
+    (False, False),
+    (True, False),
+    (False, True),
+    (True, True),
+])
+def test_feature_chip_is_visible_for_every_flag_combination(
+        qapp, click_sync, keep_alive):
+    tab, _ = _tab(qapp, {
+        CLICK_SYNC_ENABLED: click_sync,
+        "keep_alive_enabled": keep_alive,
+    })
+    assert _visible(tab.feature_chips) == [True] * 4
 
 
 def test_popover_switch_reveals_controls_on_all_cards(qapp):
@@ -197,6 +232,19 @@ def test_popover_open_syncs_and_reflects_external_change(qapp):
     sm.set(CLICK_SYNC_ENABLED, True)   # e.g. Settings page flipped it
     assert tab._feature_popover._switches["sync"]._checked is True
     tab._feature_popover.hide()
+
+
+def test_popover_anchors_to_the_chip(qapp):
+    tab, _ = _tab(qapp)
+    tab._open_feature_popover(0)          # first call constructs the popover
+    tab._feature_popover.hide()
+    captured = []
+    tab._feature_popover.open_at = lambda anchor, above: captured.append(anchor)
+
+    tab._open_feature_popover(0)
+    chip = tab.feature_chips[0]
+    assert captured[-1].size() == chip.size()
+    assert captured[-1].topLeft() == chip.mapToGlobal(chip.rect().topLeft())
 
 
 def test_footer_signal_reaches_tab_signal(qapp):

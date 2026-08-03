@@ -1448,7 +1448,7 @@ class MultitoonTab(QWidget):
         self._chat_button_game_wants_visible = [True] * 4
         self.keep_alive_buttons = []
         self.ka_progress_bars = []
-        self.feature_pills = []
+        self.feature_chips = []
         self._feature_popover = None
         self.ka_groups = []
         self.set_selectors = []     # replaces movement_dropdowns
@@ -1732,9 +1732,9 @@ class MultitoonTab(QWidget):
             ka_bar = SmoothProgressBar()
             self.ka_progress_bars.append(ka_bar)
 
-            pill = FeaturePill()
-            pill.clicked.connect(lambda idx=i: self._open_feature_popover(idx))
-            self.feature_pills.append(pill)
+            chip = FeaturePill()
+            chip.clicked.connect(lambda idx=i: self._open_feature_popover(idx))
+            self.feature_chips.append(chip)
 
             selector = SetSelectorWidget(self.keymap_manager)
             selector.setFixedHeight(28)
@@ -1774,7 +1774,6 @@ class MultitoonTab(QWidget):
 
         # Apply initial KA widget visibility based on master setting.
         self._init_keep_alive_visibility()
-        self._refresh_feature_pills()
 
     def set_layout_mode(self, mode: str) -> None:
         # The Multitoon tab uses a single fluid pinwheel layout at every window
@@ -3900,11 +3899,9 @@ class MultitoonTab(QWidget):
             # is no-op when widgets already match the setting.
             if self.isVisible():
                 self._maybe_animate_keep_alive_visibility()
-            self._refresh_feature_pills()
             if self._feature_popover is not None and self._feature_popover.isVisible():
                 self._feature_popover.sync_from_settings()
         elif key == CLICK_SYNC_ENABLED:
-            self._refresh_feature_pills()
             if self._feature_popover is not None and self._feature_popover.isVisible():
                 self._feature_popover.sync_from_settings()
 
@@ -4050,36 +4047,22 @@ class MultitoonTab(QWidget):
         if hasattr(self, "_full") and self._full is not None:
             self._full._set_keep_alive_collapsed(not target_visible)
 
-    def _refresh_feature_pills(self) -> None:
-        """Pill state machine (spec): both flags off -> 'Enable features';
-        exactly one on -> 'More features'; both on -> hidden (self-cleaning).
-        Reads the SAME keys Settings writes; called at build and on every
-        relevant settings change."""
-        sm = self.settings_manager
-        cs = bool(sm and sm.get(CLICK_SYNC_ENABLED, False))
-        ka = bool(sm and sm.get("keep_alive_enabled", False))
-        both_on = cs and ka
-        label = "More features" if (cs or ka) else "Enable features"
-        for pill in self.feature_pills:
-            pill.set_label(label)
-            pill.setVisible(not both_on)
-
     def _open_feature_popover(self, idx: int) -> None:
-        """Open the feature popover anchored to slot idx's pill. Above/below
-        follows the pill's position on SCREEN (works identically framed and
-        in Float UI, where cards are separate top-level surfaces). The
-        popover is created once and only ever re-anchored: settings-change
-        handlers run synchronously inside its own switch clicks, so it must
-        never be torn down from those paths."""
+        """Open the feature popover anchored to slot idx's discovery chip.
+        Above/below follows the chip's position on SCREEN
+        (works identically framed and in Float UI, where cards are separate
+        top-level surfaces). The popover is created once and only ever
+        re-anchored: settings-change handlers run synchronously inside its own
+        switch clicks, so it must never be torn down from those paths."""
         from PySide6.QtCore import QRect
         from PySide6.QtGui import QGuiApplication
         if self._feature_popover is None:
             self._feature_popover = FeatureDiscoveryPopover(self.settings_manager)
             self._feature_popover.settings_requested.connect(
                 self.features_settings_requested.emit)
-        pill = self.feature_pills[idx]
-        top_left = pill.mapToGlobal(pill.rect().topLeft())
-        anchor = QRect(top_left, pill.size())
+        source = self.feature_chips[idx]
+        top_left = source.mapToGlobal(source.rect().topLeft())
+        anchor = QRect(top_left, source.size())
         screen = QGuiApplication.screenAt(anchor.center())
         geo = screen.availableGeometry() if screen else None
         screen_cy = geo.center().y() if geo is not None else anchor.center().y() - 1
@@ -4318,4 +4301,3 @@ def _dispatch_keep_alive_cycle(action, fire_toons, window_manager, keymap_manage
         input_service.send_keep_alive_to_window(wid, key)
         fired += 1
     return fired
-
