@@ -920,11 +920,11 @@ class SettingsTab(QWidget):
         self._build_chat_handling_card(page)
 
     def _build_keep_alive_card(self, page):
-        from utils.icon_factory import make_lightning_icon
+        from utils.icon_factory import make_stopwatch_icon
         lay = page._panel_layout
         insert_at = lay.count() - 1
 
-        card = CardSurface("orange", title="Keep-Alive", icon=make_lightning_icon(20))
+        card = CardSurface("orange", title="Keep-Alive", icon=make_stopwatch_icon(20))
         self._cards.append(card)
         self._keep_alive_panel = card
 

@@ -17,7 +17,7 @@ from services.sleep_inhibitor import SleepInhibitor
 from utils.theme_manager import (
     resolve_theme, get_theme_colors, apply_card_shadow,
     make_chat_icon, make_click_sync_icon, make_click_sync_warning_icon,
-    make_refresh_icon, make_lightning_icon,
+    make_refresh_icon, make_stopwatch_icon,
     make_heart_icon, make_jellybean_icon,
     get_set_color, SmoothProgressBar, make_section_label,
 )
@@ -1298,7 +1298,7 @@ def compute_effective_chat_enabled(
 
 # Net-new keep-alive orange (the theme's accent_orange #c47a2a reads too brown
 # for this surface). Pairs with a lighter border tint. Used by the pinwheel
-# layout's lightning toggle + progress fill.
+# layout's stopwatch toggle + progress fill.
 KA_ORANGE = "#ff9500"
 KA_ORANGE_BORDER = "#ffb04d"
 
@@ -1330,7 +1330,7 @@ def _pin_toggle_qss(accent: str, on: bool,
 
 
 def _pin_ka_off_qss(chip: "tuple[str, str, str, str] | None" = None) -> str:
-    """QSS for the 28px keep-alive lightning toggle in its off state. `chip`
+    """QSS for the 28px keep-alive stopwatch toggle in its off state. `chip`
     injects the palette (bg, border, hover, disabled) so a light card gets a
     solid recessed chip; None keeps the legacy dark chip with white borders."""
     if chip is None:
@@ -1354,7 +1354,7 @@ def _pin_ka_off_qss(chip: "tuple[str, str, str, str] | None" = None) -> str:
 
 
 def _pin_ka_on_qss(fill: str, border: str) -> str:
-    """QSS for the keep-alive lightning toggle in its on state (orange/red),
+    """QSS for the keep-alive stopwatch toggle in its on state (orange/red),
     brightening on hover."""
     hov = lighten_rgb(QColor(fill), 0.15).name()
     hov_b = lighten_rgb(QColor(border), 0.15).name()
@@ -1702,7 +1702,7 @@ class MultitoonTab(QWidget):
             ka_btn.setChecked(False)
             ka_btn.setFixedHeight(32)
             ka_btn.setFixedWidth(32)
-            ka_btn.setIcon(make_lightning_icon(14))
+            ka_btn.setIcon(make_stopwatch_icon(14))
             ka_btn.setToolTip("Toggle keep-alive for this toon")
             ka_btn.clicked.connect(lambda checked, idx=i: self.toggle_keep_alive(idx))
             ka_btn.rapid_fire_toggled.connect(lambda state, idx=i: self.toggle_rapid_fire(idx, state))
@@ -2356,7 +2356,7 @@ class MultitoonTab(QWidget):
             )
             chip = self._chip_colors()
             ka_ink = QColor(c['text_disabled']) if chip is not None else QColor(255, 255, 255, 90)
-            ka_btn.setIcon(make_lightning_icon(13, ka_ink))
+            ka_btn.setIcon(make_stopwatch_icon(13, ka_ink))
             ka_btn.setStyleSheet(_pin_ka_off_qss(chip=chip))
             if bar:
                 bar.set_fill_color(KA_ORANGE)
@@ -2376,7 +2376,7 @@ class MultitoonTab(QWidget):
         else:
             chip = self._chip_colors()
             ka_ink = QColor(c['text_disabled']) if chip is not None else QColor(255, 255, 255, 128)
-            ka_btn.setIcon(make_lightning_icon(13, ka_ink))
+            ka_btn.setIcon(make_stopwatch_icon(13, ka_ink))
             ka_btn.setStyleSheet(_pin_ka_off_qss(chip=chip))
             # Fill width is 0 when keep-alive is off.
             if bar:
@@ -2396,7 +2396,7 @@ class MultitoonTab(QWidget):
         is_rf = getattr(self, 'rapid_fire_enabled', [False]*4)[index]
         fill, border = _ka_fill_border(is_rf, progress)
         ink_a = round(255 + (170 - 255) * max(0.0, min(1.0, progress)))   # 255 -> 170
-        ka_btn.setIcon(make_lightning_icon(13, QColor(255, 255, 255, ink_a)))
+        ka_btn.setIcon(make_stopwatch_icon(13, QColor(255, 255, 255, ink_a)))
         ka_btn.setStyleSheet(_pin_ka_on_qss(fill, border))
         if bar:
             bar.set_fill_color(fill)

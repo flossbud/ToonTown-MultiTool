@@ -243,35 +243,43 @@ def make_mouse_icon(size: int = 16) -> QIcon:
     return QIcon(pixmap)
 
 
-def make_lightning_icon(size: int = 14, color: QColor | None = None) -> QIcon:
-    """Draw a stylised lightning bolt for the keep-alive toggle."""
+def make_stopwatch_icon(size: int = 14, color: QColor | None = None) -> QIcon:
+    """Draw a stylised stopwatch for the keep-alive toggle."""
     pixmap = QPixmap(size, size)
     pixmap.fill(QColor(0, 0, 0, 0))
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.Antialiasing)
 
-    fill = color or QColor(220, 220, 220)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(fill)
+    ink = color or QColor(220, 220, 220)
 
-    # Classic zigzag bolt traced through 6 points. Coordinates are in
-    # normalized 0..1 space and scaled to `size`; tuned so the bolt
-    # reads at 14 px (the default for the Multitoon icon buttons).
-    norm_points = [
-        (0.55, 0.05),
-        (0.20, 0.55),
-        (0.45, 0.55),
-        (0.35, 0.95),
-        (0.80, 0.40),
-        (0.55, 0.40),
-    ]
-    path = QPainterPath()
-    px, py = norm_points[0]
-    path.moveTo(px * size, py * size)
-    for nx, ny in norm_points[1:]:
-        path.lineTo(nx * size, ny * size)
-    path.closeSubpath()
-    painter.drawPath(path)
+    # Coordinates are in normalized 0..1 space and scaled to `size`; tuned so
+    # the case, crown and hand stay separable at 13 px (the Multitoon pill
+    # toggle) without going spindly at 20 px (the Settings card).
+    stroke = max(1.0, size * 0.105)
+    cx, cy = 0.5 * size, 0.585 * size
+    radius = 0.345 * size
+
+    # Crown (the plunger above the case), drawn first so the case stroke
+    # overlaps its base rather than leaving a seam.
+    crown_w, crown_h = size * 0.26, size * 0.17
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(ink)
+    painter.drawRoundedRect(
+        QRectF(cx - crown_w / 2, size * 0.05, crown_w, crown_h),
+        stroke * 0.4, stroke * 0.4,
+    )
+
+    # Case ring + a single hand pointing to roughly 1-2 o'clock.
+    pen = QPen(ink, stroke)
+    pen.setCapStyle(Qt.RoundCap)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+    painter.drawEllipse(QPointF(cx, cy), radius, radius)
+    hand = radius * 0.62
+    painter.drawLine(
+        QPointF(cx, cy),
+        QPointF(cx + hand * 0.72, cy - hand * 0.72),
+    )
 
     painter.end()
     return QIcon(pixmap)

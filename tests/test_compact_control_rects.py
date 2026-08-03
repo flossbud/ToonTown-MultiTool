@@ -110,7 +110,7 @@ def test_control_rects_follow_permuted_shells(qt_app, monkeypatch, tmp_path):
 
 
 def test_keep_alive_control_rect_is_button_not_pill(qt_app, monkeypatch, tmp_path):
-    # Only the keep-alive lightning button blocks clicks; its enclosing pill (which
+    # Only the keep-alive stopwatch button blocks clicks; its enclosing pill (which
     # also holds the progress bar) must stay click-through. The button rect must be
     # the one in control_rects AND sit strictly inside the wider pill.
     tab = _make_tab(monkeypatch, tmp_path)
