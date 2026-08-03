@@ -4056,18 +4056,23 @@ class MultitoonTab(QWidget):
             self._full._set_keep_alive_collapsed(not target_visible)
 
     def _refresh_feature_pills(self) -> None:
-        """Pill state machine (spec): both flags off -> 'Enable features';
-        exactly one on -> 'More features'; both on -> hidden (self-cleaning).
-        Reads the SAME keys Settings writes; called at build and on every
-        relevant settings change."""
+        """Three-state discovery affordance. Both flags off -> the full-width
+        'Enable features' bubble at the bottom of the controls column. Exactly
+        one on -> the icon-only chip in the toggle row instead, which keeps the
+        column at its 132px ceiling (bubble + keep-alive pill together overflow
+        the card). Both on -> neither; the affordance is self-cleaning. Reads
+        the SAME keys Settings writes; called at build and on every relevant
+        settings change."""
         sm = self.settings_manager
         cs = bool(sm and sm.get(CLICK_SYNC_ENABLED, False))
         ka = bool(sm and sm.get("keep_alive_enabled", False))
+        any_on = cs or ka
         both_on = cs and ka
-        label = "More features" if (cs or ka) else "Enable features"
         for pill in self.feature_pills:
-            pill.set_label(label)
-            pill.setVisible(not both_on)
+            pill.set_label("Enable features")
+            pill.setVisible(not any_on)
+        for chip in self.feature_chips:
+            chip.setVisible(any_on and not both_on)
 
     def _open_feature_popover(self, idx: int) -> None:
         """Open the feature popover anchored to slot idx's pill. Above/below
@@ -4083,8 +4088,10 @@ class MultitoonTab(QWidget):
             self._feature_popover.settings_requested.connect(
                 self.features_settings_requested.emit)
         pill = self.feature_pills[idx]
-        top_left = pill.mapToGlobal(pill.rect().topLeft())
-        anchor = QRect(top_left, pill.size())
+        chip = self.feature_chips[idx] if idx < len(self.feature_chips) else None
+        source = chip if (chip is not None and not chip.isHidden()) else pill
+        top_left = source.mapToGlobal(source.rect().topLeft())
+        anchor = QRect(top_left, source.size())
         screen = QGuiApplication.screenAt(anchor.center())
         geo = screen.availableGeometry() if screen else None
         screen_cy = geo.center().y() if geo is not None else anchor.center().y() - 1

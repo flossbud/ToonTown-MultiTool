@@ -21,8 +21,6 @@ def test_pill_defaults_and_label(qapp):
     from tabs.multitoon._feature_pill import FeaturePill
     pill = FeaturePill()
     assert pill.label() == "Enable features"
-    pill.set_label("More features")
-    assert pill.label() == "More features"
 
 
 def test_pill_click_emits(qapp):
@@ -276,11 +274,56 @@ def test_label_both_off_enable_features(qapp):
         assert pill.isHidden() is False
 
 
-def test_label_one_on_more_features(qapp):
+def _visible(widgets):
+    return [not w.isHidden() for w in widgets]
+
+
+def test_both_off_shows_bubble_only(qapp):
+    tab, _ = _tab(qapp)
+    assert _visible(tab.feature_pills) == [True] * 4
+    assert _visible(tab.feature_chips) == [False] * 4
+    for pill in tab.feature_pills:
+        assert pill.label() == "Enable features"
+
+
+def test_click_sync_only_shows_chip_only(qapp):
     tab, sm = _tab(qapp)
     sm.set(CLICK_SYNC_ENABLED, True)
+    assert _visible(tab.feature_pills) == [False] * 4
+    assert _visible(tab.feature_chips) == [True] * 4
+
+
+def test_keep_alive_only_shows_chip_only(qapp):
+    tab, sm = _tab(qapp)
+    sm.set("keep_alive_enabled", True)
+    assert _visible(tab.feature_pills) == [False] * 4
+    assert _visible(tab.feature_chips) == [True] * 4
+
+
+def test_both_on_hides_bubble_and_chip(qapp):
+    tab, sm = _tab(qapp)
+    sm.set(CLICK_SYNC_ENABLED, True)
+    sm.set("keep_alive_enabled", True)
+    assert _visible(tab.feature_pills) == [False] * 4
+    assert _visible(tab.feature_chips) == [False] * 4
+
+
+def test_turning_a_flag_back_off_restores_the_chip(qapp):
+    tab, sm = _tab(qapp, {"click_sync_enabled": True, "keep_alive_enabled": True})
+    assert _visible(tab.feature_chips) == [False] * 4
+    sm.set("keep_alive_enabled", False)
+    assert _visible(tab.feature_chips) == [True] * 4
+    assert _visible(tab.feature_pills) == [False] * 4
+
+
+def test_turning_both_flags_off_restores_the_bubble(qapp):
+    tab, sm = _tab(qapp, {"click_sync_enabled": True, "keep_alive_enabled": True})
+    sm.set("keep_alive_enabled", False)
+    sm.set(CLICK_SYNC_ENABLED, False)
+    assert _visible(tab.feature_pills) == [True] * 4
+    assert _visible(tab.feature_chips) == [False] * 4
     for pill in tab.feature_pills:
-        assert pill.label() == "More features"
+        assert pill.label() == "Enable features"
 
 
 def test_both_on_hides_all_pills(qapp):
@@ -289,16 +332,6 @@ def test_both_on_hides_all_pills(qapp):
     sm.set("keep_alive_enabled", True)
     for pill in tab.feature_pills:
         assert pill.isHidden() is True
-
-
-def test_flag_off_again_restores_pill(qapp):
-    tab, sm = _tab(qapp, {"click_sync_enabled": True, "keep_alive_enabled": True})
-    for pill in tab.feature_pills:
-        assert pill.isHidden() is True
-    sm.set("keep_alive_enabled", False)
-    for pill in tab.feature_pills:
-        assert pill.isHidden() is False
-        assert pill.label() == "More features"
 
 
 def test_popover_switch_reveals_controls_on_all_cards(qapp):
@@ -319,6 +352,28 @@ def test_popover_open_syncs_and_reflects_external_change(qapp):
     sm.set(CLICK_SYNC_ENABLED, True)   # e.g. Settings page flipped it
     assert tab._feature_popover._switches["sync"]._checked is True
     tab._feature_popover.hide()
+
+
+def test_popover_anchors_to_the_visible_affordance(qapp):
+    """With one feature on, the chip is the visible affordance - anchoring to
+    the hidden bubble would place the popover at a stale position."""
+    tab, sm = _tab(qapp)
+    tab._open_feature_popover(0)          # first call constructs the popover
+    tab._feature_popover.hide()
+    captured = []
+    tab._feature_popover.open_at = lambda anchor, above: captured.append(anchor)
+
+    sm.set(CLICK_SYNC_ENABLED, True)      # chip visible, bubble hidden
+    tab._open_feature_popover(0)
+    chip = tab.feature_chips[0]
+    assert captured[-1].size() == chip.size()
+    assert captured[-1].topLeft() == chip.mapToGlobal(chip.rect().topLeft())
+
+    sm.set(CLICK_SYNC_ENABLED, False)     # both off: bubble is visible again
+    tab._open_feature_popover(0)
+    pill = tab.feature_pills[0]
+    assert captured[-1].size() == pill.size()
+    assert captured[-1].topLeft() == pill.mapToGlobal(pill.rect().topLeft())
 
 
 def test_footer_signal_reaches_tab_signal(qapp):
