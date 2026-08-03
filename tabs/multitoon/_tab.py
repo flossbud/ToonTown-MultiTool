@@ -1449,6 +1449,7 @@ class MultitoonTab(QWidget):
         self.keep_alive_buttons = []
         self.ka_progress_bars = []
         self.feature_pills = []
+        self.feature_chips = []
         self._feature_popover = None
         self.ka_groups = []
         self.set_selectors = []     # replaces movement_dropdowns
@@ -1735,6 +1736,10 @@ class MultitoonTab(QWidget):
             pill = FeaturePill()
             pill.clicked.connect(lambda idx=i: self._open_feature_popover(idx))
             self.feature_pills.append(pill)
+
+            chip = FeaturePill(compact=True)
+            chip.clicked.connect(lambda idx=i: self._open_feature_popover(idx))
+            self.feature_chips.append(chip)
 
             selector = SetSelectorWidget(self.keymap_manager)
             selector.setFixedHeight(28)
@@ -4318,4 +4323,3 @@ def _dispatch_keep_alive_cycle(action, fire_toons, window_manager, keymap_manage
         input_service.send_keep_alive_to_window(wid, key)
         fired += 1
     return fired
-

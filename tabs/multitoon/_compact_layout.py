@@ -1108,9 +1108,9 @@ class _CompactLayout(QWidget):
 
         portrait_frame = _PortraitFrame(cell)
 
-        # Controls column: 3 toggles, KA pill, keyset pill.
+        # Controls column: 3 toggles + feature chip, KA pill, keyset pill.
         toggle_row = QHBoxLayout()
-        toggle_row.setSpacing(9)
+        toggle_row.setSpacing(7)
         toggle_row.setContentsMargins(0, 0, 0, 0)
 
         ka_pill = QFrame()
@@ -1375,13 +1375,15 @@ class _CompactLayout(QWidget):
         _, status_dot = tab.toon_labels[i]
         status_dot.setParent(cell["portrait_frame"])
 
-        # Toggle row: enable / chat / click-sync.
+        # Toggle row: enable / chat / click-sync / feature chip.
         for b in (tab.toon_buttons[i], tab.chat_buttons[i], tab.click_sync_buttons[i]):
             b.setText("")
         clear_layout(cell["toggle_row"])
         cell["toggle_row"].addWidget(tab.toon_buttons[i])
         cell["toggle_row"].addWidget(tab.chat_buttons[i])
         cell["toggle_row"].addWidget(tab.click_sync_buttons[i])
+        if i < len(tab.feature_chips):
+            cell["toggle_row"].addWidget(tab.feature_chips[i])
         cell["toggle_row"].addStretch(1)
 
         # Keep-alive pill leaf: stopwatch toggle + progress bar.
@@ -1482,7 +1484,7 @@ class _CompactLayout(QWidget):
         # the portrait-badge inset/border/pattern-tile/fallback-fonts
         # (tabs/multitoon/_tab.py).
         cell["content"].setSpacing(m.icon_px(12))
-        cell["toggle_row"].setSpacing(m.icon_px(9))
+        cell["toggle_row"].setSpacing(m.icon_px(7))
         cell["ctrl_col"].setSpacing(m.icon_px(10))
         cell["body_row"].setSpacing(m.icon_px(10))
         cell["stats_row"].setSpacing(m.icon_px(16))
@@ -1536,6 +1538,11 @@ class _CompactLayout(QWidget):
             pill = tab.feature_pills[i]
             pill.setFixedHeight(m.keyset_h)
             pill.set_paint_scale(m.scale)
+        # Feature chip: a toggle-sized square in the toggle row.
+        if i < len(tab.feature_chips):
+            chip = tab.feature_chips[i]
+            chip.setFixedSize(m.toggle_w, m.toggle_h)
+            chip.set_paint_scale(m.scale)
 
         # Name font.
         name_label, _ = tab.toon_labels[i]
@@ -1661,6 +1668,8 @@ class _CompactLayout(QWidget):
         )
         if i < len(tab.feature_pills):
             tab.feature_pills[i].set_light_chrome(pal.pill_light_chrome)
+        if i < len(tab.feature_chips):
+            tab.feature_chips[i].set_light_chrome(pal.pill_light_chrome)
         status_dot = tab.toon_labels[i][1]
         if active:
             status_dot.set_cutout_border(pal.status_cutout.name(), width=3.0)
@@ -1705,6 +1714,8 @@ class _CompactLayout(QWidget):
             tab.set_selectors[i].set_dim_progress(progress)
         if i < len(tab.feature_pills):
             tab.feature_pills[i].set_dim_progress(progress)
+        if i < len(tab.feature_chips):
+            tab.feature_chips[i].set_dim_progress(progress)
         # Name/stat ink: lerp rgb + alpha between the palette's lit and off
         # endpoints. Dark palette = white with the legacy 1.0->0.62 / 0.9->0.5
         # alpha ramp, producing byte-identical stylesheets.

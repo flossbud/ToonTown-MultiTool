@@ -208,6 +208,34 @@ def test_pills_built_and_placed_in_all_cells(qapp):
         assert holder.itemAt(0).widget() is tab.feature_pills[i]
 
 
+def test_chips_built_and_placed_in_toggle_row(qapp):
+    tab, _ = _tab(qapp)
+    assert len(tab.feature_chips) == 4
+    for i in range(4):
+        row = tab._compact._card_slots[i]["toggle_row"]
+        widgets = [row.itemAt(n).widget() for n in range(row.count())]
+        assert tab.feature_chips[i] in widgets
+        # The chip sits after the three toggles and before the trailing stretch.
+        assert widgets.index(tab.feature_chips[i]) == 3
+        assert row.itemAt(row.count() - 1).widget() is None   # the stretch
+
+
+def test_chip_click_opens_popover(qapp):
+    tab, _ = _tab(qapp)
+    tab.feature_chips[2].clicked.emit()
+    assert tab._feature_popover is not None
+    tab._feature_popover.hide()
+
+
+def test_chip_is_sized_from_card_metrics(qapp):
+    from utils.overlay.card_metrics import CardMetrics
+    tab, _ = _tab(qapp)
+    m = CardMetrics(1.0)
+    for chip in tab.feature_chips:
+        assert chip.width() == m.toggle_w
+        assert chip.height() == m.toggle_h
+
+
 def test_label_both_off_enable_features(qapp):
     tab, _ = _tab(qapp)
     for pill in tab.feature_pills:
