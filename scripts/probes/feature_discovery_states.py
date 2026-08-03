@@ -67,6 +67,9 @@ class _FakeWM(QObject):
     def disable_detection(self):
         pass
 
+    def get_active_window(self):
+        return None
+
 
 def main(out_dir: str) -> None:
     os.makedirs(out_dir, exist_ok=True)
