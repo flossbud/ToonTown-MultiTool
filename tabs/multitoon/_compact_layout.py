@@ -1484,7 +1484,14 @@ class _CompactLayout(QWidget):
         # the portrait-badge inset/border/pattern-tile/fallback-fonts
         # (tabs/multitoon/_tab.py).
         cell["content"].setSpacing(m.icon_px(12))
-        cell["toggle_row"].setSpacing(m.icon_px(7))
+        # Toggle-row spacing must fit FOUR fixed-width children (the three
+        # toggles plus the feature chip) inside the fixed ctrl_w. toggle_w,
+        # icon_px and ctrl_w each round independently from their own bases, so
+        # a fixed icon_px(7) overruns the container at some scales (0.5, 0.52,
+        # 0.84, 1.08, 1.40). Derive from the space that actually exists.
+        toggle_gap = max(0, min(m.icon_px(7),
+                                (m.ctrl_w - 4 * m.toggle_w) // 3))
+        cell["toggle_row"].setSpacing(toggle_gap)
         cell["ctrl_col"].setSpacing(m.icon_px(10))
         cell["body_row"].setSpacing(m.icon_px(10))
         cell["stats_row"].setSpacing(m.icon_px(16))
