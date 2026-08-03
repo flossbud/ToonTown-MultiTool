@@ -4075,12 +4075,12 @@ class MultitoonTab(QWidget):
             chip.setVisible(any_on and not both_on)
 
     def _open_feature_popover(self, idx: int) -> None:
-        """Open the feature popover anchored to slot idx's pill. Above/below
-        follows the pill's position on SCREEN (works identically framed and
-        in Float UI, where cards are separate top-level surfaces). The
-        popover is created once and only ever re-anchored: settings-change
-        handlers run synchronously inside its own switch clicks, so it must
-        never be torn down from those paths."""
+        """Open the feature popover anchored to slot idx's visible discovery
+        affordance. Above/below follows the affordance's position on SCREEN
+        (works identically framed and in Float UI, where cards are separate
+        top-level surfaces). The popover is created once and only ever
+        re-anchored: settings-change handlers run synchronously inside its own
+        switch clicks, so it must never be torn down from those paths."""
         from PySide6.QtCore import QRect
         from PySide6.QtGui import QGuiApplication
         if self._feature_popover is None:

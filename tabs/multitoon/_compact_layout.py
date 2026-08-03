@@ -1257,9 +1257,9 @@ class _CompactLayout(QWidget):
         peek mode (the toggles, the keep-alive stopwatch button, and the keyset
         selector). The keep-alive button alone blocks clicks - NOT its enclosing
         pill, so the progress bar and the pill's padding stay click-through.
-        The feature-discovery pill is likewise click-through by design: it is
-        a discovery affordance, not a gameplay control, so it stays inert
-        during the transient see-through peek.
+        The feature-discovery affordances are likewise click-through by design:
+        neither the bubble nor the chip is a gameplay control, so both stay
+        inert during the transient see-through peek.
         Coordinates are relative to the shell cell root at the current
         (framed 1.0) size; the overlay controller scales them by the overlay zoom.
         Skips any widget that is missing or zero-sized (defensive).
