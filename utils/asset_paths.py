@@ -1,8 +1,7 @@
-"""Resolve a bundled asset from `assets/`, in-repo or frozen.
+"""Resolve `assets/<name>` for launcher-adjacent UI call sites.
 
-Single definition site. Replaces the private copies that lived in
-tabs/launch_tab.py, tabs/credits_tab.py and utils/widgets/keysets/_assets.py,
-so widget packages never import a tab module to find an image.
+Shared by launcher, credits, keysets, settings, and account-reorder code so
+widget packages use the resolver without importing a tab module.
 """
 from __future__ import annotations
 

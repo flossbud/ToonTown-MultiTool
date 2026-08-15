@@ -1,4 +1,4 @@
-"""One asset resolver for the whole app (replaces three private copies)."""
+"""Shared asset resolution for the scoped launcher-adjacent call sites."""
 import os
 import sys
 
@@ -25,9 +25,19 @@ def test_grandstand_backdrop_art_present():
         assert os.path.isfile(asset_path(name)), f"missing assets/{name}"
 
 
-def test_keysets_and_launch_tab_delegate():
-    """No second implementation may survive this task."""
+def test_launcher_adjacent_asset_call_sites_delegate(monkeypatch):
+    """Launcher, credits, keysets, settings, and reorder use the shared resolver."""
     from utils.widgets.keysets import _assets
+    import utils.widgets.account_reorder_dialog as account_reorder
+    import tabs.credits_tab
     import tabs.launch_tab as lt
+    import tabs.settings_tab as settings_tab
+
     assert _assets.asset_path is asset_path
+    assert account_reorder._asset_path is asset_path
+    assert tabs.credits_tab._asset_path is asset_path
     assert lt._asset_path is asset_path
+
+    resolved = object()
+    monkeypatch.setattr(settings_tab, "asset_path", lambda name: resolved)
+    assert settings_tab.SettingsTab._asset_path(None, "x.png") is resolved
