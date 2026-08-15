@@ -114,3 +114,10 @@ FLOAT_UI_STARTUP_PENDING = "float_ui_startup_pending"
 # Global hotkeys (docs/superpowers/specs/2026-07-02-hotkey-support-design.md)
 HOTKEY_BINDINGS = "hotkey_bindings"          # {action_id: chord-string | None}
 HOTKEY_LAUNCH_SLOTS = "hotkey_launch_slots"  # {"1".."4": account_id | None}
+
+# Grandstand launcher party (added 2026-08-14)
+LAUNCHER_PARTY_TTR = "launcher_party_ttr"
+LAUNCHER_PARTY_CC = "launcher_party_cc"
+LAUNCHER_STAR_TTR = "launcher_star_ttr"
+LAUNCHER_STAR_CC = "launcher_star_cc"
+LAUNCHER_ACTIVE_GAME = "launcher_active_game"
