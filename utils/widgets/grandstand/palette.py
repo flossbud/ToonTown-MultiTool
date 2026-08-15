@@ -49,15 +49,19 @@ def game_card(game: str, active: bool, is_dark: bool) -> dict:
     }
 
 
-def hero_base(game: str) -> QColor:
+def hero_base(game: str, is_dark: bool) -> QColor:
     """Flat fill under the hero art — also the fallback if the art fails to
     load (spec §7)."""
+    # Theme-independent today: hero art sits under white text in either theme.
+    # The parameter keeps light mode a value change, not a signature change.
     return QColor(_GAME[game]["hero"])
 
 
-def hero_scrim(game: str) -> list[tuple[float, QColor]]:
+def hero_scrim(game: str, is_dark: bool) -> list[tuple[float, QColor]]:
     """Left-to-right darkening over the hero backdrop so the copy column stays
     legible (handoff §4.1b). Stops are (position, colour) for a 90° gradient."""
+    # Theme-independent today: hero art sits under white text in either theme.
+    # The parameter keeps light mode a value change, not a signature change.
     rgb = _GAME[game]["scrim"]
     if game == "cc":
         return [(0.0, _rgba(rgb, 0.90)), (0.56, _rgba(rgb, 0.50)),

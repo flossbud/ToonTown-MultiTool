@@ -31,12 +31,12 @@ def test_game_card_active_cc_uses_cc_identity():
 
 
 def test_hero_base_per_game():
-    assert gp.hero_base("ttr") == QColor("#1d4a7a")
-    assert gp.hero_base("cc") == QColor("#7a3a12")
+    assert gp.hero_base("ttr", True) == QColor("#1d4a7a")
+    assert gp.hero_base("cc", True) == QColor("#7a3a12")
 
 
 def test_hero_scrim_darkens_left_to_right():
-    stops = gp.hero_scrim("ttr")
+    stops = gp.hero_scrim("ttr", True)
     assert [p for p, _ in stops] == [0.0, 0.56, 1.0]
     assert stops[0][1].alphaF() > stops[-1][1].alphaF()   # copy side is darkest
 
@@ -44,7 +44,7 @@ def test_hero_scrim_darkens_left_to_right():
 def test_cc_scrim_is_warm_not_the_arts_blue_teal():
     """Handoff §4.1b: the CC skyline is natively blue-teal; without a warm
     scrim the largest element on screen contradicts CC's orange."""
-    r, g, b, _ = gp.hero_scrim("cc")[0][1].getRgb()
+    r, g, b, _ = gp.hero_scrim("cc", True)[0][1].getRgb()
     assert r > b
 
 
@@ -126,7 +126,8 @@ def test_hero_ghost_button_has_dark_translucent_backing():
 def test_every_function_accepts_both_themes():
     """The light branch is unimplemented, but no signature may reject it."""
     for fn, args in (
-        (gp.game_card, ("ttr", True)), (gp.play_button, (True,)),
+        (gp.game_card, ("ttr", True)), (gp.hero_base, ("ttr",)),
+        (gp.hero_scrim, ("ttr",)), (gp.play_button, (True,)),
         (gp.panel, ()), (gp.card_surface, ("#4a8fe7", False)),
         (gp.card_ink, (False,)),
         (gp.control_chip, (False,)), (gp.status_ink, ("idle",)),
