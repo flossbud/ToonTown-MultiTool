@@ -80,7 +80,14 @@ class GrandstandView(QWidget):
         self.selector.game_clicked.connect(self._on_game_clicked)
         root.addWidget(self.selector)
 
-        self.hero = self._make_band("gs_hero", HERO_H)
+        from utils.widgets.grandstand.hero_stage import HeroStage
+        self.hero = HeroStage(self)
+        self.hero.setFixedHeight(HERO_H)
+        self.hero.set_game(self._party.active_game())
+        self.hero.play_clicked.connect(self._on_play)
+        self.hero.official_clicked.connect(
+            lambda: self.official_launcher_requested.emit(
+                self._party.active_game()))
         root.addWidget(self.hero)
 
         self.shelf = QFrame(self)
@@ -115,7 +122,7 @@ class GrandstandView(QWidget):
     def apply_theme(self, is_dark: bool) -> None:
         self._is_dark = is_dark
         p = gp.panel(is_dark)
-        for frame in (self.hero, self.shelf):
+        for frame in (self.shelf,):
             frame.setStyleSheet(
                 f"QFrame#{frame.objectName()} {{"
                 f" background: {p['bg'].name()};"
@@ -123,10 +130,18 @@ class GrandstandView(QWidget):
                 f" border-radius: 9px; }}"
             )
         self.selector.apply_theme(is_dark)
+        self.hero.apply_theme(is_dark)
 
     def _on_game_clicked(self, game: str) -> None:
         if game == self._party.active_game():
             return
         self._party.set_active_game(game)
         self.selector.set_active(game)
+        self.hero.set_game(game)
         self.game_changed.emit(game)
+
+    def _on_play(self) -> None:
+        game = self._party.active_game()
+        order = self._party.launch_order(game)
+        if order:
+            self.party_launch_requested.emit(game, order)

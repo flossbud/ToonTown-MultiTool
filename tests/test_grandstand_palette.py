@@ -66,6 +66,12 @@ def test_play_button_disabled_has_no_shadow():
     assert d["shadow"] is None
 
 
+def test_hero_ink_is_scrim_facing_white():
+    d = gp.hero_ink(True)
+    assert d["greeting"] == QColor("#ffffff")
+    assert d["names"] == with_alpha("#ffffff", 0.82)
+
+
 def test_panel_dark_tokens():
     d = gp.panel(True)
     assert d["bg"] == QColor("#252525")              # --bg-card

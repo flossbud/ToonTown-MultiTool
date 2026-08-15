@@ -173,6 +173,15 @@ def ribbon(selected: bool, is_dark: bool) -> dict:
             "ink": QColor("#888888")}          # --text-muted
 
 
+def hero_ink(is_dark: bool) -> dict:
+    """Copy that sits directly on the hero artwork. White regardless of theme:
+    the hero is game art under a darkening scrim in both light and dark, so this
+    ink answers to the scrim, not to the app surface."""
+    return {"greeting": QColor("#ffffff"),
+            "names": with_alpha("#ffffff", 0.82),
+            "blocked": QColor("#ffffff")}
+
+
 def hero_ghost_button(is_dark: bool) -> dict:
     """Quiet buttons that sit on top of the hero art — the official-launcher
     escape hatch and the blocked-mode action. They read against artwork, not
