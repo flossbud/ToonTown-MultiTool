@@ -73,7 +73,11 @@ class GrandstandView(QWidget):
         self.advisory.setVisible(False)
         root.addWidget(self.advisory)
 
-        self.selector = self._make_band("gs_selector", SELECTOR_H)
+        from utils.widgets.grandstand.game_selector import GameSelector
+        self.selector = GameSelector(self)
+        self.selector.setFixedHeight(SELECTOR_H)
+        self.selector.set_active(self._party.active_game())
+        self.selector.game_clicked.connect(self._on_game_clicked)
         root.addWidget(self.selector)
 
         self.hero = self._make_band("gs_hero", HERO_H)
@@ -99,6 +103,8 @@ class GrandstandView(QWidget):
     def set_accounts(self, game: str, entries: list) -> None:
         """Replace one game's roster. Entries are model.RosterEntry."""
         self._entries[game] = list(entries)
+        self.selector.set_counts(
+            len(self._entries["ttr"]), len(self._entries["cc"]))
 
     def set_account_state(self, game: str, account_id: str, state: str,
                           message: str = "", raw: str = "") -> None:
@@ -109,10 +115,18 @@ class GrandstandView(QWidget):
     def apply_theme(self, is_dark: bool) -> None:
         self._is_dark = is_dark
         p = gp.panel(is_dark)
-        for frame in (self.selector, self.hero, self.shelf):
+        for frame in (self.hero, self.shelf):
             frame.setStyleSheet(
                 f"QFrame#{frame.objectName()} {{"
                 f" background: {p['bg'].name()};"
                 f" border: 1px solid {p['border'].name()};"
                 f" border-radius: 9px; }}"
             )
+        self.selector.apply_theme(is_dark)
+
+    def _on_game_clicked(self, game: str) -> None:
+        if game == self._party.active_game():
+            return
+        self._party.set_active_game(game)
+        self.selector.set_active(game)
+        self.game_changed.emit(game)
