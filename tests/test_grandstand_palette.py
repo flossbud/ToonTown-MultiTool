@@ -10,6 +10,11 @@ from utils.color_math import with_alpha
 from utils.widgets.grandstand import palette as gp
 
 
+def test_game_accent_is_the_identity_hex():
+    assert gp.game_accent("ttr").upper() == "#4A8FE7"    # --game-ttr
+    assert gp.game_accent("cc").upper() == "#F26D21"     # --game-cc
+
+
 def test_game_card_active_ttr_dark():
     d = gp.game_card("ttr", True, True)
     assert d["bg"] == QColor("#14283d")

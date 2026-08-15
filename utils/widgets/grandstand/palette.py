@@ -34,6 +34,13 @@ def _rgba(rgb: tuple[int, int, int], a: float) -> QColor:
     return c
 
 
+def game_accent(game: str) -> str:
+    """The game's identity hex. Public because `model.py` needs it as the last
+    accent fallback, and a second copy of these two literals would let the
+    resolved accent drift from the painted one."""
+    return _GAME[game]["identity"]
+
+
 def game_card(game: str, active: bool, is_dark: bool) -> dict:
     """Game selector card (handoff §4.1a). Inactive cards desaturate and drop
     their backdrop art to .34; active cards take the game's identity border."""

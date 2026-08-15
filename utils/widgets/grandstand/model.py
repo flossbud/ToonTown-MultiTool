@@ -19,6 +19,7 @@ from PySide6.QtGui import QColor
 
 from utils.cc_race_assets import asset_stem_for_species
 from utils.toon_customization_resolve import resolve_accent, resolve_pose
+from utils.widgets.grandstand.palette import game_accent
 
 # Portrait capability is a property of the *game*, not the account: Toontown
 # Rewritten publishes a render service and Corporate Clash does not (handoff
@@ -28,9 +29,6 @@ PORTRAIT_SPECIES = "species"
 PORTRAIT_WAITING = "waiting"
 
 _GAME_PORTRAITS = {"ttr": "rendition", "cc": "species"}
-
-# Fallback accents, matching V2_ACCENTS['ttr'|'cc'] in utils/theme_manager.py.
-GAME_ACCENT = {"ttr": "#4A8FE7", "cc": "#F26D21"}
 
 # Poses that draw a whole toon standing on the hero floor; everything else is a
 # bust that sits lower and smaller (handoff §8).
@@ -116,7 +114,7 @@ def roster_entry(*, account_id: str, game: str, label: str, username: str,
     # place (`_is_hex` accepts #RGB / #RRGGBB / #RRGGBBAA) and cannot drift.
     account_accent = resolve_accent(
         {"accent": rec_accent},
-        QColor(GAME_ACCENT.get(game, GAME_ACCENT["ttr"])),
+        QColor(game_accent(game)),
     )
     accent = resolve_accent(
         entry if isinstance(entry, dict) else {}, account_accent

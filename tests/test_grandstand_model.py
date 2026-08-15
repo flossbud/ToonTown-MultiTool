@@ -1,6 +1,8 @@
 """Grandstand model: portrait capability, footer copy, lineup slotting."""
 import os
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
@@ -9,13 +11,14 @@ from utils.widgets.grandstand import model as gm
 
 
 def _entry(aid, *, toon="Flossbud", dna="74000101", species="cat",
-           game="ttr", state="idle", is_primary=True):
+           game="ttr", state="idle", is_primary=True, rec_accent=None,
+           customization=None):
     rec = None
     if toon is not None:
-        rec = ToonRecord(toon, game, dna or "", 100, 140, species, None)
+        rec = ToonRecord(toon, game, dna or "", 100, 140, species, rec_accent)
     return gm.roster_entry(
         account_id=aid, game=game, label=f"L{aid}", username=f"u{aid}",
-        rec=rec, entry={}, state=state, message="", raw_error="",
+        rec=rec, entry=customization or {}, state=state, message="", raw_error="",
         is_primary=is_primary)
 
 
@@ -79,6 +82,29 @@ def test_cc_entry_accent_is_the_cc_game_accent():
     assert e.accent.upper() == "#F26D21"
 
 
+def test_customization_accent_beats_account_accent():
+    e = _entry("a", rec_accent="#123456",
+               customization={"accent": "#abcdef"})
+    assert e.accent == "#abcdef"
+
+
+def test_account_accent_is_used_without_customization_accent():
+    e = _entry("a", rec_accent="#123456")
+    assert e.accent == "#123456"
+
+
+@pytest.mark.parametrize("invalid_accent", ["#zz", "nope", 123])
+def test_invalid_customization_accent_falls_through_to_account(invalid_accent):
+    e = _entry("a", rec_accent="#123456",
+               customization={"accent": invalid_accent})
+    assert e.accent == "#123456"
+
+
+def test_invalid_customization_and_account_accents_fall_through_to_game():
+    e = _entry("a", rec_accent="#zz", customization={"accent": "nope"})
+    assert e.accent.upper() == "#4A8FE7"
+
+
 def test_cards_always_use_the_head_pose():
     """Handoff §4.1d: the shelf reads as one uniform row."""
     assert gm.CARD_POSE == "head"
@@ -98,10 +124,15 @@ def test_lineup_is_capped_at_four_slots():
     assert len(out) == gm.LINEUP_SLOTS == 4
 
 
-def test_full_body_pose_stands_bust_pose_does_not():
+@pytest.mark.parametrize("pose", ["waving", "crying", "cake-topper"])
+def test_full_body_pose_stands(pose):
     entries = [_entry("a")]
-    standing = gm.lineup_entries(entries, ["a"], poses={"a": "waving"})
+    standing = gm.lineup_entries(entries, ["a"], poses={"a": pose})
     assert standing[0].treatment == "standing"
+
+
+def test_bust_pose_does_not_stand():
+    entries = [_entry("a")]
     bust = gm.lineup_entries(entries, ["a"], poses={"a": "portrait-grin"})
     assert bust[0].treatment == "bust"
 
