@@ -60,3 +60,35 @@ def test_declares_every_signal_the_spec_names(qapp):
                  "retry_requested", "add_account_requested", "manage_requested",
                  "official_launcher_requested"):
         assert hasattr(v, name), f"missing signal {name}"
+
+
+def test_layout_mode_does_not_resurrect_the_old_launcher(qapp, monkeypatch):
+    """main.py calls this on resize; on the flagged path it must do nothing."""
+    monkeypatch.setenv("TTMT_GRANDSTAND", "1")
+    from utils.settings_manager import SettingsManager
+    from tabs.launch_tab import LaunchTab
+    tab = LaunchTab(settings_manager=SettingsManager())
+    try:
+        assert getattr(tab, "_sections_container", None) is None
+        for mode in ("full", "compact", "full"):
+            tab.set_layout_mode(mode)
+            assert getattr(tab, "_sections_container", None) is None
+    finally:
+        tab.shutdown()
+
+
+def test_layout_mode_keeps_the_old_launcher_when_flag_is_off(qapp, monkeypatch):
+    """The legacy launcher retains compact/full switching until cut-over."""
+    monkeypatch.delenv("TTMT_GRANDSTAND", raising=False)
+    from utils.settings_manager import SettingsManager
+    from tabs.launch_tab import LaunchTab
+    tab = LaunchTab(settings_manager=SettingsManager())
+    try:
+        original = tab._sections_container
+        assert original is not None
+        tab.set_layout_mode("full")
+        assert tab._sections_container is not None
+        assert tab._sections_container is not original
+        assert tab._layout_mode == "full"
+    finally:
+        tab.shutdown()

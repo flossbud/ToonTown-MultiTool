@@ -1089,6 +1089,11 @@ class LaunchTab(QWidget):
         """Switch between compact (stacked) and full (side-by-side) layouts.
         Cheap to call repeatedly: if mode matches the current state, no-op.
         """
+        # Grandstand is compact-only (spec Q5): one fluid layout at every size.
+        # The legacy body below rebuilds the section container, which would
+        # mount the old launcher alongside the new view on any resize.
+        if getattr(self, "grandstand", None) is not None:
+            return
         if mode not in ("compact", "full"):
             return
         if mode == self._layout_mode and self._sections_container is not None:
