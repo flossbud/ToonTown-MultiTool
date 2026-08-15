@@ -84,9 +84,8 @@ class HeroStage(QFrame):
         self.official_button.setCursor(Qt.PointingHandCursor)
         self.official_button.clicked.connect(self.official_clicked.emit)
 
-        # Reserved for CrewLineup (Task 8); sized here so the copy column's
-        # width is already correct at milestone 1.
-        self.crew_area = QWidget(self)
+        from utils.widgets.grandstand.crew_lineup import CrewLineup
+        self.crew_area = CrewLineup(self)
 
         self.set_game("ttr")
         self.set_party([])
@@ -125,6 +124,9 @@ class HeroStage(QFrame):
         self.play_button.setText(label)
         self.play_button.setEnabled(n > 0)
         self._restyle_play()
+
+    def set_lineup(self, entries: list) -> None:
+        self.crew_area.set_entries(entries)
 
     def set_blocked(self, reason: str | None, action_text: str = "",
                     on_action=None) -> None:

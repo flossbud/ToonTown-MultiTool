@@ -131,6 +131,7 @@ class GrandstandView(QWidget):
             )
         self.selector.apply_theme(is_dark)
         self.hero.apply_theme(is_dark)
+        self.hero.crew_area.apply_theme(is_dark)
 
     def _on_game_clicked(self, game: str) -> None:
         if game == self._party.active_game():

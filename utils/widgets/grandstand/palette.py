@@ -173,6 +173,16 @@ def ribbon(selected: bool, is_dark: bool) -> dict:
             "ink": QColor("#888888")}          # --text-muted
 
 
+def lineup_ink(is_dark: bool) -> dict:
+    """Surfaces of the hero's toon lineup. Like `hero_ink`, these sit on game
+    artwork under a scrim rather than on an app surface, so they do not vary by
+    theme. The accent ring around a cameo is NOT here — it comes from the
+    account's own accent."""
+    return {"cameo_disc": with_alpha("#000000", 0.30),
+            "placeholder_border": with_alpha("#ffffff", 0.40),
+            "placeholder_ink": with_alpha("#ffffff", 0.67)}
+
+
 def hero_ink(is_dark: bool) -> dict:
     """Copy that sits directly on the hero artwork. White regardless of theme:
     the hero is game art under a darkening scrim in both light and dark, so this

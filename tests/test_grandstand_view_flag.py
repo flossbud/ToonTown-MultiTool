@@ -52,6 +52,14 @@ def test_set_accounts_is_callable_before_any_wiring(qapp):
     v.set_account_state("ttr", "nobody", "idle")   # unknown id must not raise
 
 
+def test_theme_is_forwarded_to_the_crew_lineup(qapp):
+    v = GrandstandView(LaunchParty(None))
+
+    v.apply_theme(False)
+
+    assert v.hero.crew_area._is_dark is False
+
+
 def test_declares_every_signal_the_spec_names(qapp):
     v = GrandstandView(LaunchParty(None))
     for name in ("game_changed", "party_changed", "star_changed",

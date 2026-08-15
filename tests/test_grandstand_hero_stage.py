@@ -7,6 +7,7 @@ os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 import pytest
 
 from utils.widgets.grandstand.hero_stage import HeroStage
+from utils.widgets.grandstand.model import LineupEntry
 
 
 @pytest.fixture
@@ -160,3 +161,26 @@ def test_missing_backdrop_falls_back_to_the_flat_base(hero, qapp):
     hero.set_game("cc")
     hero.repaint()                                       # must not raise
     qapp.processEvents()
+
+
+def test_lineup_is_mounted_and_reached_through_the_hero(hero, monkeypatch):
+    from utils.rendition_poses import RenditionPoseFetcher
+    from utils.widgets.grandstand.crew_lineup import CrewLineup
+
+    monkeypatch.setattr(
+        RenditionPoseFetcher, "cached_pixmap",
+        lambda self, dna, pose: None,
+    )
+    monkeypatch.setattr(
+        RenditionPoseFetcher, "request",
+        lambda self, dna, pose: None,
+    )
+    entry = LineupEntry(
+        account_id="a", treatment="bust", pose="portrait", dna="7400",
+        icon_stem=None, species="dog", accent="#4a8fe7", initial="A",
+    )
+
+    hero.set_lineup([entry])
+
+    assert isinstance(hero.crew_area, CrewLineup)
+    assert [slot.account_id for slot in hero.crew_area.slots()] == ["a"]

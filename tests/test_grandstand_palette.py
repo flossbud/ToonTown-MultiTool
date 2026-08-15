@@ -72,6 +72,16 @@ def test_hero_ink_is_scrim_facing_white():
     assert d["names"] == with_alpha("#ffffff", 0.82)
 
 
+def test_lineup_ink_is_scrim_facing_and_theme_independent():
+    expected = {
+        "cameo_disc": with_alpha("#000000", 0.30),
+        "placeholder_border": with_alpha("#ffffff", 0.40),
+        "placeholder_ink": with_alpha("#ffffff", 0.67),
+    }
+    assert gp.lineup_ink(True) == expected
+    assert gp.lineup_ink(False) == expected
+
+
 def test_panel_dark_tokens():
     d = gp.panel(True)
     assert d["bg"] == QColor("#252525")              # --bg-card
@@ -144,7 +154,8 @@ def test_every_function_accepts_both_themes():
         (gp.control_chip, (False,)), (gp.status_ink, ("idle",)),
         (gp.head_link, (True, False)), (gp.advisory_strip, ()),
         (gp.shelf_head_ink, ()), (gp.add_tile, ()),
-        (gp.ribbon, (False,)), (gp.hero_ghost_button, ()),
+        (gp.ribbon, (False,)), (gp.lineup_ink, ()),
+        (gp.hero_ghost_button, ()),
     ):
         for is_dark in (True, False):
             assert fn(*args, is_dark) is not None
