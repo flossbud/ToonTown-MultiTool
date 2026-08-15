@@ -2,5 +2,5 @@
 
 Leaf package: these widgets never import a tab module. Colours come from
 `palette`, whose only Qt dependency is QColor. Selection state comes from
-`party` and display values from `model`; both are Qt-free and unit-testable.
+`party` and display values from `model`; both are widget-free and unit-testable.
 """
