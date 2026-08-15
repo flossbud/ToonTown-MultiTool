@@ -99,13 +99,40 @@ def test_head_link_gold_and_disabled():
     assert gp.head_link(False, False, True) == QColor("#666666")   # --text-disabled
 
 
+def test_shelf_head_ink_dark_tokens():
+    d = gp.shelf_head_ink(True)
+    assert d["title"] == QColor("#bbbbbb")          # --text-secondary
+    assert d["sub"] == QColor("#888888")            # --text-muted
+
+
+def test_add_tile_border_is_border_light():
+    assert gp.add_tile(True)["border"] == QColor("#555555")      # --border-light
+
+
+def test_selected_ribbon_uses_blue_tokens():
+    d = gp.ribbon(True, True)
+    assert d["bg"] == QColor("#0077ff")              # --blue
+    assert d["border"] == QColor("#3399ff")          # --blue-border
+
+
+def test_unselected_ribbon_has_dark_translucent_backing():
+    assert gp.ribbon(False, True)["bg"] == with_alpha("#000000", 0.35)
+
+
+def test_hero_ghost_button_has_dark_translucent_backing():
+    assert gp.hero_ghost_button(True)["bg"] == with_alpha("#000000", 0.26)
+
+
 def test_every_function_accepts_both_themes():
     """The light branch is unimplemented, but no signature may reject it."""
     for fn, args in (
         (gp.game_card, ("ttr", True)), (gp.play_button, (True,)),
-        (gp.panel, ()), (gp.card_ink, (False,)),
+        (gp.panel, ()), (gp.card_surface, ("#4a8fe7", False)),
+        (gp.card_ink, (False,)),
         (gp.control_chip, (False,)), (gp.status_ink, ("idle",)),
-        (gp.advisory_strip, ()),
+        (gp.head_link, (True, False)), (gp.advisory_strip, ()),
+        (gp.shelf_head_ink, ()), (gp.add_tile, ()),
+        (gp.ribbon, (False,)), (gp.hero_ghost_button, ()),
     ):
         for is_dark in (True, False):
             assert fn(*args, is_dark) is not None

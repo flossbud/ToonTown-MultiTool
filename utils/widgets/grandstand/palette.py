@@ -136,3 +136,36 @@ def advisory_strip(is_dark: bool) -> dict:
     return {"bg": with_alpha("#e8c14d", 0.14),
             "border": with_alpha("#e8c14d", 0.34),
             "ink": QColor("#e8c14d")}
+
+
+def shelf_head_ink(is_dark: bool) -> dict:
+    """Chooser head row: uppercase title and its explanatory sub-line."""
+    return {"title": QColor("#bbbbbb"),        # --text-secondary
+            "sub": QColor("#888888")}          # --text-muted
+
+
+def add_tile(is_dark: bool) -> dict:
+    """The dashed 'Add account' tile that always ends the shelf."""
+    return {"ink": QColor("#888888"),          # --text-muted
+            "border": QColor("#555555")}       # --border-light
+
+
+def ribbon(selected: bool, is_dark: bool) -> dict:
+    """Card ribbon: '+' to add, then the toon's place on stage once selected
+    (handoff §4.1d)."""
+    if selected:
+        return {"bg": QColor("#0077ff"),       # --blue
+                "border": QColor("#3399ff"),   # --blue-border
+                "ink": QColor("#ffffff")}
+    return {"bg": with_alpha("#000000", 0.35),
+            "border": with_alpha("#ffffff", 0.18),
+            "ink": QColor("#888888")}          # --text-muted
+
+
+def hero_ghost_button(is_dark: bool) -> dict:
+    """Quiet buttons that sit on top of the hero art — the official-launcher
+    escape hatch and the blocked-mode action. They read against artwork, not
+    against a token surface, so their alphas are deliberate."""
+    return {"bg": with_alpha("#000000", 0.26),
+            "border": with_alpha("#ffffff", 0.24),
+            "ink": QColor("#ffffff")}
