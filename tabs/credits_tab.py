@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import os
-import sys
-
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QApplication
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QPalette, QPixmap
+from utils.asset_paths import asset_path as _asset_path
 from utils.open_url import open_url
 from utils.theme_manager import resolve_theme, get_theme_colors
 from utils.widgets.backdrop_blur import BackdropBlur
@@ -101,15 +99,7 @@ class CreditsTab(QWidget):
         # build. PNG has zero plugin dependencies.
         image_label = QLabel()
         image_label.setAlignment(Qt.AlignCenter)
-        # _MEIPASS is set by PyInstaller's bootloader to the runtime extraction
-        # root; falls back to two dirname() walks from tabs/credits_tab.py to
-        # reach the repo root in dev. Same idiom as main.py:_resolve_app_icon.
-        base = getattr(
-            sys, "_MEIPASS",
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        )
-        asset_path = os.path.join(base, "assets", "flossbud.png")
-        pixmap = QPixmap(asset_path)
+        pixmap = QPixmap(_asset_path("flossbud.png"))
         if not pixmap.isNull():
             image_label.setPixmap(
                 pixmap.scaled(

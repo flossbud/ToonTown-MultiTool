@@ -20,6 +20,7 @@ from PySide6.QtCore import Qt, QObject, Signal, QThread, Slot, QTimer
 from PySide6.QtGui import QColor
 
 from utils.theme_manager import resolve_theme, get_theme_colors
+from utils.asset_paths import asset_path as _asset_path
 from utils.color_math import alpha
 from utils.credentials_manager import CredentialsManager, set_debug_log_callback
 from utils.open_url import open_url
@@ -78,16 +79,6 @@ class AccountSlot:
     launcher: object = None
     loading_timer: object = None   # QTimer or None; non-None == active pending
     dot_state: str = ""
-
-
-def _asset_path(name: str) -> str:
-    """Resolve a bundled asset relative to the repo root / PyInstaller _MEIPASS.
-    Mirrors tabs/credits_tab.py and main.py:_resolve_app_icon."""
-    base = getattr(
-        sys, "_MEIPASS",
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    )
-    return os.path.join(base, "assets", name)
 
 
 # ── CC multi-install launch gate ──────────────────────────────────────────
