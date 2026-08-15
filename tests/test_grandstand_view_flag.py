@@ -1,0 +1,62 @@
+"""The flag routes the launcher's view, and says so in the log."""
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
+
+import pytest
+
+from utils.widgets.grandstand.party import LaunchParty
+from utils.widgets.grandstand.view import (
+    HERO_H, SELECTOR_H, STAMP_PREFIX, GrandstandView, grandstand_enabled,
+)
+
+
+def test_flag_defaults_off(monkeypatch):
+    monkeypatch.delenv("TTMT_GRANDSTAND", raising=False)
+    assert grandstand_enabled() is False
+
+
+@pytest.mark.parametrize("value,expected", [("1", True), ("0", False), ("", False)])
+def test_flag_reads_the_env_var(monkeypatch, value, expected):
+    monkeypatch.setenv("TTMT_GRANDSTAND", value)
+    assert grandstand_enabled() is expected
+
+
+def test_init_emits_the_startup_stamp(qapp):
+    """CLAUDE.local.md running-code proof: never let the operator validate
+    without evidence of which path is live."""
+    lines = []
+    GrandstandView(LaunchParty(None), log=lines.append)
+    assert lines, "no stamp emitted"
+    assert lines[0].startswith(STAMP_PREFIX)
+    assert "milestone" in lines[0]
+
+
+def test_stack_fits_the_content_band(qapp):
+    """main.py: 860 - HEADER_H(112) - NAV_BAND_H(60) = 688, no scrolling."""
+    v = GrandstandView(LaunchParty(None))
+    v.resize(880, 688)
+    v.show()
+    qapp.processEvents()
+    assert v.selector.height() == SELECTOR_H
+    assert v.hero.height() == HERO_H
+    assert v.shelf.height() > 0
+    total = (v.selector.height() + v.hero.height() + v.shelf.height())
+    assert total <= 688
+
+
+def test_set_accounts_is_callable_before_any_wiring(qapp):
+    v = GrandstandView(LaunchParty(None))
+    v.set_accounts("ttr", [])
+    v.set_account_state("ttr", "nobody", "idle")   # unknown id must not raise
+
+
+def test_declares_every_signal_the_spec_names(qapp):
+    v = GrandstandView(LaunchParty(None))
+    for name in ("game_changed", "party_changed", "star_changed",
+                 "launch_requested", "party_launch_requested", "edit_requested",
+                 "cancel_requested", "quit_requested", "enter_2fa_requested",
+                 "retry_requested", "add_account_requested", "manage_requested",
+                 "official_launcher_requested"):
+        assert hasattr(v, name), f"missing signal {name}"

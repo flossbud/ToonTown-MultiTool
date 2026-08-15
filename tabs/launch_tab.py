@@ -61,6 +61,8 @@ from utils.widgets.account_editor import AccountEditor
 from utils.widgets.account_reorder_dialog import AccountReorderDialog
 from utils.widgets.confirm_dialog import ConfirmDialog
 from utils.widgets.error_modal import ErrorModal
+from utils.widgets.grandstand.party import LaunchParty
+from utils.widgets.grandstand.view import GrandstandView, grandstand_enabled
 from utils.launch_tab_demo_mode import get_demo_fixtures
 
 
@@ -1031,6 +1033,10 @@ class LaunchTab(QWidget):
             self._keyring_banner = KeyringWarningBanner(self.cred_manager, parent=self)
             self._layout.addWidget(self._keyring_banner, alignment=Qt.AlignHCenter)
 
+        if grandstand_enabled():
+            self._build_grandstand()
+            return
+
         demo = get_demo_fixtures()
         if demo is not None:
             self._build_demo(demo)
@@ -1043,6 +1049,39 @@ class LaunchTab(QWidget):
         self._render_section("ttr")
         self._render_section("cc")
         self._layout.addStretch()
+
+    def _build_grandstand(self) -> None:
+        """Mount the Grandstand roster view (TTMT_GRANDSTAND=1). The old
+        section/tile path is left entirely untouched behind the flag until the
+        cut-over task removes it."""
+        self._party = LaunchParty(self.settings_manager)
+        self._reconcile_slots()
+        for game in ("ttr", "cc"):
+            self._party.prune(game, {a.id for a in self._ordered_accounts(game)})
+
+        self.grandstand = GrandstandView(self._party, log=self.log, parent=self)
+        self._layout.addWidget(self.grandstand, 1)
+        for game in ("ttr", "cc"):
+            self._render_grandstand(game)
+
+    def _render_grandstand(self, game: str) -> None:
+        """Build RosterEntry values for one game and hand them to the view."""
+        from utils.widgets.grandstand.model import roster_entry
+        entries = []
+        for acct in self._ordered_accounts(game):
+            slot = self._slots[game].get(acct.id)
+            st, msg, raw = self._effective_state(game, slot) if slot else ("idle", "", "")
+            rec = self._recent_toons.get(acct.id)
+            primary = self._recent_toons.primary_name(acct.id)
+            cust = {}
+            if self._customizations is not None and rec is not None:
+                cust = self._customizations.get(game, rec.toon_name) or {}
+            entries.append(roster_entry(
+                account_id=acct.id, game=game, label=acct.label or "",
+                username=acct.username or "", rec=rec, entry=cust,
+                state=st, message=msg, raw_error=raw,
+                is_primary=(rec is not None and rec.toon_name == primary)))
+        self.grandstand.set_accounts(game, entries)
 
     # ── Layout mode ────────────────────────────────────────────────────────
 
