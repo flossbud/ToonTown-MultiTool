@@ -105,6 +105,11 @@ def test_card_ink_selected_footer_is_blue_tinted():
     assert gp.card_ink(False, True)["foot"] == QColor("#888888")   # --text-muted
 
 
+def test_card_star_is_gold_only_when_starred():
+    assert gp.card_star(True, True)["ink"] == QColor("#e8c14d")   # --v2-yellow-b
+    assert gp.card_star(False, True)["ink"] == QColor("#888888")  # --text-muted
+
+
 def test_status_ink_running_is_green():
     d = gp.status_ink("running", True)
     assert d["text"] == QColor("#56d66a")            # --green-border

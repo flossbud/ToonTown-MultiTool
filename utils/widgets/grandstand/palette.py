@@ -116,6 +116,12 @@ def control_chip(hover: bool, is_dark: bool) -> dict:
             "ink": QColor("#ffffff") if hover else QColor("#888888")}
 
 
+def card_star(starred: bool, is_dark: bool) -> dict:
+    """Card star chip. Gold once it marks the game-wide main (handoff §4.1d)."""
+    return {"bg": with_alpha("#000000", 0.35),
+            "ink": QColor("#e8c14d") if starred else QColor("#888888")}
+
+
 # Card footer status colours, keyed by the LoginState the tile already uses.
 _STATUS = {
     "running":    ("#56d66a", "#56c856"),   # --green-border / --status-dot-active
