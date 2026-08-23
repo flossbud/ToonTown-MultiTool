@@ -28,9 +28,30 @@ class FakeTab:
         self._is_in_flight = lambda g, a: a in self._inflight
 
 
-def test_stagger_is_400ms():
+def test_stagger_is_400ms(qapp):
     """Spec §6: the interval is what makes 'the star launches first' real."""
+    import tabs.launch_tab as lt
+
+    launched = []
+    tab = lt.LaunchTab.__new__(lt.LaunchTab)
+    QWidget.__init__(tab)
+    tab.is_account_running = lambda game, account_id: False
+    tab._is_in_flight = lambda game, account_id: False
+    tab._party_timers = []
+    tab._party_gate_ok = set()
+    tab._party_pending = set()
+    tab._party_dispatch_targets = \
+        lt.LaunchTab._party_dispatch_targets.__get__(tab)
+    tab._on_launch = lambda game, account_id: launched.append(account_id)
+
+    lt.LaunchTab._on_party_launch(tab, "ttr", ["a", "b", "c", "d"])
+
     assert PARTY_STAGGER_MS == 400
+    assert launched == ["a"]
+    assert [timer.interval() for timer in tab._party_timers] == [400, 800, 1200]
+    for timer in tab._party_timers:
+        timer.stop()
+        timer.deleteLater()
 
 
 def test_targets_preserve_the_given_order():
@@ -73,6 +94,37 @@ def test_empty_order_is_safe():
     assert FakeTab()._party_dispatch_targets("ttr", []) == []
 
 
+def test_party_refilters_targets_after_cc_gate(monkeypatch, qapp):
+    """The gate runs a nested loop, so its pre-dialog targets may be stale."""
+    import tabs.launch_tab as lt
+
+    running = set()
+    launched = []
+
+    def gate(settings_manager, parent):
+        running.add("a")
+        return True
+
+    monkeypatch.setattr(lt, "_cc_launch_gate", gate)
+    tab = lt.LaunchTab.__new__(lt.LaunchTab)
+    QWidget.__init__(tab)
+    tab.settings_manager = None
+    tab.window = lambda: None
+    tab.is_account_running = lambda game, account_id: account_id in running
+    tab._is_in_flight = lambda game, account_id: False
+    tab._party_timers = []
+    tab._party_gate_ok = set()
+    tab._party_pending = set()
+    tab._party_dispatch_targets = \
+        lt.LaunchTab._party_dispatch_targets.__get__(tab)
+    tab._on_launch = lambda game, account_id: launched.append(account_id)
+
+    lt.LaunchTab._on_party_launch(tab, "cc", ["a", "b"])
+
+    assert launched == ["b"]
+    assert tab._party_timers == []
+
+
 def test_cc_gate_is_consulted_once_per_batch(monkeypatch, qapp):
     """Spec §6: a four-toon Clash launch asks once, not four times.
 
@@ -94,7 +146,7 @@ def test_cc_gate_is_consulted_once_per_batch(monkeypatch, qapp):
     tab.is_account_running = lambda g, a: False
     tab._is_in_flight = lambda g, a: False
     tab._party_timers = []
-    tab._party_gate_passed = False
+    tab._party_gate_ok = set()
     tab._party_pending = set()
     tab._party_dispatch_targets = \
         lt.LaunchTab._party_dispatch_targets.__get__(tab)
@@ -102,24 +154,57 @@ def test_cc_gate_is_consulted_once_per_batch(monkeypatch, qapp):
 
     def fake_on_launch(game, account_id):
         # The one line of _on_launch that matters here, unchanged.
-        if game == "cc" and not tab._cc_gate_ok():
+        if game == "cc" and not tab._cc_gate_ok(game, account_id):
             return
         tab.launched.append(account_id)
 
     tab._on_launch = fake_on_launch
 
-    lt.LaunchTab._on_party_launch(tab, "cc", ["a", "b", "c"])
-    assert calls == [1]                      # asked exactly once
-    assert tab.launched == ["a"]             # rest are on staggered timers
+    lt.LaunchTab._on_party_launch(tab, "cc", ["a", "b", "c", "d"])
+    QTest.qWait(PARTY_STAGGER_MS * 3 + 100)
+
+    assert calls == [1]
+    assert tab.launched == ["a", "b", "c", "d"]
 
 
-def test_a_single_card_launch_still_gets_its_own_gate():
-    """The suppression must not leak: outside a batch every launch asks."""
+def test_cc_gate_stays_answered_after_first_account_fails(monkeypatch, qapp):
+    """A synchronous failure must not re-prompt accounts still staggered."""
     import tabs.launch_tab as lt
+
+    calls = []
+    attempted = []
+    launched = []
+    monkeypatch.setattr(lt, "_cc_launch_gate",
+                        lambda sm, parent: (calls.append(1), True)[1])
     tab = lt.LaunchTab.__new__(lt.LaunchTab)
-    tab._party_gate_passed = False
+    QWidget.__init__(tab)
+    tab.settings_manager = None
+    tab.window = lambda: None
+    tab.is_account_running = lambda game, account_id: False
+    tab._is_in_flight = lambda game, account_id: False
+    tab._party_timers = []
+    tab._party_gate_ok = set()
     tab._party_pending = set()
-    assert lt.LaunchTab._cc_gate_ok.__get__(tab) is not None
+    tab._party_dispatch_targets = \
+        lt.LaunchTab._party_dispatch_targets.__get__(tab)
+    tab._cc_gate_ok = lt.LaunchTab._cc_gate_ok.__get__(tab)
+
+    def fake_on_launch(game, account_id):
+        if game == "cc" and not tab._cc_gate_ok(game, account_id):
+            return
+        attempted.append(account_id)
+        if account_id == "a":
+            return
+        launched.append(account_id)
+
+    tab._on_launch = fake_on_launch
+
+    lt.LaunchTab._on_party_launch(tab, "cc", ["a", "b", "c", "d"])
+    QTest.qWait(PARTY_STAGGER_MS * 3 + 100)
+
+    assert calls == [1]
+    assert attempted == ["a", "b", "c", "d"]
+    assert launched == ["b", "c", "d"]
 
 
 def test_single_card_launch_consults_the_real_gate(monkeypatch, qapp):
@@ -136,12 +221,49 @@ def test_single_card_launch_consults_the_real_gate(monkeypatch, qapp):
         keyring_probe_pending=False, keyring_available=True)
     tab._slots = {"ttr": {}, "cc": {"a": object()}}
     tab._global_index_of = lambda account_id: 0
-    tab._party_gate_passed = False
+    tab._party_gate_ok = set()
     tab._party_pending = set()
 
     lt.LaunchTab._on_launch(tab, "cc", "a")
 
     assert calls == [1]
+
+
+def test_gate_authorization_does_not_leak_during_nested_launch(
+        monkeypatch, qapp):
+    """A solo launch inside a party failure dialog is a separate intent."""
+    import tabs.launch_tab as lt
+
+    calls = []
+    launched = []
+    monkeypatch.setattr(lt, "_cc_launch_gate",
+                        lambda sm, parent: (calls.append(1), True)[1])
+    tab = lt.LaunchTab.__new__(lt.LaunchTab)
+    QWidget.__init__(tab)
+    tab.settings_manager = None
+    tab.window = lambda: None
+    tab.is_account_running = lambda game, account_id: False
+    tab._is_in_flight = lambda game, account_id: False
+    tab._party_timers = []
+    tab._party_gate_ok = set()
+    tab._party_pending = set()
+    tab._party_dispatch_targets = \
+        lt.LaunchTab._party_dispatch_targets.__get__(tab)
+    tab._cc_gate_ok = lt.LaunchTab._cc_gate_ok.__get__(tab)
+
+    def fake_on_launch(game, account_id):
+        if game == "cc" and not tab._cc_gate_ok(game, account_id):
+            return
+        launched.append(account_id)
+        if account_id == "a":
+            tab._on_launch("cc", "solo")
+
+    tab._on_launch = fake_on_launch
+
+    lt.LaunchTab._on_party_launch(tab, "cc", ["a"])
+
+    assert calls == [1, 1]
+    assert launched == ["a", "solo"]
 
 
 def test_repeated_play_does_not_duplicate_pending_accounts(qapp):
@@ -155,7 +277,7 @@ def test_repeated_play_does_not_duplicate_pending_accounts(qapp):
     tab.is_account_running = lambda game, account_id: False
     tab._is_in_flight = lambda game, account_id: account_id in inflight
     tab._party_timers = []
-    tab._party_gate_passed = False
+    tab._party_gate_ok = set()
     tab._party_pending = set()
     tab._party_dispatch_targets = \
         lt.LaunchTab._party_dispatch_targets.__get__(tab)
@@ -204,14 +326,14 @@ def test_single_card_gate_does_not_inherit_pending_batch(monkeypatch, qapp):
     tab.is_account_running = lambda game, account_id: False
     tab._is_in_flight = lambda game, account_id: False
     tab._party_timers = []
-    tab._party_gate_passed = False
+    tab._party_gate_ok = set()
     tab._party_pending = set()
     tab._party_dispatch_targets = \
         lt.LaunchTab._party_dispatch_targets.__get__(tab)
     tab._cc_gate_ok = lt.LaunchTab._cc_gate_ok.__get__(tab)
 
     def fake_on_launch(game, account_id):
-        if game == "cc" and not tab._cc_gate_ok():
+        if game == "cc" and not tab._cc_gate_ok(game, account_id):
             return
 
     tab._on_launch = fake_on_launch
@@ -236,14 +358,14 @@ def test_ttr_party_does_not_rearm_pending_cc_gate(monkeypatch, qapp):
     tab.is_account_running = lambda game, account_id: False
     tab._is_in_flight = lambda game, account_id: False
     tab._party_timers = []
-    tab._party_gate_passed = False
+    tab._party_gate_ok = set()
     tab._party_pending = set()
     tab._party_dispatch_targets = \
         lt.LaunchTab._party_dispatch_targets.__get__(tab)
     tab._cc_gate_ok = lt.LaunchTab._cc_gate_ok.__get__(tab)
 
     def fake_on_launch(game, account_id):
-        if game == "cc" and not tab._cc_gate_ok():
+        if game == "cc" and not tab._cc_gate_ok(game, account_id):
             return
 
     tab._on_launch = fake_on_launch
@@ -263,7 +385,7 @@ def test_completed_party_timers_are_released(qapp):
     tab.is_account_running = lambda game, account_id: False
     tab._is_in_flight = lambda game, account_id: False
     tab._party_timers = []
-    tab._party_gate_passed = False
+    tab._party_gate_ok = set()
     tab._party_pending = set()
     tab._party_dispatch_targets = \
         lt.LaunchTab._party_dispatch_targets.__get__(tab)
@@ -286,7 +408,7 @@ def test_shutdown_stops_pending_party_timers(qapp):
     timer.setSingleShot(True)
     timer.start(10_000)
     tab._party_timers = [timer]
-    tab._party_gate_passed = True
+    tab._party_gate_ok = {("cc", "pending")}
     tab._party_pending = {("ttr", "pending")}
     tab._slots = {"ttr": {}, "cc": {}}
     tab._loading = {"ttr": [], "cc": []}
@@ -296,5 +418,5 @@ def test_shutdown_stops_pending_party_timers(qapp):
 
     assert timer.isActive() is False
     assert tab._party_timers == []
-    assert tab._party_gate_passed is False
+    assert tab._party_gate_ok == set()
     assert tab._party_pending == set()

@@ -452,7 +452,7 @@ class LaunchTab(QWidget):
         self._probe_worker = None
         self._pending_2fa: set = set()
         self._party_timers: list = []
-        self._party_gate_passed = False
+        self._party_gate_ok: set[tuple[str, str]] = set()
         self._party_pending: set[tuple[str, str]] = set()
 
         # Loading-state orchestration. _loading[game] is a launch-ordered list
@@ -1515,11 +1515,16 @@ class LaunchTab(QWidget):
                 and not self._is_in_flight(game, aid)
                 and (game, aid) not in self._party_pending]
 
-    def _cc_gate_ok(self) -> bool:
+    def _cc_gate_ok(self, game: str, account_id: str) -> bool:
         """The Clash install gate, asked once per user intent. A party is ONE
-        intent, so `_on_party_launch` answers for the whole batch and every
-        account it dispatches sees the answer already given."""
-        if getattr(self, "_party_gate_passed", False):
+        intent: `_on_party_launch` answers for the batch and pre-authorizes each
+        account it dispatches. Authorization is keyed to the exact dispatch and
+        consumed on use, so it cannot leak to an unrelated solo launch that runs
+        inside a nested modal loop.
+        """
+        key = (game, account_id)
+        if key in self._party_gate_ok:
+            self._party_gate_ok.discard(key)
             return True
         return _cc_launch_gate(self.settings_manager, parent=self.window())
 
@@ -1533,6 +1538,13 @@ class LaunchTab(QWidget):
         if game == "cc" and not _cc_launch_gate(
                 self.settings_manager, parent=self.window()):
             return
+        # The gate ran a nested event loop; anything could have started while
+        # it was open. Re-check before committing to the accounts we picked.
+        targets = self._party_dispatch_targets(game, targets)
+        if not targets:
+            return
+        if game == "cc":
+            self._party_gate_ok.update((game, aid) for aid in targets)
         # Reserve staggered accounts before starting the first one. A second
         # Play (or a card click) must not pull an account forward or schedule
         # it twice while it is waiting for its turn.
@@ -1553,17 +1565,14 @@ class LaunchTab(QWidget):
     def _launch_party_account(self, game: str, account_id: str) -> None:
         """Enter the normal launch path with this batch's gate authorization.
 
-        Authorization is scoped to the call, rather than left enabled between
-        timers, so unrelated card clicks and overlapping batches remain
-        separate user intents. Every queued Clash callback reapplies the one
-        answer already obtained by `_on_party_launch`.
+        Authorization was keyed to this exact dispatch by `_on_party_launch`.
+        Discard it afterward in case `_on_launch` returned before reaching the
+        Clash gate, so no stale grant can survive to a later launch.
         """
-        previous = self._party_gate_passed
-        self._party_gate_passed = (game == "cc")
         try:
             self._on_launch(game, account_id)
         finally:
-            self._party_gate_passed = previous
+            self._party_gate_ok.discard((game, account_id))
 
     def _party_timeout(self, timer: QTimer, game: str, account_id: str,
                        last: bool) -> None:
@@ -1583,8 +1592,7 @@ class LaunchTab(QWidget):
             if self._party_dispatch_targets(game, [account_id]):
                 self._launch_party_account(game, account_id)
         finally:
-            if last:
-                self._party_gate_passed = False
+            self._party_gate_ok.discard((game, account_id))
 
     def _on_launch(self, game: str, account_id: str):
         from utils.credentials_manager import _dbg
@@ -1606,7 +1614,7 @@ class LaunchTab(QWidget):
 
         # CC: block launch when multi-install is ambiguous (no stored pick).
         if game == "cc":
-            if not self._cc_gate_ok():
+            if not self._cc_gate_ok(game, account_id):
                 return
 
         # Check engine path
@@ -2201,7 +2209,7 @@ class LaunchTab(QWidget):
             timer.stop()
             timer.deleteLater()
         self._party_timers.clear()
-        self._party_gate_passed = False
+        self._party_gate_ok.clear()
         self._party_pending.clear()
         for game in ("ttr", "cc"):
             for slot in self._slots[game].values():
