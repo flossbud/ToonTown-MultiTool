@@ -3,6 +3,7 @@ safe, repaint-on-flip), clear_all_credentials (tears down off-page slots),
 and shutdown (cleans transient resources without killing running games)."""
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
 from unittest.mock import MagicMock
