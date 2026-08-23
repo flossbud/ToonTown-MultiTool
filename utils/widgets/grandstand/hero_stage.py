@@ -141,6 +141,8 @@ class HeroStage(QFrame):
         self.greeting.setVisible(not blocked)
         self.names.setVisible(not blocked)
         self.play_button.setVisible(not blocked)
+        self.official_button.setVisible(not blocked)
+        self.official_button.setEnabled(not blocked)
 
     def is_blocked(self) -> bool:
         return self._blocked is not None

@@ -143,6 +143,48 @@ INFO_BLUE = "#0077ff"
 WARNING_ORANGE = "#ff9500"
 
 
+@dataclass(frozen=True)
+class CredentialCopy:
+    """One credential condition's shared wording and optional action."""
+
+    header: str
+    body: str
+    action_text: str = ""
+
+    def hero_reason(self) -> str:
+        return f"{self.header}\n{self.body}"
+
+    def advisory_reason(self) -> str:
+        return " ".join(self.body.splitlines())
+
+
+KEYRING_WARNING_COPY = CredentialCopy(
+    header="⚠  Credential Storage Unavailable",
+    body=(
+        "No system wallet service was detected. Your account usernames are saved,\n"
+        "but passwords will not be remembered between sessions - you'll need to\n"
+        "re-enter them each time you launch TTMT."
+    ),
+)
+
+MACOS_VAULT_COPY = {
+    "denied": CredentialCopy(
+        header="🔒  Your accounts are locked",
+        body="Unlock to load your saved accounts for this session.",
+        action_text="Unlock accounts",
+    ),
+    "corrupt": CredentialCopy(
+        header="⚠  Couldn't open your saved accounts",
+        body=(
+            "Your saved accounts could not be unlocked, so they are not\n"
+            "available this session. Your data was left untouched. Restart\n"
+            "TTMT to try again; if it keeps happening, please share the\n"
+            "keyring-debug.log file when reporting."
+        ),
+    ),
+}
+
+
 def _tinted_card_qss(object_name: str, accent_hex: str, is_dark: bool) -> str:
     """Tinted-card frame QSS: a translucent accent wash + matching border,
     no left-border stripe. Used by all three keyring/vault banners."""
@@ -218,15 +260,11 @@ class KeyringWarningBanner(QFrame):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(8)
 
-        self.header_label = QLabel("⚠  Credential Storage Unavailable")
+        self.header_label = QLabel(KEYRING_WARNING_COPY.header)
         self.header_label.setWordWrap(True)
         layout.addWidget(self.header_label)
 
-        self.body_label = QLabel(
-            "No system wallet service was detected. Your account usernames are saved,\n"
-            "but passwords will not be remembered between sessions - you'll need to\n"
-            "re-enter them each time you launch TTMT."
-        )
+        self.body_label = QLabel(KEYRING_WARNING_COPY.body)
         self.body_label.setWordWrap(True)
         layout.addWidget(self.body_label)
 
@@ -326,31 +364,19 @@ class MacOSVaultLockedBanner(QFrame):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(8)
 
-        if self._mode == "corrupt":
-            header_text = "⚠  Couldn't open your saved accounts"
-            body_text = (
-                "Your saved accounts could not be unlocked, so they are not\n"
-                "available this session. Your data was left untouched. Restart\n"
-                "TTMT to try again; if it keeps happening, please share the\n"
-                "keyring-debug.log file when reporting."
-            )
-        else:
-            header_text = "🔒  Your accounts are locked"
-            body_text = (
-                "Unlock to load your saved accounts for this session."
-            )
+        copy = MACOS_VAULT_COPY[self._mode]
 
-        self.header_label = QLabel(header_text)
+        self.header_label = QLabel(copy.header)
         self.header_label.setWordWrap(True)
         layout.addWidget(self.header_label)
 
-        self.body_label = QLabel(body_text)
+        self.body_label = QLabel(copy.body)
         self.body_label.setWordWrap(True)
         layout.addWidget(self.body_label)
 
         self.unlock_button = None
-        if self._mode == "denied":
-            self.unlock_button = QPushButton("Unlock accounts")
+        if copy.action_text:
+            self.unlock_button = QPushButton(copy.action_text)
             self.unlock_button.setCursor(Qt.PointingHandCursor)
             self.unlock_button.clicked.connect(self._on_click)
             layout.addWidget(self.unlock_button, alignment=Qt.AlignLeft)
@@ -785,10 +811,12 @@ class LaunchTab(QWidget):
         if gs is None:
             return
         if sys.platform == "darwin" and self._macos_vault_is_locked():
+            state = getattr(self.cred_manager, "macos_unlock_state", None)
+            copy = MACOS_VAULT_COPY[state]
             gs.set_credential_state(
                 "blocked",
-                "Your macOS keychain is locked, so no account can launch.",
-                "Unlock accounts", self._on_unlock_accounts_clicked)
+                copy.hero_reason(), copy.action_text,
+                self._on_unlock_accounts_clicked if copy.action_text else None)
             return
         if getattr(self.cred_manager, "keyring_probe_pending", False):
             gs.set_credential_state(
@@ -796,8 +824,7 @@ class LaunchTab(QWidget):
             return
         if not getattr(self.cred_manager, "keyring_available", True):
             gs.set_credential_state(
-                "advisory",
-                "No keyring available — passwords will not be saved.")
+                "advisory", KEYRING_WARNING_COPY.advisory_reason())
             return
         gs.set_credential_state("ok")
 
@@ -878,6 +905,9 @@ class LaunchTab(QWidget):
         the button respects the user's chosen install method
         (Faugus/Bottles/Wine/Lutris/Steam-Proton/Native) instead of always
         picking the first discovered install."""
+        grandstand = getattr(self, "grandstand", None)
+        if grandstand is not None and grandstand.hero.is_blocked():
+            return
         import tabs.launch_tab as _m
         if game == "cc":
             if not _m._cc_launch_gate(self.settings_manager, parent=self.window()):

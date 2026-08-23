@@ -92,6 +92,14 @@ def test_clearing_a_block_restores_card_launch(view):
     assert seen == [("ttr", "a")]
 
 
+def test_blocked_credentials_hide_the_official_launcher_control(view):
+    assert view.hero.official_button.isVisible() is True
+    view.set_credential_state("blocked", "locked", "Unlock", lambda: None)
+    assert view.hero.official_button.isVisible() is False
+    view.set_credential_state("ok")
+    assert view.hero.official_button.isVisible() is True
+
+
 def test_advisory_credentials_use_the_strip_not_the_hero(view):
     view.set_credential_state("advisory", "Passwords will not be saved.")
     assert view.advisory.isVisibleTo(view) is True
@@ -292,7 +300,9 @@ def test_launch_tab_theme_switch_reaches_grandstand(monkeypatch, qapp):
     [
         (True, False, "Checking your keyring…"),
         (False, False,
-         "No keyring available — passwords will not be saved."),
+         "No system wallet service was detected. Your account usernames are saved, "
+         "but passwords will not be remembered between sessions - you'll need to "
+         "re-enter them each time you launch TTMT."),
     ],
 )
 def test_grandstand_uses_advisory_instead_of_legacy_banner(
@@ -330,8 +340,65 @@ def test_grandstand_locked_vault_blocks_without_a_legacy_banner(
         assert tab._keyring_banner is None
         assert tab.grandstand.hero.is_blocked() is True
         assert tab.grandstand.hero.blocked_text() == (
-            "Your macOS keychain is locked, so no account can launch.")
+            "🔒  Your accounts are locked\n"
+            "Unlock to load your saved accounts for this session.")
         assert tab.grandstand.hero.blocked_button.text() == "Unlock accounts"
+        assert tab.grandstand.hero.blocked_button.isHidden() is False
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_grandstand_corrupt_vault_blocks_without_unlock_action(
+        monkeypatch, qapp):
+    monkeypatch.setenv("TTMT_GRANDSTAND", "1")
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(LaunchTab, "_start_keyring_probe", lambda self: None)
+    cred = MagicMock(keyring_available=False, keyring_probe_pending=True,
+                     macos_unlock_state="corrupt")
+    cred.get_accounts_metadata.return_value = []
+    settings = MagicMock()
+    settings.get.side_effect = lambda _key, default=None: default
+    tab = LaunchTab(cred_manager=cred, settings_manager=settings)
+    try:
+        reason = tab.grandstand.hero.blocked_text()
+        assert tab._keyring_banner is None
+        assert tab.grandstand.hero.is_blocked() is True
+        assert reason.startswith("⚠  Couldn't open your saved accounts\n")
+        assert "Your data was left untouched." in reason
+        assert "Restart\nTTMT to try again" in reason
+        assert "keyring-debug.log" in reason
+        assert tab.grandstand.hero.blocked_button.text() == ""
+        assert tab.grandstand.hero.blocked_button.isHidden() is True
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_blocked_credentials_prevent_official_launcher_dispatch(
+        monkeypatch, qapp):
+    monkeypatch.setenv("TTMT_GRANDSTAND", "1")
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(LaunchTab, "_start_keyring_probe", lambda self: None)
+    import tabs.launch_tab as launch_tab
+    runner = MagicMock(return_value=True)
+    monkeypatch.setattr(launch_tab, "run_official_ttr_launcher", runner)
+    cred = MagicMock(keyring_available=False, keyring_probe_pending=True,
+                     macos_unlock_state="denied")
+    cred.get_accounts_metadata.return_value = []
+    settings = MagicMock()
+    settings.get.side_effect = lambda _key, default=None: default
+    tab = LaunchTab(cred_manager=cred, settings_manager=settings)
+    try:
+        tab.grandstand.official_launcher_requested.emit("ttr")
+        runner.assert_not_called()
+
+        cred.macos_unlock_state = "unlocked"
+        cred.keyring_probe_pending = False
+        cred.keyring_available = True
+        tab._push_credential_state()
+        tab.grandstand.official_launcher_requested.emit("ttr")
+        runner.assert_called_once_with()
     finally:
         tab.shutdown()
         tab.close()
