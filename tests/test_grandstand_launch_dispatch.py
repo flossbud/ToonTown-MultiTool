@@ -40,6 +40,7 @@ def test_stagger_is_400ms(qapp):
     tab._party_timers = []
     tab._party_gate_ok = set()
     tab._party_pending = set()
+    tab._shutting_down = False
     tab._party_dispatch_targets = \
         lt.LaunchTab._party_dispatch_targets.__get__(tab)
     tab._on_launch = lambda game, account_id: launched.append(account_id)
@@ -115,6 +116,7 @@ def test_party_refilters_targets_after_cc_gate(monkeypatch, qapp):
     tab._party_timers = []
     tab._party_gate_ok = set()
     tab._party_pending = set()
+    tab._shutting_down = False
     tab._party_dispatch_targets = \
         lt.LaunchTab._party_dispatch_targets.__get__(tab)
     tab._on_launch = lambda game, account_id: launched.append(account_id)
@@ -123,6 +125,46 @@ def test_party_refilters_targets_after_cc_gate(monkeypatch, qapp):
 
     assert launched == ["b"]
     assert tab._party_timers == []
+
+
+def test_shutdown_during_cc_gate_dispatches_nothing(monkeypatch, qapp):
+    """A gate returning after teardown must not revive party dispatch."""
+    import tabs.launch_tab as lt
+
+    launched = []
+    tab = lt.LaunchTab.__new__(lt.LaunchTab)
+    QWidget.__init__(tab)
+    tab.settings_manager = None
+    tab.window = lambda: None
+    tab.is_account_running = lambda game, account_id: False
+    tab._is_in_flight = lambda game, account_id: False
+    tab._party_timers = []
+    tab._party_gate_ok = set()
+    tab._party_pending = set()
+    tab._shutting_down = False
+    tab._slots = {"ttr": {}, "cc": {}}
+    tab._loading = {"ttr": [], "cc": []}
+    tab._probe_thread = None
+    tab._party_dispatch_targets = \
+        lt.LaunchTab._party_dispatch_targets.__get__(tab)
+    tab._on_launch = lambda game, account_id: launched.append(account_id)
+
+    def gate(settings_manager, parent):
+        lt.LaunchTab.shutdown(tab)
+        return True
+
+    monkeypatch.setattr(lt, "_cc_launch_gate", gate)
+
+    lt.LaunchTab._on_party_launch(tab, "cc", ["a", "b"])
+
+    try:
+        assert launched == []
+        assert tab._party_timers == []
+        assert not any(timer.isActive() for timer in tab._party_timers)
+    finally:
+        for timer in tab._party_timers:
+            timer.stop()
+            timer.deleteLater()
 
 
 def test_cc_gate_is_consulted_once_per_batch(monkeypatch, qapp):
@@ -148,6 +190,7 @@ def test_cc_gate_is_consulted_once_per_batch(monkeypatch, qapp):
     tab._party_timers = []
     tab._party_gate_ok = set()
     tab._party_pending = set()
+    tab._shutting_down = False
     tab._party_dispatch_targets = \
         lt.LaunchTab._party_dispatch_targets.__get__(tab)
     tab._cc_gate_ok = lt.LaunchTab._cc_gate_ok.__get__(tab)
@@ -185,6 +228,7 @@ def test_cc_gate_stays_answered_after_first_account_fails(monkeypatch, qapp):
     tab._party_timers = []
     tab._party_gate_ok = set()
     tab._party_pending = set()
+    tab._shutting_down = False
     tab._party_dispatch_targets = \
         lt.LaunchTab._party_dispatch_targets.__get__(tab)
     tab._cc_gate_ok = lt.LaunchTab._cc_gate_ok.__get__(tab)
@@ -247,6 +291,7 @@ def test_gate_authorization_does_not_leak_during_nested_launch(
     tab._party_timers = []
     tab._party_gate_ok = set()
     tab._party_pending = set()
+    tab._shutting_down = False
     tab._party_dispatch_targets = \
         lt.LaunchTab._party_dispatch_targets.__get__(tab)
     tab._cc_gate_ok = lt.LaunchTab._cc_gate_ok.__get__(tab)
@@ -279,6 +324,7 @@ def test_repeated_play_does_not_duplicate_pending_accounts(qapp):
     tab._party_timers = []
     tab._party_gate_ok = set()
     tab._party_pending = set()
+    tab._shutting_down = False
     tab._party_dispatch_targets = \
         lt.LaunchTab._party_dispatch_targets.__get__(tab)
 
@@ -293,6 +339,44 @@ def test_repeated_play_does_not_duplicate_pending_accounts(qapp):
     QTest.qWait(PARTY_STAGGER_MS * 2 + 100)
 
     assert launched == ["a", "b", "c"]
+
+
+def test_first_dispatch_exception_releases_unarmed_party(qapp):
+    """A raising first launch cannot strand accounts without timers."""
+    import tabs.launch_tab as lt
+
+    launched = []
+    fail_first = [True]
+    tab = lt.LaunchTab.__new__(lt.LaunchTab)
+    QWidget.__init__(tab)
+    tab.is_account_running = lambda game, account_id: False
+    tab._is_in_flight = lambda game, account_id: False
+    tab._party_timers = []
+    tab._party_gate_ok = set()
+    tab._party_pending = set()
+    tab._shutting_down = False
+    tab._party_dispatch_targets = \
+        lt.LaunchTab._party_dispatch_targets.__get__(tab)
+
+    def fake_on_launch(game, account_id):
+        if account_id == "a" and fail_first[0]:
+            fail_first[0] = False
+            raise RuntimeError("first launch failed")
+        launched.append(account_id)
+
+    tab._on_launch = fake_on_launch
+
+    with pytest.raises(RuntimeError, match="first launch failed"):
+        lt.LaunchTab._on_party_launch(tab, "ttr", ["a", "b", "c"])
+
+    assert tab._party_pending == set()
+    assert tab._party_timers == []
+
+    lt.LaunchTab._on_party_launch(tab, "ttr", ["a", "b", "c"])
+    QTest.qWait(PARTY_STAGGER_MS * 2 + 100)
+
+    assert launched == ["a", "b", "c"]
+    assert tab._party_pending == set()
 
 
 def test_direct_launch_returns_before_lookup_for_a_pending_account():
@@ -328,6 +412,7 @@ def test_single_card_gate_does_not_inherit_pending_batch(monkeypatch, qapp):
     tab._party_timers = []
     tab._party_gate_ok = set()
     tab._party_pending = set()
+    tab._shutting_down = False
     tab._party_dispatch_targets = \
         lt.LaunchTab._party_dispatch_targets.__get__(tab)
     tab._cc_gate_ok = lt.LaunchTab._cc_gate_ok.__get__(tab)
@@ -360,6 +445,7 @@ def test_ttr_party_does_not_rearm_pending_cc_gate(monkeypatch, qapp):
     tab._party_timers = []
     tab._party_gate_ok = set()
     tab._party_pending = set()
+    tab._shutting_down = False
     tab._party_dispatch_targets = \
         lt.LaunchTab._party_dispatch_targets.__get__(tab)
     tab._cc_gate_ok = lt.LaunchTab._cc_gate_ok.__get__(tab)
@@ -387,6 +473,7 @@ def test_completed_party_timers_are_released(qapp):
     tab._party_timers = []
     tab._party_gate_ok = set()
     tab._party_pending = set()
+    tab._shutting_down = False
     tab._party_dispatch_targets = \
         lt.LaunchTab._party_dispatch_targets.__get__(tab)
     tab._on_launch = lambda game, account_id: None

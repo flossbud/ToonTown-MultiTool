@@ -454,6 +454,7 @@ class LaunchTab(QWidget):
         self._party_timers: list = []
         self._party_gate_ok: set[tuple[str, str]] = set()
         self._party_pending: set[tuple[str, str]] = set()
+        self._shutting_down = False
 
         # Loading-state orchestration. _loading[game] is a launch-ordered list
         # of account_ids (the timer itself lives on each slot.loading_timer);
@@ -1531,12 +1532,16 @@ class LaunchTab(QWidget):
     def _on_party_launch(self, game: str, account_ids: list) -> None:
         """Play. Dispatches through the same per-account entry point a single
         card uses, staggered so the starred account's login lands first."""
+        if self._shutting_down:
+            return
         targets = self._party_dispatch_targets(game, list(account_ids))
         if not targets:
             return
         # The Clash install gate is a property of the batch, not the account.
         if game == "cc" and not _cc_launch_gate(
                 self.settings_manager, parent=self.window()):
+            return
+        if self._shutting_down:
             return
         # The gate ran a nested event loop; anything could have started while
         # it was open. Re-check before committing to the accounts we picked.
@@ -1548,19 +1553,38 @@ class LaunchTab(QWidget):
         # Reserve staggered accounts before starting the first one. A second
         # Play (or a card click) must not pull an account forward or schedule
         # it twice while it is waiting for its turn.
-        self._party_pending.update((game, aid) for aid in targets[1:])
-        for index, account_id in enumerate(targets):
-            if index == 0:
-                self._launch_party_account(game, account_id)
-                continue
-            timer = QTimer(self)
-            timer.setSingleShot(True)
-            last = index == len(targets) - 1
-            timer.timeout.connect(
-                lambda t=timer, g=game, a=account_id, fin=last:
-                    self._party_timeout(t, g, a, fin))
-            timer.start(PARTY_STAGGER_MS * index)
-            self._party_timers.append(timer)
+        delayed = targets[1:]
+        self._party_pending.update((game, aid) for aid in delayed)
+        try:
+            self._launch_party_account(game, targets[0])
+        except Exception:
+            self._release_party_reservations(game, delayed)
+            raise
+        if self._shutting_down:
+            self._release_party_reservations(game, delayed)
+            return
+
+        unarmed = list(delayed)
+        try:
+            for index, account_id in enumerate(delayed, start=1):
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                last = index == len(targets) - 1
+                timer.timeout.connect(
+                    lambda t=timer, g=game, a=account_id, fin=last:
+                        self._party_timeout(t, g, a, fin))
+                timer.start(PARTY_STAGGER_MS * index)
+                self._party_timers.append(timer)
+                unarmed.remove(account_id)
+        except Exception:
+            self._release_party_reservations(game, unarmed)
+            raise
+
+    def _release_party_reservations(self, game: str,
+                                    account_ids: list) -> None:
+        for account_id in account_ids:
+            self._party_pending.discard((game, account_id))
+            self._party_gate_ok.discard((game, account_id))
 
     def _launch_party_account(self, game: str, account_id: str) -> None:
         """Enter the normal launch path with this batch's gate authorization.
@@ -1586,6 +1610,8 @@ class LaunchTab(QWidget):
     def _party_step(self, game: str, account_id: str, last: bool) -> None:
         self._party_pending.discard((game, account_id))
         try:
+            if self._shutting_down:
+                return
             # State may have changed while this account waited (for example a
             # card launch or another party). Never relaunch a live/in-flight
             # account when its original timer eventually fires.
@@ -2202,6 +2228,7 @@ class LaunchTab(QWidget):
             print(msg)
 
     def shutdown(self):
+        self._shutting_down = True
         # Tear down the tab's own transient resources. Deliberately does NOT
         # kill running game launchers: closing the TTMT UI leaves already-running
         # games alive (a multitoon launcher you can close while still playing).
