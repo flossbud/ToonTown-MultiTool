@@ -126,6 +126,29 @@ def test_the_running_dot_never_overlaps_the_footer_text(card):
     assert not card.dot.geometry().intersects(card.footer.geometry())
 
 
+def test_no_two_visible_children_ever_overlap(card, qapp):
+    """The card's bottom band is crowded: four chips, an action, a footer and a
+    running dot in ~30px. Any overlap means one opaque widget is clipping
+    another's text. Checked across every state and both hover positions,
+    because the hover cluster is what makes the band contended."""
+    children = [card.name, card.user, card.footer, card.action, card.dot,
+                card.ribbon, card.star, card.pencil, card.gear]
+    for state in ALL_STATES:
+        for hovered in (False, True):
+            for selected in (False, True):
+                card.set_selected(selected)
+                card.set_state(state, "boom")
+                card.enterEvent(None) if hovered else card.leaveEvent(None)
+                qapp.processEvents()
+                visible = [w for w in children if w.isVisibleTo(card)]
+                for i, a in enumerate(visible):
+                    for b in visible[i + 1:]:
+                        assert not a.geometry().intersects(b.geometry()), (
+                            f"{state} hovered={hovered} selected={selected}: "
+                            f"{a.objectName() or type(a).__name__} overlaps "
+                            f"{b.objectName() or type(b).__name__}")
+
+
 def test_the_action_never_covers_the_name_or_the_footer(card):
     """A pinned urgent action must not hide the account's identity."""
     card.set_state("failed", "boom")

@@ -140,33 +140,41 @@ class RosterCard(QFrame):
         self._fetcher.pose_ready.connect(self._on_pose_ready)
 
         self.ribbon = _Chip(24, self, on_focus=self._refresh_controls)
+        self.ribbon.setObjectName("card_ribbon")
         self.ribbon.move(CARD_W - 24 - 9, 9)
         self.ribbon.clicked.connect(self._emit_click)
 
         self.star = _Chip(26, self, on_focus=self._refresh_controls)
+        self.star.setObjectName("card_star")
         self.star.move(8, 8)
         self.star.clicked.connect(lambda: self._emit(self.star_clicked))
 
         self.pencil = _Chip(24, self, on_hover=self._restyle,
                             on_focus=self._refresh_controls)
+        self.pencil.setObjectName("card_pencil")
         self.pencil.move(6, CARD_H - 24 - 6)
         self.pencil.setText("✏")
         self.pencil.clicked.connect(lambda: self._emit(self.edit_clicked))
 
         self.gear = _Chip(24, self, on_hover=self._restyle,
                           on_focus=self._refresh_controls)
+        self.gear.setObjectName("card_gear")
         self.gear.move(CARD_W - 24 - 6, CARD_H - 24 - 6)
         self.gear.setText("⚙")
         self.gear.clicked.connect(lambda: self._emit(self.gear_clicked))
 
         self.name = QLabel(self)
+        self.name.setObjectName("card_name")
         self.name.setGeometry(10, 144, CARD_W - 20, 18)
         self.user = QLabel(self)
+        self.user.setObjectName("card_user")
         self.user.setGeometry(10, 162, CARD_W - 20, 14)
         self.footer = QLabel(self)
+        self.footer.setObjectName("card_footer")
         self.footer.setGeometry(10, 178, CARD_W - 20, 14)
 
         self.action = QPushButton(self)
+        self.action.setObjectName("card_action")
         self.action.setGeometry(10, 162, CARD_W - 20, 16)
         self.action.setCursor(Qt.PointingHandCursor)
         self.action.setFocusPolicy(Qt.NoFocus)
@@ -177,6 +185,7 @@ class RosterCard(QFrame):
         # to size+8 for the pulse halo — so pass the 6px dot handoff §4.1d asks
         # for and move it; setGeometry would be overridden by that fixed size.
         self.dot = PulsingDot(6, self)
+        self.dot.setObjectName("card_running_dot")
         self.dot.move(10, 184)
         self.dot.setVisible(False)
 
@@ -406,11 +415,22 @@ class RosterCard(QFrame):
             " border: none; border-radius: 8px; font-size: 11px;"
             " font-weight: 700; }")
         running = self._state == "running"
-        if running:
-            # Clear the dot's 14x14 halo footprint (PulsingDot pads size + 8).
-            self.footer.setGeometry(28, 178, CARD_W - 38, 14)
+        controls_revealed = self.controls_revealed()
+        if controls_revealed:
+            # Pencil and gear occupy x=6..29 and x=118..141. Pack status into
+            # the clear center lane while the hover/focus cluster is visible.
+            if running:
+                self.dot.move(34, 178)
+                self.footer.setGeometry(52, 178, 62, 14)
+            else:
+                self.footer.setGeometry(34, 178, 80, 14)
         else:
-            self.footer.setGeometry(10, 178, CARD_W - 20, 14)
+            self.dot.move(10, 178)
+            if running:
+                # Clear the dot's 14x14 halo footprint at rest.
+                self.footer.setGeometry(28, 178, CARD_W - 38, 14)
+            else:
+                self.footer.setGeometry(10, 178, CARD_W - 20, 14)
         self.footer.setText(self._footer_for_state())
         ink = gp.status_ink(self._state, self._is_dark)
         self.footer.setStyleSheet(
