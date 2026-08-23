@@ -5,10 +5,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QApplication
 
 import utils.motion as motion
 from utils.rendition_poses import RenditionPoseFetcher
+from utils.widgets.grandstand import palette as gp
 from utils.widgets.grandstand.card_shelf import HEAD_H, CardShelf
 from utils.widgets.grandstand.model import RosterEntry
 
@@ -127,7 +130,7 @@ def test_card_signals_are_forwarded(shelf):
 
 def test_shake_on_an_unknown_id_is_harmless(shelf):
     shelf.set_entries([_entry("a")])
-    shelf.shake("ghost")        # must not raise
+    assert shelf.shake("ghost") is False
 
 
 def test_shake_runs_on_a_real_card(shelf, monkeypatch):
@@ -161,3 +164,32 @@ def test_edge_fades_only_appear_when_there_is_something_to_scroll(shelf):
     shelf.set_entries([_entry(str(i)) for i in range(12)])
     qapp.processEvents()
     assert "right" in shelf.fade_sides()
+
+
+def test_the_right_edge_fade_actually_covers_the_cards(shelf, qapp):
+    """fade_sides() only reports the decision. This proves the mask is drawn
+    ABOVE the strip — with the overlay removed the edge pixel is a card, and
+    this test fails."""
+    shelf.set_entries([_entry(str(i)) for i in range(12)])
+    shelf.show()
+    qapp.processEvents()
+    assert "right" in shelf.fade_sides()
+
+    pm = QPixmap(shelf.size())
+    pm.fill(Qt.black)
+    shelf.render(pm)
+    img = pm.toImage()
+
+    def distance(a, b):
+        return (abs(a.red() - b.red()) + abs(a.green() - b.green())
+                + abs(a.blue() - b.blue()))
+
+    area = shelf.scroll.geometry()
+    edge = img.pixelColor(area.right() - 2, area.center().y())
+    panel_bg = gp.panel(True)["bg"]
+    accent = QColor("#4a8fe7")          # the card colour the mask must hide
+
+    # The last pixel is ~94% along the gradient (fillRect covers [x, x+w-1]
+    # while colorAt(1.0) lands on width()), so it is near-panel, never exact.
+    assert distance(edge, panel_bg) < 40
+    assert distance(edge, accent) > 150

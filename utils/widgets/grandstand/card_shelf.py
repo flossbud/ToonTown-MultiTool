@@ -37,6 +37,41 @@ class _AddTile(QToolButton):
         self.setText("+\nAdd\naccount")
 
 
+class _EdgeFades(QWidget):
+    """The 36px masks from handoff §4.1c, drawn ABOVE the scrolling strip.
+
+    A parent paints before its children, so the shelf cannot draw these itself —
+    the cards would cover them. This sits over the viewport instead and is
+    transparent to mouse and wheel events, so the strip underneath still
+    scrolls normally.
+    """
+
+    def __init__(self, shelf: "CardShelf") -> None:
+        super().__init__(shelf)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._shelf = shelf
+
+    def paintEvent(self, event) -> None:
+        sides = self._shelf.fade_sides()
+        if not sides:
+            return
+        d = gp.shelf_scroll(self._shelf.is_dark())
+        p = QPainter(self)
+        h = self.height()
+        if "left" in sides:
+            g = QLinearGradient(QPointF(0.0, 0.0), QPointF(float(FADE_W), 0.0))
+            g.setColorAt(0.0, d["fade_in"])
+            g.setColorAt(1.0, d["fade_out"])
+            p.fillRect(0, 0, FADE_W, h, g)
+        if "right" in sides:
+            g = QLinearGradient(QPointF(float(self.width() - FADE_W), 0.0),
+                                QPointF(float(self.width()), 0.0))
+            g.setColorAt(0.0, d["fade_out"])
+            g.setColorAt(1.0, d["fade_in"])
+            p.fillRect(self.width() - FADE_W, 0, FADE_W, h, g)
+        p.end()
+
+
 class CardShelf(QWidget):
     card_clicked = Signal(str)
     star_clicked = Signal(str)
@@ -105,18 +140,23 @@ class CardShelf(QWidget):
         self._row.addStretch()
         self.scroll.setWidget(self._strip)
 
-        # The fades depend on scroll position and on how much there is to
-        # scroll, so both have to repaint the shelf.
-        bar = self.scroll.horizontalScrollBar()
-        bar.valueChanged.connect(self.update)
-        bar.rangeChanged.connect(lambda *_: self.update())
         root.addWidget(self.scroll, 1)
+
+        self._fades = _EdgeFades(self)
+
+        # The fades depend on scroll position and on how much there is to
+        # scroll, so both have to repaint the overlay.
+        bar = self.scroll.horizontalScrollBar()
+        bar.valueChanged.connect(self._fades.update)
+        bar.rangeChanged.connect(lambda *_: self._fades.update())
 
         self.add_tile = _AddTile(self._strip)
         self.add_tile.clicked.connect(self.add_account_clicked.emit)
         self._row.insertWidget(self._row.count() - 1, self.add_tile)
 
         self.apply_theme(True)
+        self._fades.setGeometry(self.scroll.geometry())
+        self._fades.raise_()
 
     # ── inbound ────────────────────────────────────────────────────────────
 
@@ -125,6 +165,9 @@ class CardShelf(QWidget):
 
     def card_for(self, account_id: str) -> Optional[RosterCard]:
         return self._cards.get(account_id)
+
+    def is_dark(self) -> bool:
+        return self._is_dark
 
     def strip_widgets(self) -> list:
         """Left-to-right contents of the scrolling strip: each card as its
@@ -211,27 +254,10 @@ class CardShelf(QWidget):
             sides.append("right")
         return tuple(sides)
 
-    def paintEvent(self, event) -> None:
-        super().paintEvent(event)
-        sides = self.fade_sides()
-        if not sides:
-            return
-        d = gp.shelf_scroll(self._is_dark)
-        p = QPainter(self)
-        geo = self.scroll.geometry()
-        if "left" in sides:
-            g = QLinearGradient(QPointF(geo.left(), 0.0),
-                                QPointF(geo.left() + FADE_W, 0.0))
-            g.setColorAt(0.0, d["fade_in"])
-            g.setColorAt(1.0, d["fade_out"])
-            p.fillRect(geo.left(), geo.top(), FADE_W, geo.height(), g)
-        if "right" in sides:
-            g = QLinearGradient(QPointF(geo.right() - FADE_W, 0.0),
-                                QPointF(geo.right(), 0.0))
-            g.setColorAt(0.0, d["fade_out"])
-            g.setColorAt(1.0, d["fade_in"])
-            p.fillRect(geo.right() - FADE_W, geo.top(), FADE_W, geo.height(), g)
-        p.end()
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fades.setGeometry(self.scroll.geometry())
+        self._fades.raise_()
 
     # ── theme ──────────────────────────────────────────────────────────────
 

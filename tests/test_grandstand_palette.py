@@ -166,7 +166,7 @@ def test_every_function_accepts_both_themes():
         (gp.card_ink, (False,)),
         (gp.control_chip, (False,)), (gp.status_ink, ("idle",)),
         (gp.head_link, (True, False)), (gp.advisory_strip, ()),
-        (gp.shelf_head_ink, ()), (gp.add_tile, ()),
+        (gp.shelf_head_ink, ()), (gp.add_tile, ()), (gp.shelf_scroll, ()),
         (gp.ribbon, (False,)), (gp.lineup_ink, ()),
         (gp.hero_ghost_button, ()),
     ):
