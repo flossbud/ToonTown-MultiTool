@@ -67,6 +67,15 @@ from utils.launch_tab_demo_mode import get_demo_fixtures
 
 
 MAX_PER_GAME = 16  # hard ceiling per game (TTR / CC)
+# Delay between party launches. Concurrency is already safe — TTRPatcher holds
+# a module-level lock on the shared engine dir — but firing four logins in the
+# same tick would randomise arrival order at the server and make the star's
+# precedence meaningless (spec §6).
+PARTY_STAGGER_MS = 400
+
+# States that mean a launch is already under way for this account.
+_IN_FLIGHT_STATES = frozenset({"logging_in", "launching", "loading", "queued",
+                               "need_2fa"})
 LINUX_KEYRING_HELP_URL = "https://wiki.archlinux.org/title/Secret_Service"
 
 
@@ -442,6 +451,9 @@ class LaunchTab(QWidget):
         self._probe_thread = None
         self._probe_worker = None
         self._pending_2fa: set = set()
+        self._party_timers: list = []
+        self._party_gate_passed = False
+        self._party_pending: set[tuple[str, str]] = set()
 
         # Loading-state orchestration. _loading[game] is a launch-ordered list
         # of account_ids (the timer itself lives on each slot.loading_timer);
@@ -1080,6 +1092,7 @@ class LaunchTab(QWidget):
         self.grandstand.enter_2fa_requested.connect(self._on_tile_enter_2fa)
         self.grandstand.retry_requested.connect(self._on_launch)
         self.grandstand.launch_requested.connect(self._on_launch)
+        self.grandstand.party_launch_requested.connect(self._on_party_launch)
         self._layout.addWidget(self.grandstand, 1)
         for game in ("ttr", "cc"):
             self._render_grandstand(game)
@@ -1486,11 +1499,102 @@ class LaunchTab(QWidget):
 
     # ── Launch flow ────────────────────────────────────────────────────────
 
+    def _is_in_flight(self, game: str, account_id: str) -> bool:
+        slot = self._slots[game].get(account_id)
+        if slot is None:
+            return False
+        state, _, _ = self._effective_state(game, slot)
+        return str(state) in _IN_FLIGHT_STATES
+
+    def _party_dispatch_targets(self, game: str, account_ids: list) -> list:
+        """The subset of a party that Play should actually start. Membership is
+        about who is on the stage; a toon already playing belongs there but
+        must not be relaunched (spec §6)."""
+        return [aid for aid in account_ids
+                if not self.is_account_running(game, aid)
+                and not self._is_in_flight(game, aid)
+                and (game, aid) not in self._party_pending]
+
+    def _cc_gate_ok(self) -> bool:
+        """The Clash install gate, asked once per user intent. A party is ONE
+        intent, so `_on_party_launch` answers for the whole batch and every
+        account it dispatches sees the answer already given."""
+        if getattr(self, "_party_gate_passed", False):
+            return True
+        return _cc_launch_gate(self.settings_manager, parent=self.window())
+
+    def _on_party_launch(self, game: str, account_ids: list) -> None:
+        """Play. Dispatches through the same per-account entry point a single
+        card uses, staggered so the starred account's login lands first."""
+        targets = self._party_dispatch_targets(game, list(account_ids))
+        if not targets:
+            return
+        # The Clash install gate is a property of the batch, not the account.
+        if game == "cc" and not _cc_launch_gate(
+                self.settings_manager, parent=self.window()):
+            return
+        # Reserve staggered accounts before starting the first one. A second
+        # Play (or a card click) must not pull an account forward or schedule
+        # it twice while it is waiting for its turn.
+        self._party_pending.update((game, aid) for aid in targets[1:])
+        for index, account_id in enumerate(targets):
+            if index == 0:
+                self._launch_party_account(game, account_id)
+                continue
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            last = index == len(targets) - 1
+            timer.timeout.connect(
+                lambda t=timer, g=game, a=account_id, fin=last:
+                    self._party_timeout(t, g, a, fin))
+            timer.start(PARTY_STAGGER_MS * index)
+            self._party_timers.append(timer)
+
+    def _launch_party_account(self, game: str, account_id: str) -> None:
+        """Enter the normal launch path with this batch's gate authorization.
+
+        Authorization is scoped to the call, rather than left enabled between
+        timers, so unrelated card clicks and overlapping batches remain
+        separate user intents. Every queued Clash callback reapplies the one
+        answer already obtained by `_on_party_launch`.
+        """
+        previous = self._party_gate_passed
+        self._party_gate_passed = (game == "cc")
+        try:
+            self._on_launch(game, account_id)
+        finally:
+            self._party_gate_passed = previous
+
+    def _party_timeout(self, timer: QTimer, game: str, account_id: str,
+                       last: bool) -> None:
+        try:
+            self._party_step(game, account_id, last)
+        finally:
+            if timer in self._party_timers:
+                self._party_timers.remove(timer)
+            timer.deleteLater()
+
+    def _party_step(self, game: str, account_id: str, last: bool) -> None:
+        self._party_pending.discard((game, account_id))
+        try:
+            # State may have changed while this account waited (for example a
+            # card launch or another party). Never relaunch a live/in-flight
+            # account when its original timer eventually fires.
+            if self._party_dispatch_targets(game, [account_id]):
+                self._launch_party_account(game, account_id)
+        finally:
+            if last:
+                self._party_gate_passed = False
+
     def _on_launch(self, game: str, account_id: str):
         from utils.credentials_manager import _dbg
         _dbg(f"[Credentials] _on_launch click: game={game} account={account_id} "
              f"probe_pending={getattr(self.cred_manager, 'keyring_probe_pending', False)} "
              f"available={getattr(self.cred_manager, 'keyring_available', True)}")
+        if (game, account_id) in self._party_pending:
+            _dbg(f"[Credentials] _on_launch: party launch pending for "
+                 f"{game}/{account_id}")
+            return
         slot = self._slots[game].get(account_id)
         if slot is None:
             _dbg(f"[Credentials] _on_launch: no slot for {game}/{account_id}")
@@ -1502,7 +1606,7 @@ class LaunchTab(QWidget):
 
         # CC: block launch when multi-install is ambiguous (no stored pick).
         if game == "cc":
-            if not _cc_launch_gate(self.settings_manager, parent=self.window()):
+            if not self._cc_gate_ok():
                 return
 
         # Check engine path
@@ -2093,6 +2197,12 @@ class LaunchTab(QWidget):
         # Tear down the tab's own transient resources. Deliberately does NOT
         # kill running game launchers: closing the TTMT UI leaves already-running
         # games alive (a multitoon launcher you can close while still playing).
+        for timer in self._party_timers:
+            timer.stop()
+            timer.deleteLater()
+        self._party_timers.clear()
+        self._party_gate_passed = False
+        self._party_pending.clear()
         for game in ("ttr", "cc"):
             for slot in self._slots[game].values():
                 if slot.loading_timer is not None:
