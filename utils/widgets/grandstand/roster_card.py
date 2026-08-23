@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFontMetrics, QLinearGradient, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QFrame, QLabel, QPushButton, QToolButton, QWidget,
 )
@@ -172,10 +172,15 @@ class RosterCard(QFrame):
         self.footer = QLabel(self)
         self.footer.setObjectName("card_footer")
         self.footer.setGeometry(10, 178, CARD_W - 20, 14)
+        footer_font = self.footer.font()
+        footer_font.setPixelSize(11)
+        self.footer.setFont(footer_font)
 
         self.action = QPushButton(self)
         self.action.setObjectName("card_action")
-        self.action.setGeometry(10, 162, CARD_W - 20, 16)
+        # Pencil and gear occupy x=6..29 and x=118..141. The action owns the
+        # clear lane between them whenever the hover/focus cluster is present.
+        self.action.setGeometry(34, CARD_H - 30, 80, 24)
         self.action.setCursor(Qt.PointingHandCursor)
         self.action.setFocusPolicy(Qt.NoFocus)
         self.action.clicked.connect(self._on_action)
@@ -385,6 +390,19 @@ class RosterCard(QFrame):
             return "2FA required"
         return self._entry.footer if self._entry is not None else ""
 
+    def _set_footer_text(self, text: str, full_text: Optional[str] = None) -> None:
+        """Elide to the footer width and retain the full status as a tooltip.
+
+        A 148px card cannot hold an arbitrary error summary, and QLabel would
+        otherwise cut it mid-glyph. Geometry must be assigned before calling
+        this helper so the metrics use the status band's current width.
+        """
+        metrics = QFontMetrics(self.footer.font())
+        self.footer.setText(metrics.elidedText(
+            text, Qt.ElideRight, self.footer.width()))
+        tooltip = text if full_text is None else full_text
+        self.footer.setToolTip(tooltip if tooltip else "")
+
     def _should_show_action(self) -> bool:
         label, _, _ = ACTION_MAP[self._state]
         if label is None:
@@ -403,7 +421,6 @@ class RosterCard(QFrame):
         self.action.setText(label or "")
         self.action.setEnabled(bool(enabled))
         self.action.setVisible(self._should_show_action())
-        self.user.setVisible(not self.action.isVisibleTo(self))
         act = gp.card_action(
             self._state,
             self._entry.accent if self._entry is not None else gp.game_accent("ttr"),
@@ -416,26 +433,24 @@ class RosterCard(QFrame):
             " font-weight: 700; }")
         running = self._state == "running"
         controls_revealed = self.controls_revealed()
-        if controls_revealed:
-            # Pencil and gear occupy x=6..29 and x=118..141. Pack status into
-            # the clear center lane while the hover/focus cluster is visible.
-            if running:
-                self.dot.move(34, 178)
-                self.footer.setGeometry(52, 178, 62, 14)
-            else:
-                self.footer.setGeometry(34, 178, 80, 14)
+        status_promoted = self.action.isVisibleTo(self) or controls_revealed
+        self.user.setVisible(not status_promoted)
+        status_y = 162 if status_promoted else 178
+        if running:
+            # PulsingDot pads the 6px core to a 14x14 halo. It travels with the
+            # footer, whose remaining 110px easily holds the word "Running".
+            self.dot.move(10, status_y)
+            self.footer.setGeometry(28, status_y, CARD_W - 38, 14)
         else:
-            self.dot.move(10, 178)
-            if running:
-                # Clear the dot's 14x14 halo footprint at rest.
-                self.footer.setGeometry(28, 178, CARD_W - 38, 14)
-            else:
-                self.footer.setGeometry(10, 178, CARD_W - 20, 14)
-        self.footer.setText(self._footer_for_state())
+            self.footer.setGeometry(10, status_y, CARD_W - 20, 14)
         ink = gp.status_ink(self._state, self._is_dark)
         self.footer.setStyleSheet(
-            f"color: {ink['text'].name()}; font-size: 11px;"
+            f"color: {ink['text'].name()};"
             " background: transparent;")
+        footer_text = self._footer_for_state()
+        full_text = self._message if self._state == "failed" and self._message \
+            else footer_text
+        self._set_footer_text(footer_text, full_text)
         self.dot.set_color(ink["dot"].name(), pulse=running)
         self.dot.setVisible(running)
         self.update()

@@ -5,6 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
+from PySide6.QtGui import QFontMetrics
 
 from utils.rendition_poses import RenditionPoseFetcher
 from utils.widgets.grandstand.model import RosterEntry
@@ -124,6 +125,37 @@ def test_the_running_dot_never_overlaps_the_footer_text(card):
     card.set_state("running")
     assert card.dot_visible() is True
     assert not card.dot.geometry().intersects(card.footer.geometry())
+
+
+def test_footer_text_always_fits_its_box(card, qapp):
+    """Geometry non-overlap says nothing about whether the text inside fits.
+    Every state's own status line must render within the footer's width."""
+    cases = [("running", ""), ("queued", "position 42"),
+             ("logging_in", "Reaching server..."),
+             ("failed", "Engine not found"),
+             ("failed", "x" * 32)]
+    for state, message in cases:
+        for hovered in (False, True):
+            card.set_state(state, message)
+            card.enterEvent(None) if hovered else card.leaveEvent(None)
+            qapp.processEvents()
+            metrics = QFontMetrics(card.footer.font())
+            width = metrics.horizontalAdvance(card.footer.text())
+            assert width <= card.footer.width(), (
+                f"{state!r} hovered={hovered}: {card.footer.text()!r} "
+                f"needs {width}px in {card.footer.width()}px")
+
+
+def test_a_clipped_summary_is_still_reachable(card):
+    """Eliding may shorten what is drawn; it must not lose the message."""
+    card.set_state("failed", "y" * 40)
+    assert card.footer.toolTip() == "y" * 40
+
+
+def test_the_longest_action_label_fits_between_the_chips(card):
+    card.set_state("need_2fa")
+    metrics = QFontMetrics(card.action.font())
+    assert metrics.horizontalAdvance(card.action.text()) <= card.action.width()
 
 
 def test_no_two_visible_children_ever_overlap(card, qapp):
