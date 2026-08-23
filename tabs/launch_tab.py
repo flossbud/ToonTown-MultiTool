@@ -782,8 +782,7 @@ class LaunchTab(QWidget):
                 "advisory", "Checking your keyring…")
             return
         if not getattr(self.cred_manager, "keyring_available", True):
-            gs.set_credential_state(
-                "advisory", KEYRING_WARNING_COPY.advisory_reason())
+            gs.set_credential_state("advisory")
             return
         gs.set_credential_state("ok")
 

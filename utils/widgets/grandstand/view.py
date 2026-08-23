@@ -12,9 +12,11 @@ import os
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
+)
 
-from utils.credential_copy import MACOS_VAULT_COPY
+from utils.credential_copy import KEYRING_WARNING_COPY, MACOS_VAULT_COPY
 from utils.widgets.grandstand import palette as gp
 
 # Band geometry (handoff §4.1). The stack is fixed above the shelf; the shelf
@@ -36,6 +38,35 @@ def grandstand_enabled() -> bool:
     """True when the new launcher view is selected. Any value other than "1"
     is off, so a stale empty export cannot half-enable it."""
     return os.environ.get(_FLAG, "") == "1"
+
+
+class _AdvisoryLabel(QLabel):
+    """Single-line strip copy that never dictates the view's width."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._full_text = ""
+        self.setWordWrap(False)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+
+    def set_copy(self, text: str, tooltip: str) -> None:
+        self._full_text = text
+        self.setToolTip(tooltip)
+        super().setText(text)
+        if self.isVisible():
+            self._elide()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._elide()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._elide()
+
+    def _elide(self) -> None:
+        super().setText(self.fontMetrics().elidedText(
+            self._full_text, Qt.ElideRight, self.contentsRect().width()))
 
 
 class GrandstandView(QWidget):
@@ -79,7 +110,7 @@ class GrandstandView(QWidget):
         self.advisory.setVisible(False)
         adv = QHBoxLayout(self.advisory)
         adv.setContentsMargins(12, 0, 12, 0)
-        self.advisory_label = QLabel(self.advisory)
+        self.advisory_label = _AdvisoryLabel(self.advisory)
         adv.addWidget(self.advisory_label)
         root.addWidget(self.advisory)
 
@@ -185,9 +216,11 @@ class GrandstandView(QWidget):
             self.hero.set_blocked(reason or fallback, action_text, on_action)
             return
         self.hero.set_blocked(None)
-        if kind == "advisory" and reason:
-            self.advisory_label.setText(reason)
+        if kind == "advisory":
+            strip = reason or KEYRING_WARNING_COPY.advisory_reason()
+            tooltip = reason or KEYRING_WARNING_COPY.body
             self.advisory.setVisible(True)
+            self.advisory_label.set_copy(strip, tooltip)
             # The strip creates a fourth band. Tighten all three gaps by 2px
             # so the natural stack remains inside the fixed 688px content area.
             self.layout().setSpacing(ADVISORY_STACK_GAP)

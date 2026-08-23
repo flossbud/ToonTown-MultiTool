@@ -10,6 +10,7 @@ os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 import pytest
 
 from tabs.launch_tab import LaunchTab
+from utils.credential_copy import KEYRING_WARNING_COPY
 from utils.rendition_poses import RenditionPoseFetcher
 from utils.widgets.grandstand.card_shelf import CardShelf
 from utils.widgets.grandstand.model import RosterEntry
@@ -136,6 +137,55 @@ def test_the_stack_still_fits_with_the_advisory_strip_showing(view, qapp):
     view.set_credential_state("advisory", "Passwords will not be saved.")
     qapp.processEvents()
     assert view.sizeHint().height() <= 688
+
+
+def test_the_advisory_strip_never_widens_the_view(view, qapp):
+    """The host disables horizontal scrolling, so a strip that cannot shrink
+    clips its own message instead of showing it."""
+    view.resize(880, 688)
+    qapp.processEvents()
+    before = view.width()
+    view.set_credential_state("advisory", "")
+    qapp.processEvents()
+    assert view.advisory.isVisibleTo(view) is True
+    assert view.sizeHint().width() <= 880
+    assert view.width() == before
+
+
+def test_the_full_advisory_copy_is_still_reachable(view):
+    view.set_credential_state("advisory", "")
+    assert view.advisory_label.toolTip() == KEYRING_WARNING_COPY.body
+
+
+def test_advisory_copy_elides_when_a_hidden_view_is_reshown(view, qapp):
+    long_copy = "Passwords will not be remembered this session. " * 40
+    view.set_credential_state("advisory", "Checking your keyring…")
+    qapp.processEvents()
+    view.hide()
+    qapp.processEvents()
+    view.set_credential_state("advisory", long_copy)
+    view.show()
+    qapp.processEvents()
+    assert view.advisory_label.text().endswith("…")
+    assert view.advisory_label.text() != long_copy
+    assert view.advisory_label.toolTip() == long_copy
+
+
+def test_advisory_elision_tracks_the_available_width(view, qapp):
+    long_copy = "Passwords will not be remembered this session. " * 40
+    view.set_credential_state("advisory", long_copy)
+    qapp.processEvents()
+    wide = view.advisory_label.text()
+
+    view.resize(640, 688)
+    qapp.processEvents()
+    narrow = view.advisory_label.text()
+    assert narrow.endswith("…")
+    assert len(narrow) < len(wide)
+
+    view.resize(880, 688)
+    qapp.processEvents()
+    assert len(view.advisory_label.text()) > len(narrow)
 
 
 # ── empty states (spec §7) ──────────────────────────────────────────────────
@@ -315,9 +365,7 @@ def test_launch_tab_theme_switch_reaches_grandstand(monkeypatch, qapp):
     [
         (True, False, "Checking your keyring…"),
         (False, False,
-         "No system wallet service was detected. Your account usernames are saved, "
-         "but passwords will not be remembered between sessions - you'll need to "
-         "re-enter them each time you launch TTMT."),
+         "Passwords will not be remembered this session."),
     ],
 )
 def test_grandstand_uses_advisory_instead_of_legacy_banner(

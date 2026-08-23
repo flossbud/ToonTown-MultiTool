@@ -9,12 +9,13 @@ class CredentialCopy:
     header: str
     body: str
     action_text: str = ""
+    strip: str = ""
 
     def hero_reason(self) -> str:
         return f"{self.header}\n{self.body}"
 
     def advisory_reason(self) -> str:
-        return " ".join(self.body.splitlines())
+        return self.strip or " ".join(self.body.splitlines())
 
 
 KEYRING_WARNING_COPY = CredentialCopy(
@@ -24,6 +25,7 @@ KEYRING_WARNING_COPY = CredentialCopy(
         "but passwords will not be remembered between sessions - you'll need to\n"
         "re-enter them each time you launch TTMT."
     ),
+    strip="Passwords will not be remembered this session.",
 )
 
 MACOS_VAULT_COPY = {
