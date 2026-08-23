@@ -926,7 +926,7 @@ class LaunchTab(QWidget):
 
     def _on_primary_picked(self, game: str, account_id: str, toon_name: str) -> None:
         self._recent_toons.set_primary(account_id, toon_name)
-        self._render_section(game)
+        self._render_current_view(game)
         self.refresh_theme()
 
     def _render_section(self, game: str) -> None:
@@ -958,6 +958,14 @@ class LaunchTab(QWidget):
         for local, acct in enumerate(slice_):
             if local < len(section.tiles):
                 self._visible_tiles[game][acct.id] = section.tiles[local]
+
+    def _render_current_view(self, game: str) -> None:
+        """Repaint whichever launcher is mounted. Account mutations (add, edit,
+        reorder, delete) must reach the view the user is actually looking at."""
+        if getattr(self, "grandstand", None) is not None:
+            self._render_grandstand(game)
+        else:
+            self._render_section(game)
 
     def _reapply_visible_dots(self, game: str) -> None:
         """Re-apply each visible running account's last Multitoon dot_state.
@@ -1094,7 +1102,7 @@ class LaunchTab(QWidget):
             rec = self._recent_toons.get(acct.id)
             if rec is not None:
                 names[acct.id] = rec.toon_name
-        self.grandstand.set_main_toon_names(names)
+        self.grandstand.set_main_toon_names(game, names)
 
     def _on_grandstand_edit(self, game: str, account_id: str, surface: str) -> None:
         """Pencil and gear both open today's account editor. `surface` is
@@ -1237,7 +1245,7 @@ class LaunchTab(QWidget):
                 self._page[game] = i // PAGE_SIZE
                 break
         self._reconcile_slots()
-        self._render_section(game)
+        self._render_current_view(game)
         self.refresh_theme()
 
     def _newest_account_id(self, game: str) -> str | None:
@@ -1264,7 +1272,7 @@ class LaunchTab(QWidget):
             if target is not None:
                 self._navigate_to_account(game, target)
             else:
-                self._render_section(game)
+                self._render_current_view(game)
                 self.refresh_theme()
 
         editor.account_saved.connect(_save)
@@ -1292,7 +1300,7 @@ class LaunchTab(QWidget):
             self.log(f"[Launch] Reorder of {game.upper()} accounts was rejected.", level="warn")
             return
         self._reconcile_slots()
-        self._render_section(game)
+        self._render_current_view(game)
         self.refresh_theme()
 
     def _on_tile_edit(self, game: str, account_id: str):
@@ -1319,7 +1327,7 @@ class LaunchTab(QWidget):
                 global_idx, label=label, username=username, password=pw,
             )
             self._reconcile_slots()
-            self._render_section(game)
+            self._render_current_view(game)
             self.refresh_theme()
             game_label = "TTR" if game == "ttr" else "CC"
             self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)} updated.")
@@ -1404,7 +1412,7 @@ class LaunchTab(QWidget):
                     daemon=True,
                 ).start()
         self._reconcile_slots()
-        self._render_section(game)
+        self._render_current_view(game)
         self.refresh_theme()
 
     def _on_tile_quit(self, game: str, account_id: str):

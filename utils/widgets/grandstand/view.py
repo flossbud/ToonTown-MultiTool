@@ -59,6 +59,7 @@ class GrandstandView(QWidget):
         self._party = party
         self._is_dark = True
         self._entries: dict[str, list] = {"ttr": [], "cc": []}
+        self._main_names: dict[str, dict] = {"ttr": {}, "cc": {}}
 
         self.setObjectName("grandstand_view")
 
@@ -92,7 +93,6 @@ class GrandstandView(QWidget):
         self.shelf = CardShelf(self)
         root.addWidget(self.shelf, 1)         # the only stretching band
 
-        self._main_names: dict[str, str] = {}
         self.shelf.card_clicked.connect(self._on_card_clicked)
         self.shelf.star_clicked.connect(self._on_star_clicked)
         self.shelf.edit_clicked.connect(
@@ -124,10 +124,12 @@ class GrandstandView(QWidget):
     def party(self):
         return self._party
 
-    def set_main_toon_names(self, mapping: dict) -> None:
-        """account_id -> toon name, used for the greeting and the party list."""
-        self._main_names = dict(mapping)
-        self.refresh(self._party.active_game())
+    def set_main_toon_names(self, game: str, mapping: dict) -> None:
+        """account_id -> toon name for ONE game, used for the greeting and the
+        party list. Per game because the greeting belongs to the active game;
+        a single shared dict lets one game's render erase the other's."""
+        self._main_names[game] = dict(mapping)
+        self.refresh(game)
 
     def set_accounts(self, game: str, entries: list) -> None:
         self._entries[game] = list(entries)
@@ -205,7 +207,8 @@ class GrandstandView(QWidget):
         by_id = {e.account_id: e for e in entries}
         self.hero.set_party([
             (by_id[aid].display_name if aid in by_id else aid) for aid in selected])
-        self.hero.set_main(self._main_names.get(star) if star else None)
+        names = self._main_names.get(game, {})
+        self.hero.set_main(names.get(star) if star else None)
         self.hero.set_lineup(
             lineup_entries(entries, self._party.launch_order(game)))
 

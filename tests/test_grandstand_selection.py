@@ -70,9 +70,19 @@ def test_the_stage_holds_four_and_follows_launch_order(view):
 
 
 def test_star_sets_the_greeting(view):
-    view.set_main_toon_names({"b": "Hiro"})
+    view.set_main_toon_names("ttr", {"b": "Hiro"})
     view.shelf.card_for("b").star_clicked.emit("b")
     assert "Hiro" in view.hero.greeting_text()
+
+
+def test_rendering_one_game_does_not_erase_the_others_greeting(view):
+    view.set_main_toon_names("ttr", {"a": "Flossbud"})
+    view.shelf.card_for("a").star_clicked.emit("a")
+    assert "Flossbud" in view.hero.greeting_text()
+
+    view.set_accounts("cc", [_entry("z", "Cogsworth")])
+    view.set_main_toon_names("cc", {"z": "Cogsworth"})
+    assert "Flossbud" in view.hero.greeting_text()
 
 
 def test_clicking_the_star_again_clears_it(view):
