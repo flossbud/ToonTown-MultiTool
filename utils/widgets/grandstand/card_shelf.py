@@ -213,6 +213,17 @@ class CardShelf(QWidget):
             self._cards[entry.account_id] = card
             self._order.append(entry.account_id)
 
+    def set_empty(self, empty: bool) -> None:
+        """Clear roster cards for an explicitly empty account source.
+
+        The Add tile is permanent, including for populated rosters, so leaving
+        empty mode needs no reconstruction; the next ``set_entries`` call owns
+        that transition.
+        """
+        if empty:
+            self.set_entries([])
+        self.add_tile.setVisible(True)
+
     def set_state(self, account_id: str, state: str, message: str = "",
                   raw: str = "") -> None:
         card = self._cards.get(account_id)

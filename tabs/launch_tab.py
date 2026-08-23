@@ -762,14 +762,44 @@ class LaunchTab(QWidget):
         biometric gate was denied ("denied") or the vault could not be read
         ("corrupt"), and return True. Return False for every other state so the
         generic keyring banner logic runs unchanged. Never called off darwin."""
-        state = getattr(self.cred_manager, "macos_unlock_state", None)
-        if state not in ("denied", "corrupt"):
+        if not self._macos_vault_is_locked():
             return False
+        state = getattr(self.cred_manager, "macos_unlock_state", None)
         self._keyring_banner = MacOSVaultLockedBanner(
             state, self._on_unlock_accounts_clicked, parent=self
         )
         self._layout.addWidget(self._keyring_banner, alignment=Qt.AlignHCenter)
         return True
+
+    def _macos_vault_is_locked(self) -> bool:
+        """Darwin: the launch-time biometric gate was denied, or the vault
+        could not be read. Both mean no account can launch."""
+        state = getattr(self.cred_manager, "macos_unlock_state", None)
+        return state in ("denied", "corrupt")
+
+    def _push_credential_state(self) -> None:
+        """Translate the keyring/vault situation into a Grandstand credential
+        state. Blocking conditions take the hero; advisory ones take the strip.
+        The old banner widgets stay for the legacy path."""
+        gs = getattr(self, "grandstand", None)
+        if gs is None:
+            return
+        if sys.platform == "darwin" and self._macos_vault_is_locked():
+            gs.set_credential_state(
+                "blocked",
+                "Your macOS keychain is locked, so no account can launch.",
+                "Unlock accounts", self._on_unlock_accounts_clicked)
+            return
+        if getattr(self.cred_manager, "keyring_probe_pending", False):
+            gs.set_credential_state(
+                "advisory", "Checking your keyring…")
+            return
+        if not getattr(self.cred_manager, "keyring_available", True):
+            gs.set_credential_state(
+                "advisory",
+                "No keyring available — passwords will not be saved.")
+            return
+        gs.set_credential_state("ok")
 
     def _on_unlock_accounts_clicked(self):
         """Re-run the probe worker, which re-fires the single biometric gate.
@@ -1042,6 +1072,10 @@ class LaunchTab(QWidget):
                 w.deleteLater()
         self._keyring_banner = None
 
+        if grandstand_enabled():
+            self._build_grandstand()
+            return
+
         # Banner (pending / warning / darwin-locked) at top. On darwin a denied
         # or corrupt vault state takes precedence over the generic keyring
         # banners; otherwise the pending/warning logic is byte-identical.
@@ -1053,10 +1087,6 @@ class LaunchTab(QWidget):
         elif not getattr(self.cred_manager, "keyring_available", True):
             self._keyring_banner = KeyringWarningBanner(self.cred_manager, parent=self)
             self._layout.addWidget(self._keyring_banner, alignment=Qt.AlignHCenter)
-
-        if grandstand_enabled():
-            self._build_grandstand()
-            return
 
         demo = get_demo_fixtures()
         if demo is not None:
@@ -1081,6 +1111,7 @@ class LaunchTab(QWidget):
             self._party.prune(game, {a.id for a in self._ordered_accounts(game)})
 
         self.grandstand = GrandstandView(self._party, log=self.log, parent=self)
+        self._push_credential_state()
         self.grandstand.star_changed.connect(
             lambda g, a: self._render_grandstand(g))
         self.grandstand.add_account_requested.connect(self._on_add_account)
@@ -1431,6 +1462,9 @@ class LaunchTab(QWidget):
                     daemon=True,
                 ).start()
         self._reconcile_slots()
+        party = getattr(self, "_party", None)
+        if party is not None:
+            party.prune(game, {a.id for a in self._ordered_accounts(game)})
         self._render_current_view(game)
         self.refresh_theme()
 
@@ -2112,6 +2146,7 @@ class LaunchTab(QWidget):
         if available:
             self.cred_manager.run_deferred_v1_migration()
         self._build_ui()
+        self._push_credential_state()
         self.refresh_theme()
         self._set_launch_buttons_enabled(True)
         from utils.credentials_manager import _dbg
@@ -2208,6 +2243,10 @@ class LaunchTab(QWidget):
         for section in (self.ttr_section, self.cc_section):
             if section is not None and hasattr(section, "apply_theme"):
                 section.apply_theme(c)
+
+        grandstand = getattr(self, "grandstand", None)
+        if grandstand is not None:
+            grandstand.apply_theme(is_dark)
 
         if self._keyring_banner is not None:
             if hasattr(self._keyring_banner, "apply_theme"):

@@ -11,7 +11,10 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QFrame, QVBoxLayout, QWidget
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+
+from utils.widgets.grandstand import palette as gp
 
 # Band geometry (handoff §4.1). The stack is fixed above the shelf; the shelf
 # takes what is left of the 688px content area.
@@ -19,6 +22,7 @@ SELECTOR_H = 72
 HERO_H = 232
 STACK_MARGINS = (14, 14, 14, 16)
 STACK_GAP = 10
+ADVISORY_STACK_GAP = 8
 
 # Bumped by each milestone so a live validator can tell which build is running.
 MILESTONE = 1
@@ -67,9 +71,14 @@ class GrandstandView(QWidget):
         root.setContentsMargins(*STACK_MARGINS)
         root.setSpacing(STACK_GAP)
 
-        self.advisory = QFrame(self)          # slim credential bar (Task 14)
+        self.advisory = QFrame(self)
         self.advisory.setObjectName("gs_advisory")
+        self.advisory.setFixedHeight(26)
         self.advisory.setVisible(False)
+        adv = QHBoxLayout(self.advisory)
+        adv.setContentsMargins(12, 0, 12, 0)
+        self.advisory_label = QLabel(self.advisory)
+        adv.addWidget(self.advisory_label)
         root.addWidget(self.advisory)
 
         from utils.widgets.grandstand.game_selector import GameSelector
@@ -102,14 +111,15 @@ class GrandstandView(QWidget):
             lambda aid: self.edit_requested.emit(
                 self._party.active_game(), aid, "account"))
         self.shelf.launch_clicked.connect(
-            lambda aid: self.launch_requested.emit(self._party.active_game(), aid))
+            lambda aid: self._emit_card_launch_intent(self.launch_requested, aid))
         for shelf_sig, view_sig in (
                 (self.shelf.cancel_clicked, self.cancel_requested),
                 (self.shelf.quit_clicked, self.quit_requested),
-                (self.shelf.enter_2fa_clicked, self.enter_2fa_requested),
-                (self.shelf.retry_clicked, self.retry_requested)):
+                (self.shelf.enter_2fa_clicked, self.enter_2fa_requested)):
             shelf_sig.connect(
                 lambda aid, s=view_sig: s.emit(self._party.active_game(), aid))
+        self.shelf.retry_clicked.connect(
+            lambda aid: self._emit_card_launch_intent(self.retry_requested, aid))
         self.shelf.add_account_clicked.connect(
             lambda: self.add_account_requested.emit(self._party.active_game()))
         self.shelf.manage_clicked.connect(
@@ -154,8 +164,40 @@ class GrandstandView(QWidget):
         if game == self._party.active_game():
             self.shelf.set_state(account_id, state, message, raw)
 
+    def set_credential_state(self, kind: str, reason: str = "",
+                             action_text: str = "", on_action=None) -> None:
+        """Route a credential condition to the surface it deserves (spec Q6).
+
+        'blocked' means launching is impossible, so the hero — which otherwise
+        promises a greeting and a Play button — carries the reason instead.
+        'advisory' means degraded but launchable, so it gets the slim strip and
+        the launcher keeps working.
+        """
+        if kind == "blocked":
+            self.advisory.setVisible(False)
+            self.layout().setSpacing(STACK_GAP)
+            self.hero.set_blocked(reason, action_text, on_action)
+            return
+        self.hero.set_blocked(None)
+        if kind == "advisory" and reason:
+            self.advisory_label.setText(reason)
+            self.advisory.setVisible(True)
+            # The strip creates a fourth band. Tighten all three gaps by 2px
+            # so the natural stack remains inside the fixed 688px content area.
+            self.layout().setSpacing(ADVISORY_STACK_GAP)
+        else:
+            self.advisory.setVisible(False)
+            self.layout().setSpacing(STACK_GAP)
+
     def apply_theme(self, is_dark: bool) -> None:
         self._is_dark = is_dark
+        a = gp.advisory_strip(is_dark)
+        self.advisory.setStyleSheet(
+            f"QFrame#gs_advisory {{ background: {a['bg'].name(QColor.HexArgb)};"
+            f" border: 1px solid {a['border'].name(QColor.HexArgb)};"
+            " border-radius: 8px; }")
+        self.advisory_label.setStyleSheet(
+            f"color: {a['ink'].name()}; font-size: 11px; background: transparent;")
         self.selector.apply_theme(is_dark)
         self.hero.apply_theme(is_dark)
         self.hero.crew_area.apply_theme(is_dark)
@@ -178,6 +220,11 @@ class GrandstandView(QWidget):
             return
         self.refresh(game)
         self.party_changed.emit(game)
+
+    def _emit_card_launch_intent(self, signal, account_id: str) -> None:
+        """Forward Launch/Retry only while credentials permit new launches."""
+        if not self.hero.is_blocked():
+            signal.emit(self._party.active_game(), account_id)
 
     def _on_star_clicked(self, account_id: str) -> None:
         game = self._party.active_game()
