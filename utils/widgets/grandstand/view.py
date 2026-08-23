@@ -101,6 +101,15 @@ class GrandstandView(QWidget):
         self.shelf.gear_clicked.connect(
             lambda aid: self.edit_requested.emit(
                 self._party.active_game(), aid, "account"))
+        self.shelf.launch_clicked.connect(
+            lambda aid: self.launch_requested.emit(self._party.active_game(), aid))
+        for shelf_sig, view_sig in (
+                (self.shelf.cancel_clicked, self.cancel_requested),
+                (self.shelf.quit_clicked, self.quit_requested),
+                (self.shelf.enter_2fa_clicked, self.enter_2fa_requested),
+                (self.shelf.retry_clicked, self.retry_requested)):
+            shelf_sig.connect(
+                lambda aid, s=view_sig: s.emit(self._party.active_game(), aid))
         self.shelf.add_account_clicked.connect(
             lambda: self.add_account_requested.emit(self._party.active_game()))
         self.shelf.manage_clicked.connect(
@@ -142,7 +151,8 @@ class GrandstandView(QWidget):
                           message: str = "", raw: str = "") -> None:
         """Route one account's live launch state to its card. Unknown ids are
         ignored — a state can arrive for an account already deleted."""
-        return
+        if game == self._party.active_game():
+            self.shelf.set_state(account_id, state, message, raw)
 
     def apply_theme(self, is_dark: bool) -> None:
         self._is_dark = is_dark

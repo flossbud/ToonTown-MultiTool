@@ -15,10 +15,14 @@ from typing import Optional
 
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPixmap
-from PySide6.QtWidgets import QApplication, QFrame, QLabel, QToolButton, QWidget
+from PySide6.QtWidgets import (
+    QApplication, QFrame, QLabel, QPushButton, QToolButton, QWidget,
+)
 
 from utils.rendition_poses import RenditionPoseFetcher
+from utils.shared_widgets import PulsingDot
 from utils.toon_silhouette import paint_race_silhouette
+from utils.widgets.account_tile import summarize_error
 from utils.widgets.grandstand import palette as gp
 from utils.widgets.grandstand.model import CARD_POSE, PORTRAIT_RENDER
 
@@ -35,6 +39,26 @@ HEAD_FIT = {
     "crocodile": (1.06, 11),
 }
 NEUTRAL_FIT = (1.0, 0)
+
+# state -> (action label, signal attribute, enabled). None means "no action".
+ACTION_MAP = {
+    "idle":       ("Launch", "launch_clicked", True),
+    "logging_in": (None, None, False),
+    "launching":  (None, None, False),
+    "loading":    ("Quit", "quit_clicked", True),
+    "queued":     ("Cancel", "cancel_clicked", True),
+    "need_2fa":   ("Enter 2FA →", "enter_2fa_clicked", True),
+    "running":    ("Quit", "quit_clicked", True),
+    "failed":     ("Retry", "retry_clicked", True),
+}
+
+# States that need the user. Their action ignores both the hover-reveal rule
+# and the checked-defers-to-Play rule (spec Q2, Q7).
+URGENT_STATES = frozenset({"need_2fa", "failed"})
+
+# States whose action is about an in-flight session, so party membership is
+# irrelevant to it.
+_SESSION_STATES = frozenset({"loading", "queued", "running"})
 
 
 class _Chip(QToolButton):
@@ -89,6 +113,11 @@ class RosterCard(QFrame):
     star_clicked = Signal(str)
     edit_clicked = Signal(str)
     gear_clicked = Signal(str)
+    launch_clicked = Signal(str)
+    cancel_clicked = Signal(str)
+    quit_clicked = Signal(str)
+    enter_2fa_clicked = Signal(str)
+    retry_clicked = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -103,6 +132,9 @@ class RosterCard(QFrame):
         self._hover = False
         self._is_dark = True
         self._pixmap: Optional[QPixmap] = None
+        self._state = "idle"
+        self._message = ""
+        self._raw_error = ""
 
         self._fetcher = RenditionPoseFetcher.instance()
         self._fetcher.pose_ready.connect(self._on_pose_ready)
@@ -134,6 +166,20 @@ class RosterCard(QFrame):
         self.footer = QLabel(self)
         self.footer.setGeometry(10, CARD_H - 34, CARD_W - 20, 14)
 
+        self.action = QPushButton(self)
+        self.action.setGeometry(10, CARD_H - 58, CARD_W - 20, 22)
+        self.action.setCursor(Qt.PointingHandCursor)
+        self.action.setFocusPolicy(Qt.NoFocus)
+        self.action.clicked.connect(self._on_action)
+        self.action.setVisible(False)
+
+        # PulsingDot's signature is (size, parent) and it setFixedSize's itself
+        # to size+8 for the pulse halo — so pass the 6px dot handoff §4.1d asks
+        # for and move it; setGeometry would be overridden by that fixed size.
+        self.dot = PulsingDot(6, self)
+        self.dot.move(10, CARD_H - 30)
+        self.dot.setVisible(False)
+
         # Seed both stateful chips so a card reads correctly before the shelf
         # has told it anything. Must follow the labels: these setters restyle.
         self.ribbon.setText("+")
@@ -154,14 +200,15 @@ class RosterCard(QFrame):
         self._entry = entry
         self.name.setText(entry.display_name)
         self.user.setText(entry.username)
-        self.footer.setText(entry.footer)
         self._load_portrait()
         self._restyle()
+        self.set_state(entry.state, entry.message, entry.raw_error)
         self.update()
 
     def set_selected(self, value: bool) -> None:
         self._selected = bool(value)
         self._restyle()
+        self._apply_state()
         self.update()
 
     def is_selected(self) -> bool:
@@ -192,6 +239,27 @@ class RosterCard(QFrame):
 
     def footer_text(self) -> str:
         return self.footer.text()
+
+    def state(self) -> str:
+        return self._state
+
+    def raw_error(self) -> str:
+        return self._raw_error
+
+    def set_state(self, state: str, message: str = "", raw: str = "") -> None:
+        self._state = state if state in ACTION_MAP else "idle"
+        self._message = message or ""
+        self._raw_error = raw or message or ""
+        self._apply_state()
+
+    def action_label(self) -> str:
+        return self.action.text()
+
+    def action_visible(self) -> bool:
+        return self.action.isVisibleTo(self)
+
+    def dot_visible(self) -> bool:
+        return self.dot.isVisibleTo(self)
 
     def ribbon_text(self) -> str:
         return self.ribbon.text()
@@ -261,21 +329,25 @@ class RosterCard(QFrame):
     def enterEvent(self, event) -> None:
         self._hover = True
         self._refresh_controls()
+        self._apply_state()
         self.update()
 
     def leaveEvent(self, event) -> None:
         self._hover = False
         self._refresh_controls()
+        self._apply_state()
         self.update()
 
     def focusInEvent(self, event) -> None:
         self._refresh_controls()
+        self._apply_state()
         super().focusInEvent(event)
 
     def focusOutEvent(self, event) -> None:
         # Qt moves QApplication.focusWidget() before delivering FocusOut, so
         # _focus_within() already sees the new owner and can decide now.
         self._refresh_controls()
+        self._apply_state()
         super().focusOutEvent(event)
 
     def _focus_within(self) -> bool:
@@ -291,12 +363,72 @@ class RosterCard(QFrame):
     def _set_controls_visible(self, value: bool) -> None:
         self.pencil.setVisible(value)
         self.gear.setVisible(value)
+        self._apply_state()
+
+    def _footer_for_state(self) -> str:
+        if self._state == "failed":
+            return summarize_error(self._message)
+        if self._state == "queued" and self._message:
+            return f"In queue · {self._message}"
+        if self._state == "running":
+            return "Running"
+        if self._state in ("logging_in", "launching", "loading"):
+            return self._message or {"logging_in": "Logging in…",
+                                     "launching": "Launching…",
+                                     "loading": "Loading…"}[self._state]
+        if self._state == "need_2fa":
+            return "2FA required"
+        return self._entry.footer if self._entry is not None else ""
+
+    def _should_show_action(self) -> bool:
+        label, _, _ = ACTION_MAP[self._state]
+        if label is None:
+            return False
+        if self._state in URGENT_STATES:
+            return True                      # spec Q2: never hidden
+        if self._state in _SESSION_STATES:
+            return self._hover or self.hasFocus()
+        # idle: a checked card defers its Launch to Play (spec Q7)
+        if self._selected:
+            return False
+        return self._hover or self.hasFocus()
+
+    def _apply_state(self) -> None:
+        label, _, enabled = ACTION_MAP[self._state]
+        self.action.setText(label or "")
+        self.action.setEnabled(bool(enabled))
+        self.action.setVisible(self._should_show_action())
+        act = gp.card_action(
+            self._state,
+            self._entry.accent if self._entry is not None else gp.game_accent("ttr"),
+            self._is_dark)
+        self.action.setStyleSheet(
+            "QPushButton {"
+            f" background: {act['bg'].name()};"
+            f" color: {act['ink'].name()};"
+            " border: none; border-radius: 8px; font-size: 11px;"
+            " font-weight: 700; }")
+        self.footer.setText(self._footer_for_state())
+        ink = gp.status_ink(self._state, self._is_dark)
+        self.footer.setStyleSheet(
+            f"color: {ink['text'].name()}; font-size: 11px;"
+            " background: transparent;")
+        self.dot.setVisible(self._state == "running")
+        if self._state == "running":
+            self.dot.set_color(ink["dot"].name(), pulse=True)
+        self.update()
+
+    def _on_action(self) -> None:
+        _, signal_name, _ = ACTION_MAP[self._state]
+        if signal_name and self._entry is not None:
+            getattr(self, signal_name).emit(self._entry.account_id)
 
     # ── paint ──────────────────────────────────────────────────────────────
 
     def apply_theme(self, is_dark: bool) -> None:
         self._is_dark = is_dark
         self._restyle()
+        self._apply_state()
         self.update()
 
     def _restyle(self) -> None:
@@ -307,9 +439,6 @@ class RosterCard(QFrame):
         self.user.setStyleSheet(
             f"color: {ink['user'].name()}; font-size: 10px;"
             " font-family: monospace; background: transparent;")
-        self.footer.setStyleSheet(
-            f"color: {ink['foot'].name()}; font-size: 11px;"
-            " background: transparent;")
         # Each chip has its own palette entry — they are not one style. The
         # ribbon turns blue when the card is on stage, the star turns gold when
         # it marks the game-wide main, and pencil/gear brighten on hover.

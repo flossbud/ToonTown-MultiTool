@@ -128,6 +128,34 @@ def test_card_signals_are_forwarded(shelf):
     assert got == {"click": "a", "star": "a", "edit": "a", "gear": "a"}
 
 
+def test_card_action_signals_are_forwarded(shelf):
+    shelf.set_entries([_entry("a")])
+    got = []
+    shelf.launch_clicked.connect(lambda i: got.append(("launch", i)))
+    shelf.cancel_clicked.connect(lambda i: got.append(("cancel", i)))
+    shelf.quit_clicked.connect(lambda i: got.append(("quit", i)))
+    shelf.enter_2fa_clicked.connect(lambda i: got.append(("2fa", i)))
+    shelf.retry_clicked.connect(lambda i: got.append(("retry", i)))
+    card = shelf.card_for("a")
+    card.launch_clicked.emit("a")
+    card.cancel_clicked.emit("a")
+    card.quit_clicked.emit("a")
+    card.enter_2fa_clicked.emit("a")
+    card.retry_clicked.emit("a")
+    assert got == [("launch", "a"), ("cancel", "a"), ("quit", "a"),
+                   ("2fa", "a"), ("retry", "a")]
+
+
+def test_set_state_routes_to_the_matching_card(shelf):
+    shelf.set_entries([_entry("a")])
+    shelf.set_state("a", "queued", "position 42", "raw queue detail")
+    card = shelf.card_for("a")
+    assert card.state() == "queued"
+    assert card.footer_text() == "In queue · position 42"
+    assert card.raw_error() == "raw queue detail"
+    shelf.set_state("ghost", "failed", "boom", "traceback")
+
+
 def test_shake_on_an_unknown_id_is_harmless(shelf):
     shelf.set_entries([_entry("a")])
     assert shelf.shake("ghost") is False

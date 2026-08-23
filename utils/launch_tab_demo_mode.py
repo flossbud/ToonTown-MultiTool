@@ -25,6 +25,7 @@ _POPULATED = {
          "message": "Bad credentials",
          "raw": "TTR API HTTP 401:\n{'success': 'false', 'banner': 'Incorrect username or "
                 "password. Please check your credentials and try again.'}"},
+        {"label": "SlowLoader", "username": "slow@example", "state": "loading"},
     ],
     "cc": [
         {"label": "SaltyMcKraken", "username": "salty@example", "state": "need_2fa"},

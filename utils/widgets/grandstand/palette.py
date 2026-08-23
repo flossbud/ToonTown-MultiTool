@@ -140,6 +140,26 @@ def status_ink(state: str, is_dark: bool) -> dict:
     return {"text": QColor(text), "dot": QColor(dot)}
 
 
+# Action-button fills, ported verbatim from utils/widgets/account_tile.py:68 so
+# both launchers read the same while both exist.
+_ACTION_FILL = {
+    "loading":  "#e05252",     # Quit
+    "queued":   "#e05252",     # Cancel
+    "running":  "#e05252",     # Quit
+    "need_2fa": "#a763d8",     # Enter 2FA
+    "failed":   "#c84e34",     # Retry
+}
+
+
+def card_action(state: str, accent: str, is_dark: bool) -> dict:
+    """The card's state-aware action button. States that act on a live session
+    carry their own pinned fill; idle falls back to the account's accent, the
+    way the tile falls back to the game's."""
+    fill = _ACTION_FILL.get(state)
+    return {"bg": QColor(fill) if fill else QColor(accent),
+            "ink": QColor("#ffffff")}
+
+
 def head_link(enabled: bool, gold: bool, is_dark: bool) -> QColor:
     """Chooser head-row links. `Clear main` is gold; all disable to
     --text-disabled with no underline (handoff §4.1c)."""

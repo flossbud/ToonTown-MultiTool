@@ -1075,6 +1075,11 @@ class LaunchTab(QWidget):
         self.grandstand.game_changed.connect(self._render_grandstand)
         self.grandstand.edit_requested.connect(self._on_grandstand_edit)
         self.grandstand.official_launcher_requested.connect(self._on_launcher_clicked)
+        self.grandstand.cancel_requested.connect(self._on_tile_cancel)
+        self.grandstand.quit_requested.connect(self._on_tile_quit)
+        self.grandstand.enter_2fa_requested.connect(self._on_tile_enter_2fa)
+        self.grandstand.retry_requested.connect(self._on_launch)
+        self.grandstand.launch_requested.connect(self._on_launch)
         self._layout.addWidget(self.grandstand, 1)
         for game in ("ttr", "cc"):
             self._render_grandstand(game)
@@ -1990,6 +1995,9 @@ class LaunchTab(QWidget):
         tile = self._visible_tiles[game].get(account_id)
         if tile is not None:
             tile.set_state(state, message or "", raw)
+        gs = getattr(self, "grandstand", None)
+        if gs is not None:
+            gs.set_account_state(game, account_id, str(state), message, raw or "")
         self._refresh_activity(game)
 
     def update_dot_state(self, index: int, state_str: str):

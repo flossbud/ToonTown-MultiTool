@@ -120,6 +120,17 @@ def test_status_ink_failed_is_error_red():
     assert gp.status_ink("failed", True)["text"] == QColor("#ff7575")
 
 
+def test_card_action_fills_match_the_tile_they_port_from():
+    assert gp.card_action("running", "#4a8fe7", True)["bg"] == QColor("#e05252")
+    assert gp.card_action("queued", "#4a8fe7", True)["bg"] == QColor("#e05252")
+    assert gp.card_action("need_2fa", "#4a8fe7", True)["bg"] == QColor("#a763d8")
+    assert gp.card_action("failed", "#4a8fe7", True)["bg"] == QColor("#c84e34")
+
+
+def test_card_action_idle_takes_the_accounts_accent():
+    assert gp.card_action("idle", "#e74a4a", True)["bg"] == QColor("#e74a4a")
+
+
 def test_head_link_gold_and_disabled():
     assert gp.head_link(True, True, True) == QColor("#e8c14d")
     assert gp.head_link(False, False, True) == QColor("#666666")   # --text-disabled
@@ -165,6 +176,7 @@ def test_every_function_accepts_both_themes():
         (gp.panel, ()), (gp.card_surface, ("#4a8fe7", False)),
         (gp.card_ink, (False,)),
         (gp.control_chip, (False,)), (gp.status_ink, ("idle",)),
+        (gp.card_action, ("idle", "#4a8fe7")),
         (gp.head_link, (True, False)), (gp.advisory_strip, ()),
         (gp.shelf_head_ink, ()), (gp.add_tile, ()), (gp.shelf_scroll, ()),
         (gp.ribbon, (False,)), (gp.lineup_ink, ()),

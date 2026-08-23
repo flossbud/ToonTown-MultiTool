@@ -6,9 +6,18 @@ os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
 
+from utils.rendition_poses import RenditionPoseFetcher
 from utils.widgets.grandstand.model import RosterEntry
 from utils.widgets.grandstand.party import LaunchParty
 from utils.widgets.grandstand.view import GrandstandView
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    monkeypatch.setattr(RenditionPoseFetcher, "cached_pixmap",
+                        lambda self, dna, pose: None)
+    monkeypatch.setattr(RenditionPoseFetcher, "request",
+                        lambda self, dna, pose: None)
 
 
 def _entry(aid, toon=None, game="ttr"):
@@ -152,6 +161,33 @@ def test_switching_games_repaints_selector_hero_and_shelf(view):
     assert view.selector.active() == "cc"
     assert view.hero.game() == "cc"
     assert [c.account_id() for c in view.shelf.cards()] == ["z"]
+
+
+def test_card_actions_emit_view_intents_for_the_active_game(view):
+    got = []
+    view.launch_requested.connect(lambda g, a: got.append(("launch", g, a)))
+    view.cancel_requested.connect(lambda g, a: got.append(("cancel", g, a)))
+    view.quit_requested.connect(lambda g, a: got.append(("quit", g, a)))
+    view.enter_2fa_requested.connect(lambda g, a: got.append(("2fa", g, a)))
+    view.retry_requested.connect(lambda g, a: got.append(("retry", g, a)))
+    view.shelf.launch_clicked.emit("a")
+    view.shelf.cancel_clicked.emit("a")
+    view.shelf.quit_clicked.emit("a")
+    view.shelf.enter_2fa_clicked.emit("a")
+    view.shelf.retry_clicked.emit("a")
+    assert got == [("launch", "ttr", "a"), ("cancel", "ttr", "a"),
+                   ("quit", "ttr", "a"), ("2fa", "ttr", "a"),
+                   ("retry", "ttr", "a")]
+
+
+def test_account_state_routes_only_for_the_active_game(view):
+    view.set_account_state("cc", "a", "running")
+    assert view.shelf.card_for("a").state() == "idle"
+    view.set_account_state("ttr", "a", "queued", "position 42", "raw")
+    card = view.shelf.card_for("a")
+    assert card.state() == "queued"
+    assert card.footer_text() == "In queue · position 42"
+    assert card.raw_error() == "raw"
 
 
 def test_a_toonless_selection_still_counts_on_play(view):

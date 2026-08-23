@@ -77,6 +77,11 @@ class CardShelf(QWidget):
     star_clicked = Signal(str)
     edit_clicked = Signal(str)
     gear_clicked = Signal(str)
+    launch_clicked = Signal(str)
+    cancel_clicked = Signal(str)
+    quit_clicked = Signal(str)
+    enter_2fa_clicked = Signal(str)
+    retry_clicked = Signal(str)
     add_account_clicked = Signal()
     manage_clicked = Signal()
     clear_selection_clicked = Signal()
@@ -198,10 +203,21 @@ class CardShelf(QWidget):
             card.star_clicked.connect(self.star_clicked.emit)
             card.edit_clicked.connect(self.edit_clicked.emit)
             card.gear_clicked.connect(self.gear_clicked.emit)
+            card.launch_clicked.connect(self.launch_clicked.emit)
+            card.cancel_clicked.connect(self.cancel_clicked.emit)
+            card.quit_clicked.connect(self.quit_clicked.emit)
+            card.enter_2fa_clicked.connect(self.enter_2fa_clicked.emit)
+            card.retry_clicked.connect(self.retry_clicked.emit)
             card.apply_theme(self._is_dark)
             self._row.insertWidget(index, card)
             self._cards[entry.account_id] = card
             self._order.append(entry.account_id)
+
+    def set_state(self, account_id: str, state: str, message: str = "",
+                  raw: str = "") -> None:
+        card = self._cards.get(account_id)
+        if card is not None:
+            card.set_state(state, message, raw)
 
     def set_selection(self, selected_ids: list, star_id: Optional[str]) -> None:
         """Paint membership and stage position. Position is 1-based and follows
