@@ -13,8 +13,6 @@ import os
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QWidget
 
-from utils.widgets.grandstand import palette as gp
-
 # Band geometry (handoff §4.1). The stack is fixed above the shelf; the shelf
 # takes what is left of the 688px content area.
 SELECTOR_H = 72
@@ -90,8 +88,8 @@ class GrandstandView(QWidget):
                 self._party.active_game()))
         root.addWidget(self.hero)
 
-        self.shelf = QFrame(self)
-        self.shelf.setObjectName("gs_shelf")
+        from utils.widgets.grandstand.card_shelf import CardShelf
+        self.shelf = CardShelf(self)
         root.addWidget(self.shelf, 1)         # the only stretching band
 
         self.apply_theme(self._is_dark)
@@ -121,17 +119,10 @@ class GrandstandView(QWidget):
 
     def apply_theme(self, is_dark: bool) -> None:
         self._is_dark = is_dark
-        p = gp.panel(is_dark)
-        for frame in (self.shelf,):
-            frame.setStyleSheet(
-                f"QFrame#{frame.objectName()} {{"
-                f" background: {p['bg'].name()};"
-                f" border: 1px solid {p['border'].name()};"
-                f" border-radius: 9px; }}"
-            )
         self.selector.apply_theme(is_dark)
         self.hero.apply_theme(is_dark)
         self.hero.crew_area.apply_theme(is_dark)
+        self.shelf.apply_theme(is_dark)
 
     def _on_game_clicked(self, game: str) -> None:
         if game == self._party.active_game():

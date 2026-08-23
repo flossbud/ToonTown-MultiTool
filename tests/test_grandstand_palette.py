@@ -135,6 +135,14 @@ def test_add_tile_border_is_border_light():
     assert gp.add_tile(True)["border"] == QColor("#555555")      # --border-light
 
 
+def test_shelf_fade_dissolves_the_panel_background():
+    d = gp.shelf_scroll(True)
+    assert d["fade_in"] == gp.panel(True)["bg"]
+    assert d["fade_out"].alpha() == 0
+    assert d["fade_out"].rgb() == d["fade_in"].rgb()
+    assert d["thumb"] == QColor("#555555")              # --border-light
+
+
 def test_selected_ribbon_uses_blue_tokens():
     d = gp.ribbon(True, True)
     assert d["bg"] == QColor("#0077ff")              # --blue

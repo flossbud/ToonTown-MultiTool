@@ -167,6 +167,16 @@ def add_tile(is_dark: bool) -> dict:
             "border": QColor("#555555")}       # --border-light
 
 
+def shelf_scroll(is_dark: bool) -> dict:
+    """Shelf scroll chrome (handoff §4.1c). The edge fade is the chooser
+    panel's own background dissolving to nothing, so it reads as the panel
+    covering the cards rather than as a grey wash of its own."""
+    bg = panel(is_dark)["bg"]
+    return {"thumb": QColor("#555555"),                 # --border-light
+            "fade_in": QColor(bg),
+            "fade_out": with_alpha(bg.name(), 0.0)}
+
+
 def ribbon(selected: bool, is_dark: bool) -> dict:
     """Card ribbon: '+' to add, then the toon's place on stage once selected
     (handoff §4.1d)."""
