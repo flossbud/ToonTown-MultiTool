@@ -15,7 +15,7 @@ from typing import Optional
 
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPixmap
-from PySide6.QtWidgets import QFrame, QLabel, QToolButton, QWidget
+from PySide6.QtWidgets import QApplication, QFrame, QLabel, QToolButton, QWidget
 
 from utils.rendition_poses import RenditionPoseFetcher
 from utils.toon_silhouette import paint_race_silhouette
@@ -45,12 +45,14 @@ class _Chip(QToolButton):
     resting/hover pair, and `palette.control_chip` models exactly that.
     """
 
-    def __init__(self, size: int, parent: QWidget, on_hover=None) -> None:
+    def __init__(self, size: int, parent: QWidget, on_hover=None,
+                 on_focus=None) -> None:
         super().__init__(parent)
         self.setFixedSize(size, size)
         self.setCursor(Qt.PointingHandCursor)
-        self.setFocusPolicy(Qt.NoFocus)
+        self.setFocusPolicy(Qt.TabFocus)
         self._on_hover = on_hover
+        self._on_focus = on_focus
         self.hovered = False
 
     def enterEvent(self, event) -> None:
@@ -62,6 +64,16 @@ class _Chip(QToolButton):
         self.hovered = False
         if self._on_hover is not None:
             self._on_hover()
+
+    def focusInEvent(self, event) -> None:
+        if self._on_focus is not None:
+            self._on_focus()
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event) -> None:
+        if self._on_focus is not None:
+            self._on_focus()
+        super().focusOutEvent(event)
 
     def mousePressEvent(self, event) -> None:
         event.accept()
@@ -95,20 +107,22 @@ class RosterCard(QFrame):
         self._fetcher = RenditionPoseFetcher.instance()
         self._fetcher.pose_ready.connect(self._on_pose_ready)
 
-        self.ribbon = _Chip(24, self)
+        self.ribbon = _Chip(24, self, on_focus=self._refresh_controls)
         self.ribbon.move(CARD_W - 24 - 9, 9)
         self.ribbon.clicked.connect(self._emit_click)
 
-        self.star = _Chip(26, self)
+        self.star = _Chip(26, self, on_focus=self._refresh_controls)
         self.star.move(8, 8)
         self.star.clicked.connect(lambda: self._emit(self.star_clicked))
 
-        self.pencil = _Chip(24, self, on_hover=self._restyle)
+        self.pencil = _Chip(24, self, on_hover=self._restyle,
+                            on_focus=self._refresh_controls)
         self.pencil.move(6, CARD_H - 24 - 6)
         self.pencil.setText("✏")
         self.pencil.clicked.connect(lambda: self._emit(self.edit_clicked))
 
-        self.gear = _Chip(24, self, on_hover=self._restyle)
+        self.gear = _Chip(24, self, on_hover=self._restyle,
+                          on_focus=self._refresh_controls)
         self.gear.move(CARD_W - 24 - 6, CARD_H - 24 - 6)
         self.gear.setText("⚙")
         self.gear.clicked.connect(lambda: self._emit(self.gear_clicked))
@@ -246,21 +260,33 @@ class RosterCard(QFrame):
 
     def enterEvent(self, event) -> None:
         self._hover = True
-        self._set_controls_visible(True)
+        self._refresh_controls()
         self.update()
 
     def leaveEvent(self, event) -> None:
         self._hover = False
-        self._set_controls_visible(self.hasFocus())
+        self._refresh_controls()
         self.update()
 
     def focusInEvent(self, event) -> None:
-        self._set_controls_visible(True)
+        self._refresh_controls()
         super().focusInEvent(event)
 
     def focusOutEvent(self, event) -> None:
-        self._set_controls_visible(self._hover)
+        # Qt moves QApplication.focusWidget() before delivering FocusOut, so
+        # _focus_within() already sees the new owner and can decide now.
+        self._refresh_controls()
         super().focusOutEvent(event)
+
+    def _focus_within(self) -> bool:
+        """True when this card or any of its chips holds focus. Tabbing from
+        the card to its own pencil must not read as leaving the card."""
+        focused = QApplication.focusWidget()
+        return focused is not None and (focused is self
+                                        or self.isAncestorOf(focused))
+
+    def _refresh_controls(self) -> None:
+        self._set_controls_visible(self._hover or self._focus_within())
 
     def _set_controls_visible(self, value: bool) -> None:
         self.pencil.setVisible(value)

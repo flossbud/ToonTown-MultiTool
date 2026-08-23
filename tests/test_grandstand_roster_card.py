@@ -8,7 +8,7 @@ import pytest
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 
 from utils.rendition_poses import RenditionPoseFetcher
 from utils.widgets.grandstand import palette as gp
@@ -166,6 +166,87 @@ def test_focus_also_reveals_the_controls(hosted, qapp):
     assert hosted.controls_revealed() is True
 
 
+def test_the_chips_are_in_the_tab_order(hosted):
+    """focusPolicy is what makes Tab reach these controls at all. It cannot be
+    inferred from setFocus(), which bypasses the policy entirely."""
+    assert hosted.pencil.focusPolicy() == Qt.TabFocus
+    assert hosted.gear.focusPolicy() == Qt.TabFocus
+
+
+def test_tab_from_the_card_reaches_one_of_its_own_controls(hosted, qapp):
+    """Tab from the focused card must land on a control the card owns, not skip
+    past it to the next widget in the window."""
+    hosted.setFocus()
+    qapp.processEvents()
+    assert hosted.focusNextChild() is True
+    landed = QApplication.focusWidget()
+    assert landed is not None and hosted.isAncestorOf(landed)
+
+
+def test_tabbing_from_the_card_to_a_chip_keeps_the_controls_revealed(hosted, qapp):
+    """Focus moving card -> pencil is movement WITHIN the card, not away."""
+    hosted.setFocus()
+    qapp.processEvents()
+    assert hosted.controls_revealed() is True
+    hosted.pencil.setFocus()
+    qapp.processEvents()
+    assert hosted.pencil.hasFocus() is True
+    assert hosted.controls_revealed() is True
+
+
+def test_keyboard_can_trigger_the_pencil_and_gear(hosted, qapp):
+    """Handoff §5: revealing a control is worthless if only a mouse can use it.
+
+    `hasFocus()` confirms that each revealed chip accepted programmatic focus
+    before activation. Tab reachability is pinned separately: `setFocus()` and
+    `keyClick` both bypass focus policy and cannot prove tab order themselves.
+    """
+    edits, gears = [], []
+    hosted.edit_clicked.connect(edits.append)
+    hosted.gear_clicked.connect(gears.append)
+
+    # The card's own focus is what reveals the chips; a hidden chip cannot be
+    # focused.
+    hosted.setFocus()
+    qapp.processEvents()
+    hosted.pencil.setFocus()
+    qapp.processEvents()
+    assert hosted.pencil.hasFocus() is True      # reachable
+    QTest.keyClick(hosted.pencil, Qt.Key_Space)  # and activatable
+
+    hosted.gear.setFocus()
+    qapp.processEvents()
+    assert hosted.gear.hasFocus() is True
+    QTest.keyClick(hosted.gear, Qt.Key_Space)
+
+    assert edits == ["a"] and gears == ["a"]
+
+
+def test_focus_leaving_the_card_entirely_hides_the_controls(hosted, qapp):
+    # The card's own focus is what reveals the chips; a hidden chip cannot be
+    # focused.
+    hosted.setFocus()
+    qapp.processEvents()
+    hosted.pencil.setFocus()
+    qapp.processEvents()
+    assert hosted.controls_revealed() is True
+    hosted.parentWidget().findChild(QPushButton).setFocus()   # the focus sink
+    qapp.processEvents()
+    assert hosted.controls_revealed() is False
+
+
+def test_focus_moving_from_the_card_straight_out_hides_the_controls(hosted, qapp):
+    """Focus leaving the card without passing through a chip. Qt has already
+    moved the application focus widget when FocusOut is delivered, so the
+    synchronous refresh must observe the external owner and hide controls."""
+    hosted.setFocus()
+    qapp.processEvents()
+    assert hosted.controls_revealed() is True
+    hosted.parentWidget().findChild(QPushButton).setFocus()   # the focus sink
+    qapp.processEvents()
+    assert hosted.controls_revealed() is False
+
+
 def test_keyboard_activates_selection(card, qapp):
     seen = []
     card.clicked.connect(seen.append)
@@ -180,12 +261,21 @@ def test_starred_state_reports(card):
     assert card.is_starred() is True
 
 
-def test_species_card_paints_without_a_render(qapp):
-    c = RosterCard()
-    c.set_entry(_entry(game="cc", species="bear", mode="species"))
-    c.show()
-    qapp.processEvents()
-    c.repaint()          # must not raise
+def test_species_card_paints_a_silhouette(qapp, no_network):
+    """The fallback must actually draw. Rendering with a species and without
+    one must differ; deleting the paint_race_silhouette call makes them equal."""
+    from utils.cc_race_assets import asset_stem_for_species
+    assert asset_stem_for_species("bear")      # the fallback needs a real asset
+
+    def render(species):
+        c = RosterCard()
+        c.set_entry(_entry(game="cc", species=species, mode="species"))
+        pm = QPixmap(CARD_W, CARD_H)
+        pm.fill(Qt.black)
+        c.render(pm)
+        return pm.toImage()
+
+    assert render("bear") != render(None)
 
 
 def test_controls_are_seeded_before_any_setter_runs(qapp):
