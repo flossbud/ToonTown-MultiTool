@@ -167,23 +167,27 @@ def test_shutdown_during_cc_gate_dispatches_nothing(monkeypatch, qapp):
             timer.deleteLater()
 
 
-def test_cc_gate_is_consulted_once_per_batch(monkeypatch, qapp):
+def test_cc_gate_is_consulted_once_per_batch(monkeypatch, qapp, tmp_path):
     """Spec §6: a four-toon Clash launch asks once, not four times.
 
     `_on_party_launch` gates the batch, then `_on_launch` gates each account.
-    Without suppression that is 1 + N prompts. This exercises BOTH gate sites:
-    the per-account stub runs the same guarded branch `_on_launch` runs.
+    Without suppression that is 1 + N prompts. This exercises both production
+    gate sites; only work downstream of `_on_launch`'s gate is stubbed.
     """
     import tabs.launch_tab as lt
 
+    account_ids = ["a", "b", "c", "d"]
     calls = []
+    launched = []
     monkeypatch.setattr(lt, "_cc_launch_gate",
                         lambda sm, parent: (calls.append(1), True)[1])
+    engine_dir = tmp_path / "cc"
+    engine_dir.mkdir()
+    (engine_dir / lt.get_cc_engine_executable_name()).touch()
 
     tab = lt.LaunchTab.__new__(lt.LaunchTab)
     QWidget.__init__(tab)
     tab.settings_manager = None
-    tab.launched = []
     tab.window = lambda: None
     tab.is_account_running = lambda g, a: False
     tab._is_in_flight = lambda g, a: False
@@ -194,31 +198,59 @@ def test_cc_gate_is_consulted_once_per_batch(monkeypatch, qapp):
     tab._party_dispatch_targets = \
         lt.LaunchTab._party_dispatch_targets.__get__(tab)
     tab._cc_gate_ok = lt.LaunchTab._cc_gate_ok.__get__(tab)
+    tab._on_launch = lt.LaunchTab._on_launch.__get__(tab)
+    tab._global_index_of = lt.LaunchTab._global_index_of.__get__(tab)
+    tab._slots = {
+        "ttr": {},
+        "cc": {aid: SimpleNamespace(worker=None, launcher=None)
+               for aid in account_ids},
+    }
+    accounts = [SimpleNamespace(
+        id=aid, username=aid, password="", launcher_token=f"token-{aid}",
+        label=aid) for aid in account_ids]
+    tab.cred_manager = SimpleNamespace(
+        keyring_probe_pending=False,
+        keyring_available=True,
+        get_accounts_metadata=lambda: accounts,
+        get_account=lambda index: accounts[index],
+    )
+    tab._get_engine_dir = lambda game: str(engine_dir)
+    tab._position_of = lambda game, aid: account_ids.index(aid) + 1
+    tab._update_status = lambda *args: None
+    tab._show_failure_dialog = lambda *args: None
+    tab.log = lambda message: None
 
-    def fake_on_launch(game, account_id):
-        # The one line of _on_launch that matters here, unchanged.
-        if game == "cc" and not tab._cc_gate_ok(game, account_id):
-            return
-        tab.launched.append(account_id)
+    def make_launchers(game, account_id):
+        worker = SimpleNamespace(
+            login_with_token=lambda token, aid=account_id:
+                launched.append(aid))
+        tab._slots[game][account_id].worker = worker
+        return worker, None
 
-    tab._on_launch = fake_on_launch
+    tab._make_launchers = make_launchers
 
-    lt.LaunchTab._on_party_launch(tab, "cc", ["a", "b", "c", "d"])
+    lt.LaunchTab._on_party_launch(tab, "cc", account_ids)
     QTest.qWait(PARTY_STAGGER_MS * 3 + 100)
 
     assert calls == [1]
-    assert tab.launched == ["a", "b", "c", "d"]
+    assert launched == account_ids
 
 
-def test_cc_gate_stays_answered_after_first_account_fails(monkeypatch, qapp):
+def test_cc_gate_stays_answered_after_first_account_fails(
+        monkeypatch, qapp, tmp_path):
     """A synchronous failure must not re-prompt accounts still staggered."""
     import tabs.launch_tab as lt
 
+    account_ids = ["a", "b", "c", "d"]
     calls = []
     attempted = []
     launched = []
+    failed = []
     monkeypatch.setattr(lt, "_cc_launch_gate",
                         lambda sm, parent: (calls.append(1), True)[1])
+    engine_dir = tmp_path / "cc"
+    engine_dir.mkdir()
+    (engine_dir / lt.get_cc_engine_executable_name()).touch()
     tab = lt.LaunchTab.__new__(lt.LaunchTab)
     QWidget.__init__(tab)
     tab.settings_manager = None
@@ -232,23 +264,54 @@ def test_cc_gate_stays_answered_after_first_account_fails(monkeypatch, qapp):
     tab._party_dispatch_targets = \
         lt.LaunchTab._party_dispatch_targets.__get__(tab)
     tab._cc_gate_ok = lt.LaunchTab._cc_gate_ok.__get__(tab)
+    tab._on_launch = lt.LaunchTab._on_launch.__get__(tab)
+    tab._global_index_of = lt.LaunchTab._global_index_of.__get__(tab)
+    tab._slots = {
+        "ttr": {},
+        "cc": {aid: SimpleNamespace(worker=None, launcher=None)
+               for aid in account_ids},
+    }
+    accounts = [
+        SimpleNamespace(
+            id="a", username="", password="", launcher_token="", label="a"),
+        *[SimpleNamespace(
+            id=aid, username=aid, password="", launcher_token=f"token-{aid}",
+            label=aid) for aid in account_ids[1:]],
+    ]
 
-    def fake_on_launch(game, account_id):
-        if game == "cc" and not tab._cc_gate_ok(game, account_id):
-            return
-        attempted.append(account_id)
-        if account_id == "a":
-            return
-        launched.append(account_id)
+    def get_account(index):
+        attempted.append(account_ids[index])
+        return accounts[index]
 
-    tab._on_launch = fake_on_launch
+    tab.cred_manager = SimpleNamespace(
+        keyring_probe_pending=False,
+        keyring_available=True,
+        get_accounts_metadata=lambda: accounts,
+        get_account=get_account,
+    )
+    tab._get_engine_dir = lambda game: str(engine_dir)
+    tab._position_of = lambda game, aid: account_ids.index(aid) + 1
+    tab._update_status = lambda *args: None
+    tab._show_failure_dialog = \
+        lambda game, aid, message: failed.append(aid)
+    tab.log = lambda message: None
 
-    lt.LaunchTab._on_party_launch(tab, "cc", ["a", "b", "c", "d"])
+    def make_launchers(game, account_id):
+        worker = SimpleNamespace(
+            login_with_token=lambda token, aid=account_id:
+                launched.append(aid))
+        tab._slots[game][account_id].worker = worker
+        return worker, None
+
+    tab._make_launchers = make_launchers
+
+    lt.LaunchTab._on_party_launch(tab, "cc", account_ids)
     QTest.qWait(PARTY_STAGGER_MS * 3 + 100)
 
     assert calls == [1]
-    assert attempted == ["a", "b", "c", "d"]
-    assert launched == ["b", "c", "d"]
+    assert attempted == account_ids
+    assert failed == ["a"]
+    assert launched == account_ids[1:]
 
 
 def test_single_card_launch_consults_the_real_gate(monkeypatch, qapp):
