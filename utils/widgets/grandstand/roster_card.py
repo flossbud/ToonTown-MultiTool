@@ -164,10 +164,10 @@ class RosterCard(QFrame):
         self.user = QLabel(self)
         self.user.setGeometry(10, 162, CARD_W - 20, 14)
         self.footer = QLabel(self)
-        self.footer.setGeometry(20, 180, CARD_W - 30, 14)
+        self.footer.setGeometry(10, 178, CARD_W - 20, 14)
 
         self.action = QPushButton(self)
-        self.action.setGeometry(10, 162, CARD_W - 20, 18)
+        self.action.setGeometry(10, 162, CARD_W - 20, 16)
         self.action.setCursor(Qt.PointingHandCursor)
         self.action.setFocusPolicy(Qt.NoFocus)
         self.action.clicked.connect(self._on_action)
@@ -405,12 +405,17 @@ class RosterCard(QFrame):
             f" color: {act['ink'].name()};"
             " border: none; border-radius: 8px; font-size: 11px;"
             " font-weight: 700; }")
+        running = self._state == "running"
+        if running:
+            # Clear the dot's 14x14 halo footprint (PulsingDot pads size + 8).
+            self.footer.setGeometry(28, 178, CARD_W - 38, 14)
+        else:
+            self.footer.setGeometry(10, 178, CARD_W - 20, 14)
         self.footer.setText(self._footer_for_state())
         ink = gp.status_ink(self._state, self._is_dark)
         self.footer.setStyleSheet(
             f"color: {ink['text'].name()}; font-size: 11px;"
             " background: transparent;")
-        running = self._state == "running"
         self.dot.set_color(ink["dot"].name(), pulse=running)
         self.dot.setVisible(running)
         self.update()

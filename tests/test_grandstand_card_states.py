@@ -49,8 +49,7 @@ def test_entry_state_is_applied_when_the_card_is_built(qapp):
 def test_every_state_from_the_old_tile_is_handled():
     """The launcher's state machine is inherited, not reinvented — parity with
     utils/widgets/account_tile.py:55 is the requirement."""
-    for state in ALL_STATES:
-        assert state in ACTION_MAP
+    assert set(ACTION_MAP) == set(ALL_STATES)
 
 
 @pytest.mark.parametrize("state,label", [
@@ -119,6 +118,12 @@ def test_running_starts_the_dot_pulse_and_leaving_stops_it(card):
     card.set_state("idle")
     assert card.dot_visible() is False
     assert card.dot._pulsing is False
+
+
+def test_the_running_dot_never_overlaps_the_footer_text(card):
+    card.set_state("running")
+    assert card.dot_visible() is True
+    assert not card.dot.geometry().intersects(card.footer.geometry())
 
 
 def test_the_action_never_covers_the_name_or_the_footer(card):
