@@ -92,6 +92,22 @@ class GrandstandView(QWidget):
         self.shelf = CardShelf(self)
         root.addWidget(self.shelf, 1)         # the only stretching band
 
+        self._main_names: dict[str, str] = {}
+        self.shelf.card_clicked.connect(self._on_card_clicked)
+        self.shelf.star_clicked.connect(self._on_star_clicked)
+        self.shelf.edit_clicked.connect(
+            lambda aid: self.edit_requested.emit(
+                self._party.active_game(), aid, "appearance"))
+        self.shelf.gear_clicked.connect(
+            lambda aid: self.edit_requested.emit(
+                self._party.active_game(), aid, "account"))
+        self.shelf.add_account_clicked.connect(
+            lambda: self.add_account_requested.emit(self._party.active_game()))
+        self.shelf.manage_clicked.connect(
+            lambda: self.manage_requested.emit(self._party.active_game()))
+        self.shelf.clear_selection_clicked.connect(self._on_clear_selection)
+        self.shelf.clear_main_clicked.connect(self._on_clear_main)
+
         self.apply_theme(self._is_dark)
 
     def _make_band(self, name: str, height: int) -> QFrame:
@@ -105,11 +121,20 @@ class GrandstandView(QWidget):
     def active_game(self) -> str:
         return self._party.active_game()
 
+    def party(self):
+        return self._party
+
+    def set_main_toon_names(self, mapping: dict) -> None:
+        """account_id -> toon name, used for the greeting and the party list."""
+        self._main_names = dict(mapping)
+        self.refresh(self._party.active_game())
+
     def set_accounts(self, game: str, entries: list) -> None:
-        """Replace one game's roster. Entries are model.RosterEntry."""
         self._entries[game] = list(entries)
-        self.selector.set_counts(
-            len(self._entries["ttr"]), len(self._entries["cc"]))
+        self.selector.set_counts(len(self._entries["ttr"]), len(self._entries["cc"]))
+        if game == self._party.active_game():
+            self.shelf.set_entries(self._entries[game])
+            self.refresh(game)
 
     def set_account_state(self, game: str, account_id: str, state: str,
                           message: str = "", raw: str = "") -> None:
@@ -130,7 +155,59 @@ class GrandstandView(QWidget):
         self._party.set_active_game(game)
         self.selector.set_active(game)
         self.hero.set_game(game)
+        self.shelf.set_entries(self._entries[game])
+        self.refresh(game)
         self.game_changed.emit(game)
+
+    def _on_card_clicked(self, account_id: str) -> None:
+        game = self._party.active_game()
+        if not self._party.toggle(game, account_id):
+            self.shelf.shake(account_id)      # a refused fifth (spec §7)
+            return
+        self.refresh(game)
+        self.party_changed.emit(game)
+
+    def _on_star_clicked(self, account_id: str) -> None:
+        game = self._party.active_game()
+        new = None if self._party.star(game) == account_id else account_id
+        self._party.set_star(game, new)
+        self.refresh(game)
+        self.star_changed.emit(game, new)
+
+    def _on_clear_selection(self) -> None:
+        game = self._party.active_game()
+        self._party.clear(game)
+        self.refresh(game)
+        self.party_changed.emit(game)
+
+    def _on_clear_main(self) -> None:
+        game = self._party.active_game()
+        self._party.set_star(game, None)
+        self.refresh(game)
+        self.star_changed.emit(game, None)
+
+    def refresh(self, game: str) -> None:
+        """Repaint every surface from current state. Cheap: the shelf only
+        restyles, and the lineup diffs (Task 8), so a selection change animates
+        rather than rebuilds."""
+        if game != self._party.active_game():
+            return
+        from utils.widgets.grandstand.model import lineup_entries
+
+        entries = self._entries[game]
+        selected = self._party.selected(game)
+        star = self._party.star(game)
+
+        self.shelf.set_selection(selected, star)
+        self.shelf.set_links_enabled(
+            clear_selection=bool(selected), clear_main=star is not None)
+
+        by_id = {e.account_id: e for e in entries}
+        self.hero.set_party([
+            (by_id[aid].display_name if aid in by_id else aid) for aid in selected])
+        self.hero.set_main(self._main_names.get(star) if star else None)
+        self.hero.set_lineup(
+            lineup_entries(entries, self._party.launch_order(game)))
 
     def _on_play(self) -> None:
         game = self._party.active_game()

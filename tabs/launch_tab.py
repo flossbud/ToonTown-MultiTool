@@ -1060,6 +1060,13 @@ class LaunchTab(QWidget):
             self._party.prune(game, {a.id for a in self._ordered_accounts(game)})
 
         self.grandstand = GrandstandView(self._party, log=self.log, parent=self)
+        self.grandstand.star_changed.connect(
+            lambda g, a: self._render_grandstand(g))
+        self.grandstand.add_account_requested.connect(self._on_add_account)
+        self.grandstand.manage_requested.connect(self._on_reorder)
+        self.grandstand.game_changed.connect(self._render_grandstand)
+        self.grandstand.edit_requested.connect(self._on_grandstand_edit)
+        self.grandstand.official_launcher_requested.connect(self._on_launcher_clicked)
         self._layout.addWidget(self.grandstand, 1)
         for game in ("ttr", "cc"):
             self._render_grandstand(game)
@@ -1082,6 +1089,18 @@ class LaunchTab(QWidget):
                 state=st, message=msg, raw_error=raw,
                 is_primary=(rec is not None and rec.toon_name == primary)))
         self.grandstand.set_accounts(game, entries)
+        names = {}
+        for acct in self._ordered_accounts(game):
+            rec = self._recent_toons.get(acct.id)
+            if rec is not None:
+                names[acct.id] = rec.toon_name
+        self.grandstand.set_main_toon_names(names)
+
+    def _on_grandstand_edit(self, game: str, account_id: str, surface: str) -> None:
+        """Pencil and gear both open today's account editor. `surface` is
+        carried through unused so sub-projects B and C only have to change this
+        method, not the widget that emits it."""
+        self._on_tile_edit(game, account_id)
 
     # ── Layout mode ────────────────────────────────────────────────────────
 
