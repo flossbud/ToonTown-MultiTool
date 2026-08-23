@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
+from utils.credential_copy import MACOS_VAULT_COPY
 from utils.widgets.grandstand import palette as gp
 
 # Band geometry (handoff §4.1). The stack is fixed above the shelf; the shelf
@@ -62,6 +63,7 @@ class GrandstandView(QWidget):
 
         self._party = party
         self._is_dark = True
+        self._credential_kind = "ok"
         self._entries: dict[str, list] = {"ttr": [], "cc": []}
         self._main_names: dict[str, dict] = {"ttr": {}, "cc": {}}
 
@@ -93,9 +95,7 @@ class GrandstandView(QWidget):
         self.hero.setFixedHeight(HERO_H)
         self.hero.set_game(self._party.active_game())
         self.hero.play_clicked.connect(self._on_play)
-        self.hero.official_clicked.connect(
-            lambda: self.official_launcher_requested.emit(
-                self._party.active_game()))
+        self.hero.official_clicked.connect(self._emit_official_launcher_intent)
         root.addWidget(self.hero)
 
         from utils.widgets.grandstand.card_shelf import CardShelf
@@ -143,6 +143,10 @@ class GrandstandView(QWidget):
     def party(self):
         return self._party
 
+    def is_credential_blocked(self) -> bool:
+        """Whether credential state forbids starting any new process."""
+        return self._credential_kind == "blocked"
+
     def set_main_toon_names(self, game: str, mapping: dict) -> None:
         """account_id -> toon name for ONE game, used for the greeting and the
         party list. Per game because the greeting belongs to the active game;
@@ -173,10 +177,12 @@ class GrandstandView(QWidget):
         'advisory' means degraded but launchable, so it gets the slim strip and
         the launcher keeps working.
         """
+        self._credential_kind = kind
         if kind == "blocked":
             self.advisory.setVisible(False)
             self.layout().setSpacing(STACK_GAP)
-            self.hero.set_blocked(reason, action_text, on_action)
+            fallback = MACOS_VAULT_COPY["denied"].hero_reason()
+            self.hero.set_blocked(reason or fallback, action_text, on_action)
             return
         self.hero.set_blocked(None)
         if kind == "advisory" and reason:
@@ -223,8 +229,12 @@ class GrandstandView(QWidget):
 
     def _emit_card_launch_intent(self, signal, account_id: str) -> None:
         """Forward Launch/Retry only while credentials permit new launches."""
-        if not self.hero.is_blocked():
+        if not self.is_credential_blocked():
             signal.emit(self._party.active_game(), account_id)
+
+    def _emit_official_launcher_intent(self) -> None:
+        if not self.is_credential_blocked():
+            self.official_launcher_requested.emit(self._party.active_game())
 
     def _on_star_clicked(self, account_id: str) -> None:
         game = self._party.active_game()
@@ -270,6 +280,8 @@ class GrandstandView(QWidget):
             lineup_entries(entries, self._party.launch_order(game)))
 
     def _on_play(self) -> None:
+        if self.is_credential_blocked():
+            return
         game = self._party.active_game()
         order = self._party.launch_order(game)
         if order:

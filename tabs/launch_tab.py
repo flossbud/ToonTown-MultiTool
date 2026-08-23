@@ -23,6 +23,7 @@ from utils.theme_manager import resolve_theme, get_theme_colors
 from utils.asset_paths import asset_path as _asset_path
 from utils.color_math import alpha
 from utils.credentials_manager import CredentialsManager, set_debug_log_callback
+from utils.credential_copy import KEYRING_WARNING_COPY, MACOS_VAULT_COPY
 from utils.open_url import open_url
 from services.ttr_login_service import (
     TTRLoginWorker, LoginState, find_engine_path, get_engine_executable_name,
@@ -141,48 +142,6 @@ def _prompt_inline_picker(parent, installs, settings_manager) -> bool:
 # light/dark theme's own accent tokens.
 INFO_BLUE = "#0077ff"
 WARNING_ORANGE = "#ff9500"
-
-
-@dataclass(frozen=True)
-class CredentialCopy:
-    """One credential condition's shared wording and optional action."""
-
-    header: str
-    body: str
-    action_text: str = ""
-
-    def hero_reason(self) -> str:
-        return f"{self.header}\n{self.body}"
-
-    def advisory_reason(self) -> str:
-        return " ".join(self.body.splitlines())
-
-
-KEYRING_WARNING_COPY = CredentialCopy(
-    header="⚠  Credential Storage Unavailable",
-    body=(
-        "No system wallet service was detected. Your account usernames are saved,\n"
-        "but passwords will not be remembered between sessions - you'll need to\n"
-        "re-enter them each time you launch TTMT."
-    ),
-)
-
-MACOS_VAULT_COPY = {
-    "denied": CredentialCopy(
-        header="🔒  Your accounts are locked",
-        body="Unlock to load your saved accounts for this session.",
-        action_text="Unlock accounts",
-    ),
-    "corrupt": CredentialCopy(
-        header="⚠  Couldn't open your saved accounts",
-        body=(
-            "Your saved accounts could not be unlocked, so they are not\n"
-            "available this session. Your data was left untouched. Restart\n"
-            "TTMT to try again; if it keeps happening, please share the\n"
-            "keyring-debug.log file when reporting."
-        ),
-    ),
-}
 
 
 def _tinted_card_qss(object_name: str, accent_hex: str, is_dark: bool) -> str:
@@ -906,7 +865,7 @@ class LaunchTab(QWidget):
         (Faugus/Bottles/Wine/Lutris/Steam-Proton/Native) instead of always
         picking the first discovered install."""
         grandstand = getattr(self, "grandstand", None)
-        if grandstand is not None and grandstand.hero.is_blocked():
+        if grandstand is not None and grandstand.is_credential_blocked():
             return
         import tabs.launch_tab as _m
         if game == "cc":

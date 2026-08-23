@@ -71,6 +71,21 @@ def test_a_blocked_launcher_cannot_dispatch(view):
     assert seen == []
 
 
+def test_blocking_without_a_reason_still_blocks(view):
+    """The safety property must not depend on the truthiness of display copy."""
+    view.set_accounts("ttr", [_entry("a")])
+    view.shelf.card_for("a").clicked.emit("a")
+    view.set_credential_state("blocked")
+    seen = []
+    view.party_launch_requested.connect(lambda g, ids: seen.append(ids))
+    view.hero.play_button.click()
+    assert seen == []
+    assert view.hero.play_button.isVisible() is False
+    assert view.hero.blocked_text() == (
+        "🔒  Your accounts are locked\n"
+        "Unlock to load your saved accounts for this session.")
+
+
 @pytest.mark.parametrize("signal_name", ["launch_clicked", "retry_clicked"])
 def test_blocked_credentials_prevent_card_launch_paths(view, signal_name):
     view.set_accounts("ttr", [_entry("a")])
@@ -375,7 +390,7 @@ def test_grandstand_corrupt_vault_blocks_without_unlock_action(
         tab.close()
 
 
-def test_blocked_credentials_prevent_official_launcher_dispatch(
+def test_blocking_without_a_reason_guards_official_launcher(
         monkeypatch, qapp):
     monkeypatch.setenv("TTMT_GRANDSTAND", "1")
     monkeypatch.setattr(sys, "platform", "darwin")
@@ -390,13 +405,17 @@ def test_blocked_credentials_prevent_official_launcher_dispatch(
     settings.get.side_effect = lambda _key, default=None: default
     tab = LaunchTab(cred_manager=cred, settings_manager=settings)
     try:
+        tab.grandstand.set_credential_state("blocked")
+        assert tab.grandstand.hero.blocked_text() == (
+            "🔒  Your accounts are locked\n"
+            "Unlock to load your saved accounts for this session.")
+        # Presentation must not be the safety authority. Deliberately clear
+        # only the hero and leave the view-owned credential state blocked.
+        tab.grandstand.hero.set_blocked(None)
         tab.grandstand.official_launcher_requested.emit("ttr")
         runner.assert_not_called()
 
-        cred.macos_unlock_state = "unlocked"
-        cred.keyring_probe_pending = False
-        cred.keyring_available = True
-        tab._push_credential_state()
+        tab.grandstand.set_credential_state("ok")
         tab.grandstand.official_launcher_requested.emit("ttr")
         runner.assert_called_once_with()
     finally:

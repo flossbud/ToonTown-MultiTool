@@ -167,7 +167,7 @@ class HeroStage(QFrame):
     # ── internals ──────────────────────────────────────────────────────────
 
     def _on_play(self) -> None:
-        if self.play_button.isEnabled() and not self.is_blocked():
+        if self.play_button.isEnabled():
             self.play_clicked.emit()
 
     def _on_blocked_action(self) -> None:
