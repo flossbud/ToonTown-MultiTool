@@ -160,14 +160,14 @@ class RosterCard(QFrame):
         self.gear.clicked.connect(lambda: self._emit(self.gear_clicked))
 
         self.name = QLabel(self)
-        self.name.setGeometry(10, 150, CARD_W - 20, 18)
+        self.name.setGeometry(10, 144, CARD_W - 20, 18)
         self.user = QLabel(self)
-        self.user.setGeometry(10, 168, CARD_W - 20, 14)
+        self.user.setGeometry(10, 162, CARD_W - 20, 14)
         self.footer = QLabel(self)
-        self.footer.setGeometry(10, CARD_H - 34, CARD_W - 20, 14)
+        self.footer.setGeometry(20, 180, CARD_W - 30, 14)
 
         self.action = QPushButton(self)
-        self.action.setGeometry(10, CARD_H - 58, CARD_W - 20, 22)
+        self.action.setGeometry(10, 162, CARD_W - 20, 18)
         self.action.setCursor(Qt.PointingHandCursor)
         self.action.setFocusPolicy(Qt.NoFocus)
         self.action.clicked.connect(self._on_action)
@@ -177,7 +177,7 @@ class RosterCard(QFrame):
         # to size+8 for the pulse halo — so pass the 6px dot handoff §4.1d asks
         # for and move it; setGeometry would be overridden by that fixed size.
         self.dot = PulsingDot(6, self)
-        self.dot.move(10, CARD_H - 30)
+        self.dot.move(10, 184)
         self.dot.setVisible(False)
 
         # Seed both stateful chips so a card reads correctly before the shelf
@@ -329,25 +329,21 @@ class RosterCard(QFrame):
     def enterEvent(self, event) -> None:
         self._hover = True
         self._refresh_controls()
-        self._apply_state()
         self.update()
 
     def leaveEvent(self, event) -> None:
         self._hover = False
         self._refresh_controls()
-        self._apply_state()
         self.update()
 
     def focusInEvent(self, event) -> None:
         self._refresh_controls()
-        self._apply_state()
         super().focusInEvent(event)
 
     def focusOutEvent(self, event) -> None:
         # Qt moves QApplication.focusWidget() before delivering FocusOut, so
         # _focus_within() already sees the new owner and can decide now.
         self._refresh_controls()
-        self._apply_state()
         super().focusOutEvent(event)
 
     def _focus_within(self) -> bool:
@@ -387,17 +383,18 @@ class RosterCard(QFrame):
         if self._state in URGENT_STATES:
             return True                      # spec Q2: never hidden
         if self._state in _SESSION_STATES:
-            return self._hover or self.hasFocus()
+            return self._hover or self._focus_within()
         # idle: a checked card defers its Launch to Play (spec Q7)
         if self._selected:
             return False
-        return self._hover or self.hasFocus()
+        return self._hover or self._focus_within()
 
     def _apply_state(self) -> None:
         label, _, enabled = ACTION_MAP[self._state]
         self.action.setText(label or "")
         self.action.setEnabled(bool(enabled))
         self.action.setVisible(self._should_show_action())
+        self.user.setVisible(not self.action.isVisibleTo(self))
         act = gp.card_action(
             self._state,
             self._entry.accent if self._entry is not None else gp.game_accent("ttr"),
@@ -413,9 +410,9 @@ class RosterCard(QFrame):
         self.footer.setStyleSheet(
             f"color: {ink['text'].name()}; font-size: 11px;"
             " background: transparent;")
-        self.dot.setVisible(self._state == "running")
-        if self._state == "running":
-            self.dot.set_color(ink["dot"].name(), pulse=True)
+        running = self._state == "running"
+        self.dot.set_color(ink["dot"].name(), pulse=running)
+        self.dot.setVisible(running)
         self.update()
 
     def _on_action(self) -> None:

@@ -194,6 +194,20 @@ def test_tabbing_from_the_card_to_a_chip_keeps_the_controls_revealed(hosted, qap
     assert hosted.controls_revealed() is True
 
 
+def test_action_stays_revealed_as_focus_moves_within_card(hosted, qapp):
+    """The action belongs to the same focus cluster as pencil and gear."""
+    hosted.set_state("idle")
+    hosted.set_selected(False)
+    assert hosted.action_visible() is False
+    hosted.setFocus()
+    qapp.processEvents()
+    assert hosted.action_visible() is True
+    hosted.pencil.setFocus()
+    qapp.processEvents()
+    assert hosted.pencil.hasFocus() is True
+    assert hosted.action_visible() is True
+
+
 def test_keyboard_can_trigger_the_pencil_and_gear(hosted, qapp):
     """Handoff §5: revealing a control is worthless if only a mouse can use it.
 

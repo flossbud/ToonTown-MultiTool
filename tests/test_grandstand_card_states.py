@@ -110,10 +110,41 @@ def test_urgent_states_do_not_wait_for_hover(card, state):
     assert card.action_visible() is True
 
 
-def test_running_shows_the_running_footer_and_a_pulsing_dot(card):
+def test_running_starts_the_dot_pulse_and_leaving_stops_it(card):
+    assert card.dot._pulsing is False
     card.set_state("running")
     assert card.footer_text() == "Running"
     assert card.dot_visible() is True
+    assert card.dot._pulsing is True
+    card.set_state("idle")
+    assert card.dot_visible() is False
+    assert card.dot._pulsing is False
+
+
+def test_the_action_never_covers_the_name_or_the_footer(card):
+    """A pinned urgent action must not hide the account's identity."""
+    card.set_state("failed", "boom")
+    assert card.action_visible() is True
+    assert not card.action.geometry().intersects(card.name.geometry())
+    assert not card.action.geometry().intersects(card.footer.geometry())
+
+
+def test_the_username_yields_to_the_action(card):
+    card.set_state("idle")
+    card.set_selected(False)
+    assert card.user.isVisibleTo(card) is True
+    card.enterEvent(None)
+    assert card.action_visible() is True
+    assert card.user.isVisibleTo(card) is False
+    card.leaveEvent(None)
+    assert card.user.isVisibleTo(card) is True
+
+
+def test_pointer_event_applies_state_once(card):
+    calls = []
+    card._apply_state = lambda: calls.append("apply")
+    card.enterEvent(None)
+    assert calls == ["apply"]
 
 
 def test_queue_position_reaches_the_footer(card):
