@@ -11,8 +11,8 @@ from utils.widgets.grandstand.party import LaunchParty
 from utils.widgets.grandstand.view import GrandstandView
 
 
-def _entry(aid, toon=None):
-    return RosterEntry(account_id=aid, game="ttr", label=f"L{aid}",
+def _entry(aid, toon=None, game="ttr"):
+    return RosterEntry(account_id=aid, game=game, label=f"L{aid}",
                        username=f"u{aid}", toon_name=toon, species="cat",
                        dna="7400" if toon else "", accent="#4a8fe7",
                        footer="Primary", portrait_mode="render",
@@ -66,7 +66,8 @@ def test_the_stage_holds_four_and_follows_launch_order(view):
     for aid in ("a", "b", "c", "d"):
         _click(view, aid)
     view.shelf.card_for("c").star_clicked.emit("c")
-    assert [s.account_id for s in view.hero.crew_area.slots()][0] == "c"
+    assert [s.account_id for s in view.hero.crew_area.slots()] == [
+        "c", "a", "b", "d"]
 
 
 def test_star_sets_the_greeting(view):
@@ -76,12 +77,19 @@ def test_star_sets_the_greeting(view):
 
 
 def test_rendering_one_game_does_not_erase_the_others_greeting(view):
+    """Switching away and back must not lose the first game's names. Asserting
+    without a round-trip only reads stale text: refresh() early-returns for the
+    inactive game, so the hero is never repainted and the old global-map bug
+    would pass."""
     view.set_main_toon_names("ttr", {"a": "Flossbud"})
     view.shelf.card_for("a").star_clicked.emit("a")
     assert "Flossbud" in view.hero.greeting_text()
 
-    view.set_accounts("cc", [_entry("z", "Cogsworth")])
+    view.set_accounts("cc", [_entry("z", "Cogsworth", game="cc")])
     view.set_main_toon_names("cc", {"z": "Cogsworth"})
+
+    view.selector.game_clicked.emit("cc")      # away...
+    view.selector.game_clicked.emit("ttr")     # ...and back: forces a repaint
     assert "Flossbud" in view.hero.greeting_text()
 
 
@@ -131,7 +139,7 @@ def test_links_disable_when_there_is_nothing_to_clear(view):
 
 def test_switching_games_keeps_each_partys_selection(view):
     _click(view, "a")
-    view.set_accounts("cc", [_entry("z", "Cogsworth")])
+    view.set_accounts("cc", [_entry("z", "Cogsworth", game="cc")])
     view.selector.game_clicked.emit("cc")
     assert view.party().selected("cc") == []
     view.selector.game_clicked.emit("ttr")
@@ -139,7 +147,7 @@ def test_switching_games_keeps_each_partys_selection(view):
 
 
 def test_switching_games_repaints_selector_hero_and_shelf(view):
-    view.set_accounts("cc", [_entry("z", "Cogsworth")])
+    view.set_accounts("cc", [_entry("z", "Cogsworth", game="cc")])
     view.selector.game_clicked.emit("cc")
     assert view.selector.active() == "cc"
     assert view.hero.game() == "cc"
