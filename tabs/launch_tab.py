@@ -433,6 +433,7 @@ class LaunchTab(QWidget):
         self._visible_tiles: dict[str, dict[str, object]] = {"ttr": {}, "cc": {}}
         self._page: dict[str, int] = {"ttr": 0, "cc": 0}
         self._keyring_banner = None
+        self._grandstand_credential_kind = "ok"
         self._probe_thread = None
         self._probe_worker = None
         self._pending_2fa: set = set()
@@ -772,19 +773,35 @@ class LaunchTab(QWidget):
         if sys.platform == "darwin" and self._macos_vault_is_locked():
             state = getattr(self.cred_manager, "macos_unlock_state", None)
             copy = MACOS_VAULT_COPY[state]
-            gs.set_credential_state(
+            self._set_grandstand_credential_state(
                 "blocked",
                 copy.hero_reason(), copy.action_text,
                 self._on_unlock_accounts_clicked if copy.action_text else None)
             return
         if getattr(self.cred_manager, "keyring_probe_pending", False):
-            gs.set_credential_state(
+            self._set_grandstand_credential_state(
                 "advisory", "Checking your keyring…")
             return
         if not getattr(self.cred_manager, "keyring_available", True):
-            gs.set_credential_state("advisory")
+            self._set_grandstand_credential_state("advisory")
             return
-        gs.set_credential_state("ok")
+        self._set_grandstand_credential_state("ok")
+
+    def _set_grandstand_credential_state(
+            self, kind: str, reason: str = "", action_text: str = "",
+            on_action=None) -> None:
+        """Keep the tab's dispatch state synchronized with its mounted view."""
+        gs = getattr(self, "grandstand", None)
+        if gs is None:
+            return
+        self._grandstand_credential_kind = kind
+        gs.set_credential_state(kind, reason, action_text, on_action)
+
+    def _grandstand_launch_is_blocked(self) -> bool:
+        """Block only the flagged launcher; the legacy path stays unchanged."""
+        return (getattr(self, "grandstand", None) is not None
+                and getattr(self, "_grandstand_credential_kind", "ok")
+                == "blocked")
 
     def _on_unlock_accounts_clicked(self):
         """Re-run the probe worker, which re-fires the single biometric gate.
@@ -863,12 +880,13 @@ class LaunchTab(QWidget):
         the button respects the user's chosen install method
         (Faugus/Bottles/Wine/Lutris/Steam-Proton/Native) instead of always
         picking the first discovered install."""
-        grandstand = getattr(self, "grandstand", None)
-        if grandstand is not None and grandstand.is_credential_blocked():
+        if self._grandstand_launch_is_blocked():
             return
         import tabs.launch_tab as _m
         if game == "cc":
             if not _m._cc_launch_gate(self.settings_manager, parent=self.window()):
+                return
+            if self._grandstand_launch_is_blocked():
                 return
             runner = _m.run_official_cc_launcher
             runner_kwargs = {"settings_manager": self.settings_manager}
@@ -1554,7 +1572,7 @@ class LaunchTab(QWidget):
     def _on_party_launch(self, game: str, account_ids: list) -> None:
         """Play. Dispatches through the same per-account entry point a single
         card uses, staggered so the starred account's login lands first."""
-        if self._shutting_down:
+        if self._shutting_down or self._grandstand_launch_is_blocked():
             return
         targets = self._party_dispatch_targets(game, list(account_ids))
         if not targets:
@@ -1563,7 +1581,7 @@ class LaunchTab(QWidget):
         if game == "cc" and not _cc_launch_gate(
                 self.settings_manager, parent=self.window()):
             return
-        if self._shutting_down:
+        if self._shutting_down or self._grandstand_launch_is_blocked():
             return
         # The gate ran a nested event loop; anything could have started while
         # it was open. Re-check before committing to the accounts we picked.
@@ -1582,7 +1600,7 @@ class LaunchTab(QWidget):
         except Exception:
             self._release_party_reservations(game, delayed)
             raise
-        if self._shutting_down:
+        if self._shutting_down or self._grandstand_launch_is_blocked():
             self._release_party_reservations(game, delayed)
             return
 
@@ -1632,7 +1650,7 @@ class LaunchTab(QWidget):
     def _party_step(self, game: str, account_id: str, last: bool) -> None:
         self._party_pending.discard((game, account_id))
         try:
-            if self._shutting_down:
+            if self._shutting_down or self._grandstand_launch_is_blocked():
                 return
             # State may have changed while this account waited (for example a
             # card launch or another party). Never relaunch a live/in-flight
@@ -1643,6 +1661,8 @@ class LaunchTab(QWidget):
             self._party_gate_ok.discard((game, account_id))
 
     def _on_launch(self, game: str, account_id: str):
+        if self._grandstand_launch_is_blocked():
+            return
         from utils.credentials_manager import _dbg
         _dbg(f"[Credentials] _on_launch click: game={game} account={account_id} "
              f"probe_pending={getattr(self.cred_manager, 'keyring_probe_pending', False)} "
@@ -1663,6 +1683,8 @@ class LaunchTab(QWidget):
         # CC: block launch when multi-install is ambiguous (no stored pick).
         if game == "cc":
             if not self._cc_gate_ok(game, account_id):
+                return
+            if self._grandstand_launch_is_blocked():
                 return
 
         # Check engine path

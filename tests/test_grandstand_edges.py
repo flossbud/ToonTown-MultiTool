@@ -438,7 +438,7 @@ def test_grandstand_corrupt_vault_blocks_without_unlock_action(
         tab.close()
 
 
-def test_blocking_without_a_reason_guards_official_launcher(
+def test_blocked_credentials_guard_official_launcher_at_runner_boundary(
         monkeypatch, qapp):
     monkeypatch.setenv("TTMT_GRANDSTAND", "1")
     monkeypatch.setattr(sys, "platform", "darwin")
@@ -453,19 +453,167 @@ def test_blocking_without_a_reason_guards_official_launcher(
     settings.get.side_effect = lambda _key, default=None: default
     tab = LaunchTab(cred_manager=cred, settings_manager=settings)
     try:
-        tab.grandstand.set_credential_state("blocked")
         assert tab.grandstand.hero.blocked_text() == (
             "🔒  Your accounts are locked\n"
             "Unlock to load your saved accounts for this session.")
-        # Presentation must not be the safety authority. Deliberately clear
-        # only the hero and leave the view-owned credential state blocked.
-        tab.grandstand.hero.set_blocked(None)
+        # The view is presentation and intent. Deliberately clear its entire
+        # credential state while leaving the tab-owned dispatch state blocked.
+        tab.grandstand.set_credential_state("ok")
+        assert tab.grandstand.is_credential_blocked() is False
         tab.grandstand.official_launcher_requested.emit("ttr")
         runner.assert_not_called()
 
-        tab.grandstand.set_credential_state("ok")
+        cred.macos_unlock_state = "unlocked"
+        cred.keyring_probe_pending = False
+        cred.keyring_available = True
+        tab._push_credential_state()
         tab.grandstand.official_launcher_requested.emit("ttr")
         runner.assert_called_once_with()
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def _make_grandstand_launch_tab(monkeypatch, account_ids, *, blocked,
+                                game="ttr"):
+    monkeypatch.setenv("TTMT_GRANDSTAND", "1")
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(LaunchTab, "_start_keyring_probe", lambda self: None)
+    accounts = [
+        SimpleNamespace(id=aid, game=game, label=aid, username=aid,
+                        password="pw", launcher_token="")
+        for aid in account_ids
+    ]
+    cred = MagicMock(
+        keyring_available=not blocked,
+        keyring_probe_pending=blocked,
+        macos_unlock_state="denied" if blocked else "unlocked",
+    )
+    cred.get_accounts_metadata.return_value = accounts
+    cred.get_account_metadata.side_effect = lambda index: accounts[index]
+    cred.get_account.side_effect = lambda index: accounts[index]
+    settings = MagicMock()
+    settings.get.side_effect = lambda _key, default=None: default
+    return LaunchTab(cred_manager=cred, settings_manager=settings), cred
+
+
+def test_a_direct_launch_signal_is_refused_while_blocked(monkeypatch, qapp):
+    """Bypassing the UI must not bypass the guard."""
+    import tabs.launch_tab as launch_tab
+
+    tab, _cred = _make_grandstand_launch_tab(
+        monkeypatch, ["a"], blocked=True, game="cc")
+    engine_lookup = MagicMock(return_value="")
+    party_dispatch = MagicMock()
+    cc_gate = MagicMock(return_value=True)
+    monkeypatch.setattr(launch_tab, "_cc_launch_gate", cc_gate)
+    tab._get_engine_dir = engine_lookup
+    tab._show_failure_dialog = MagicMock()
+    tab._launch_party_account = party_dispatch
+    try:
+        tab.grandstand.launch_requested.emit("cc", "a")
+        tab.grandstand.party_launch_requested.emit("cc", ["a"])
+        engine_lookup.assert_not_called()
+        cc_gate.assert_not_called()
+        party_dispatch.assert_not_called()
+        assert tab._party_timers == []
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_a_queued_party_member_does_not_launch_after_blocking(
+        monkeypatch, qapp):
+    """The vault can lock mid-batch: a timer that fires after the block must
+    not dispatch the account it was holding."""
+    import tabs.launch_tab as launch_tab
+    from PySide6.QtTest import QTest
+
+    monkeypatch.setattr(launch_tab, "PARTY_STAGGER_MS", 1)
+    tab, cred = _make_grandstand_launch_tab(
+        monkeypatch, ["a", "b"], blocked=False)
+    dispatched = MagicMock()
+    tab._launch_party_account = dispatched
+    try:
+        tab.grandstand.party_launch_requested.emit("ttr", ["a", "b"])
+        dispatched.assert_called_once_with("ttr", "a")
+
+        cred.macos_unlock_state = "denied"
+        cred.keyring_probe_pending = True
+        cred.keyring_available = False
+        tab._push_credential_state()
+        QTest.qWait(20)
+
+        dispatched.assert_called_once_with("ttr", "a")
+        assert tab._party_pending == set()
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_official_cc_launch_rechecks_blocking_after_the_gate(monkeypatch, qapp):
+    """A credential transition inside the nested gate must stop dispatch."""
+    import tabs.launch_tab as launch_tab
+
+    tab, _cred = _make_grandstand_launch_tab(
+        monkeypatch, ["a"], blocked=False, game="cc")
+    runner = MagicMock(return_value=True)
+
+    def gate(_settings, parent=None):
+        tab._set_grandstand_credential_state("blocked")
+        return True
+
+    monkeypatch.setattr(launch_tab, "_cc_launch_gate", gate)
+    monkeypatch.setattr(launch_tab, "run_official_cc_launcher", runner)
+    try:
+        tab.grandstand.official_launcher_requested.emit("cc")
+        runner.assert_not_called()
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_direct_cc_launch_rechecks_blocking_after_the_gate(monkeypatch, qapp):
+    """The account boundary must recheck after the Clash picker returns."""
+    import tabs.launch_tab as launch_tab
+
+    tab, _cred = _make_grandstand_launch_tab(
+        monkeypatch, ["a"], blocked=False, game="cc")
+    engine_lookup = MagicMock(return_value="")
+
+    def gate(_settings, parent=None):
+        tab._set_grandstand_credential_state("blocked")
+        return True
+
+    monkeypatch.setattr(launch_tab, "_cc_launch_gate", gate)
+    tab._get_engine_dir = engine_lookup
+    tab._show_failure_dialog = MagicMock()
+    try:
+        tab.grandstand.launch_requested.emit("cc", "a")
+        engine_lookup.assert_not_called()
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_party_releases_delayed_members_if_first_launch_blocks(
+        monkeypatch, qapp):
+    """A re-entrant block during member one must leave no armed batch work."""
+    tab, _cred = _make_grandstand_launch_tab(
+        monkeypatch, ["a", "b"], blocked=False)
+    dispatched = MagicMock()
+
+    def dispatch(game, account_id):
+        dispatched(game, account_id)
+        tab._set_grandstand_credential_state("blocked")
+
+    tab._launch_party_account = dispatch
+    try:
+        tab.grandstand.party_launch_requested.emit("ttr", ["a", "b"])
+        dispatched.assert_called_once_with("ttr", "a")
+        assert tab._party_timers == []
+        assert tab._party_pending == set()
+        assert tab._party_gate_ok == set()
     finally:
         tab.shutdown()
         tab.close()
