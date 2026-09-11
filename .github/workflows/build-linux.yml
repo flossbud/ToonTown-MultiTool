@@ -26,6 +26,20 @@ jobs:
       - name: Install build toolchain and Qt runtime libraries
         run: |
           export DEBIAN_FRONTEND=noninteractive
+          # Debian 11 (bullseye) left LTS on 2026-08-31 and its Release files on
+          # deb.debian.org have expired, so a stock apt-get update refuses them.
+          # main/updates live on archive.debian.org (final 11.11 snapshot, no
+          # Valid-Until); bullseye-security is not archived yet, so keep it on
+          # deb.debian.org with the expiry check off. Point that line at
+          # archive.debian.org/debian-security once it appears there.
+          if grep -q '^VERSION_CODENAME=bullseye' /etc/os-release; then
+            printf '%s\n' \
+              'deb http://archive.debian.org/debian bullseye main' \
+              'deb http://archive.debian.org/debian bullseye-updates main' \
+              'deb http://deb.debian.org/debian-security bullseye-security main' \
+              > /etc/apt/sources.list
+            echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99bullseye-eol
+          fi
           # Retry transient mirror failures (deb.debian.org occasionally resets
           # the connection mid-fetch). Without this a single dropped packet
           # fails the job, which forces a rerun and splits the run's artifacts
