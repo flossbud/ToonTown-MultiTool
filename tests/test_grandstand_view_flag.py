@@ -85,6 +85,48 @@ def test_layout_mode_does_not_resurrect_the_old_launcher(qapp, monkeypatch):
         tab.shutdown()
 
 
+def test_legacy_sections_are_hidden_on_the_flagged_path(qapp, monkeypatch):
+    """Live-validated defect: both LaunchSections were parented to the scroll
+    widget unconditionally and, being in no layout, painted at (0,0) over the
+    Grandstand stack. The container test could not see this — the sections are
+    visible independently of the container."""
+    monkeypatch.setenv("TTMT_GRANDSTAND", "1")
+    from utils.settings_manager import SettingsManager
+    from tabs.launch_tab import LaunchTab
+    tab = LaunchTab(settings_manager=SettingsManager())
+    try:
+        tab.show()
+        qapp.processEvents()
+        assert tab.grandstand.isVisible() is True        # the baseline is real
+        assert tab.ttr_section.isVisible() is False
+        assert tab.cc_section.isVisible() is False
+        for mode in ("full", "compact", "full"):
+            tab.set_layout_mode(mode)
+            tab.refresh_theme()
+            qapp.processEvents()
+            assert tab.ttr_section.isVisible() is False
+            assert tab.cc_section.isVisible() is False
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_legacy_sections_still_show_when_the_flag_is_off(qapp, monkeypatch):
+    """The other direction: with the flag unset the old launcher is untouched."""
+    monkeypatch.delenv("TTMT_GRANDSTAND", raising=False)
+    from utils.settings_manager import SettingsManager
+    from tabs.launch_tab import LaunchTab
+    tab = LaunchTab(settings_manager=SettingsManager())
+    try:
+        tab.show()
+        qapp.processEvents()
+        assert tab.ttr_section.isVisible() is True
+        assert tab.cc_section.isVisible() is True
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
 def test_layout_mode_keeps_the_old_launcher_when_flag_is_off(qapp, monkeypatch):
     """The legacy launcher retains compact/full switching until cut-over."""
     monkeypatch.delenv("TTMT_GRANDSTAND", raising=False)

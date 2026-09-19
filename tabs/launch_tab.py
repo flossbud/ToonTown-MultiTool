@@ -1132,6 +1132,11 @@ class LaunchTab(QWidget):
         self.grandstand.launch_requested.connect(self._on_launch)
         self.grandstand.party_launch_requested.connect(self._on_party_launch)
         self._layout.addWidget(self.grandstand, 1)
+        # The legacy sections remain parented for external callers, but without
+        # a layout Qt shows them at (0, 0) over Grandstand when their parent is
+        # shown. Keep them explicitly hidden until the eventual cut-over.
+        self.ttr_section.hide()
+        self.cc_section.hide()
         for game in ("ttr", "cc"):
             self._render_grandstand(game)
 
