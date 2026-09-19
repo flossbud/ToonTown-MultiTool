@@ -6,13 +6,14 @@ an opaque block over a custom-painted surface is invisible to them. This file
 loads the actual theme and samples pixels.
 """
 import os
+from contextlib import contextmanager
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtGui import QColor, QPalette, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from utils import theme_manager
@@ -28,13 +29,25 @@ def _distance(a, b):
             + abs(a.blue() - b.blue()))
 
 
+@contextmanager
+def _temporary_theme(qapp, theme):
+    """Apply one real theme and restore the preceding application state."""
+    before_sheet = qapp.styleSheet()
+    before_palette = QPalette(qapp.palette())
+    before_marker = theme_manager._APPLIED_THEME
+    try:
+        theme_manager.apply_theme(qapp, theme)
+        yield
+    finally:
+        qapp.setStyleSheet(before_sheet)
+        qapp.setPalette(before_palette)
+        theme_manager._APPLIED_THEME = before_marker
+
+
 @pytest.fixture(params=["light", "dark"])
 def themed_app(qapp, request):
-    """Load the real application stylesheet, then restore the empty one so
-    the rest of the suite is unaffected."""
-    theme_manager.apply_theme(qapp, request.param)
-    yield qapp, request.param
-    qapp.setStyleSheet("")
+    with _temporary_theme(qapp, request.param):
+        yield qapp, request.param
 
 
 def _render(widget, w, h):
@@ -94,13 +107,31 @@ def test_shelf_containers_do_not_paint_the_app_background(themed_app,
     shelf.close()
 
 
+def test_themed_app_fixture_restores_global_state(qapp):
+    """Everything apply_theme touches must be back to its prior value."""
+    before_sheet = qapp.styleSheet()
+    before_palette = QPalette(qapp.palette())
+    before_marker = theme_manager._APPLIED_THEME
+    theme = "light" if before_marker == "dark" else "dark"
+
+    with _temporary_theme(qapp, theme):
+        assert theme_manager._APPLIED_THEME == theme
+
+    assert qapp.styleSheet() == before_sheet
+    assert qapp.palette() == before_palette
+    assert theme_manager._APPLIED_THEME == before_marker
+
+
 def test_disabled_play_keeps_its_translucency(qapp):
-    """`.name()` drops alpha; disabled Play must carry eight-digit ARGB."""
+    """`.name()` drops alpha; all disabled Play colours must carry ARGB."""
     hero = HeroStage()
     hero.set_party([])
     assert hero.play_enabled() is False
-    expected = gp.play_button(False, True)["bg"].name(QColor.HexArgb)
-    assert expected in hero.play_button.styleSheet()
-    assert len(expected) == 9
-    assert expected.lower() != "#ffffffff"
+    style = hero.play_button.styleSheet()
+    colours = gp.play_button(False, True)
+    for name in ("bg", "ink", "border"):
+        expected = colours[name].name(QColor.HexArgb)
+        assert expected in style
+        assert len(expected) == 9
+        assert expected.lower() != "#ffffffff"
     hero.close()
