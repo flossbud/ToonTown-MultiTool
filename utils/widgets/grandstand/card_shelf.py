@@ -103,6 +103,9 @@ class CardShelf(QWidget):
         # band that stretches inside the 688px content area, so letting this
         # row size itself would eat the cards' height.
         self.head = QWidget(self)
+        self.head.setObjectName("gs_shelf_head")
+        self.head.setStyleSheet(
+            "#gs_shelf_head { background: transparent; }")
         self.head.setFixedHeight(HEAD_H)
         head = QHBoxLayout(self.head)
         head.setContentsMargins(0, 0, 0, 0)
@@ -134,6 +137,9 @@ class CardShelf(QWidget):
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         self._strip = QWidget()
+        self._strip.setObjectName("gs_shelf_strip")
+        self._strip.setStyleSheet(
+            "#gs_shelf_strip { background: transparent; }")
         self._row = QHBoxLayout(self._strip)
         self._row.setContentsMargins(2, 16, 2, 12)
         self._row.setSpacing(SHELF_GAP)
@@ -305,6 +311,8 @@ class CardShelf(QWidget):
         scroll = gp.shelf_scroll(is_dark)
         self.scroll.setStyleSheet(
             "QScrollArea { background: transparent; border: none; }"
+            " QScrollArea > QWidget#qt_scrollarea_viewport {"
+            " background: transparent; }"
             " QScrollBar:horizontal { height: 6px; background: transparent;"
             " margin: 0; }"
             " QScrollBar::handle:horizontal { border-radius: 3px;"

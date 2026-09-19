@@ -45,6 +45,9 @@ class HeroStage(QFrame):
         self._art = {g: QPixmap(asset_path(ART[g])) for g in ("ttr", "cc")}
 
         self.copy = QWidget(self)
+        self.copy.setObjectName("gs_hero_copy")
+        self.copy.setStyleSheet(
+            "#gs_hero_copy { background: transparent; }")
         col = QVBoxLayout(self.copy)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(10)
@@ -203,8 +206,9 @@ class HeroStage(QFrame):
         hover = gp.play_button(True, self._is_dark)["border"].name()
         self.play_button.setStyleSheet(
             "QPushButton {"
-            f" background: {d['bg'].name()}; color: {d['ink'].name()};"
-            f" border: 1px solid {d['border'].name()};"
+            f" background: {d['bg'].name(QColor.HexArgb)};"
+            f" color: {d['ink'].name(QColor.HexArgb)};"
+            f" border: 1px solid {d['border'].name(QColor.HexArgb)};"
             " border-radius: 8px; padding: 0 22px; font-size: 15px;"
             " font-weight: 800; letter-spacing: 0.9px; }"
             f"QPushButton:hover:enabled {{ background: {hover}; }}")
