@@ -360,6 +360,50 @@ def test_launch_tab_theme_switch_reaches_grandstand(monkeypatch, qapp):
         tab.close()
 
 
+def test_late_customizations_manager_repaints_grandstand_entries(
+        monkeypatch, qapp):
+    from utils.recent_toons import RecentToonsStore
+
+    tab, _cred = _make_grandstand_launch_tab(
+        monkeypatch, ["a"], blocked=False)
+    try:
+        values = {}
+        store_settings = SimpleNamespace(
+            get=lambda key, default=None: values.get(key, default),
+            set=lambda key, value: values.__setitem__(key, value),
+        )
+        tab._recent_toons = RecentToonsStore(store_settings)
+        tab._recent_toons.record(
+            "a", "Flossbud", "ttr", "7400", species="cat",
+            accent="#123456")
+        tab._render_current_view("ttr")
+        tab.grandstand.shelf.card_for("a").clicked.emit("a")
+        assert tab.grandstand.shelf.card_for("a").entry().pose == "portrait"
+        assert tab.grandstand.hero.crew_area.slots()[0].pose == "portrait"
+
+        render = MagicMock(wraps=tab._render_current_view)
+        tab._render_current_view = render
+        manager = SimpleNamespace(
+            get=lambda game, toon_name: {
+                "accent": "#abcdef",
+                "pose": "waving",
+            } if (game, toon_name) == ("ttr", "Flossbud") else {})
+
+        tab.set_customizations_manager(manager)
+
+        assert [call.args for call in render.call_args_list] == [
+            ("ttr",), ("cc",)]
+        entry = tab.grandstand.shelf.card_for("a").entry()
+        assert entry.accent == "#abcdef"
+        assert entry.pose == "waving"
+        lineup = tab.grandstand.hero.crew_area.slots()
+        assert lineup[0].pose == "waving"
+        assert lineup[0].treatment == "standing"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
 @pytest.mark.parametrize(
     "pending,available,reason",
     [

@@ -309,8 +309,9 @@ class GrandstandView(QWidget):
             (by_id[aid].display_name if aid in by_id else aid) for aid in selected])
         names = self._main_names.get(game, {})
         self.hero.set_main(names.get(star) if star else None)
+        poses = {entry.account_id: entry.pose for entry in entries}
         self.hero.set_lineup(
-            lineup_entries(entries, self._party.launch_order(game)))
+            lineup_entries(entries, self._party.launch_order(game), poses=poses))
 
     def _on_play(self) -> None:
         if self.is_credential_blocked():

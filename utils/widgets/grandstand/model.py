@@ -74,6 +74,7 @@ class RosterEntry:
     state: str
     message: str
     raw_error: str
+    pose: str = "portrait"
 
     @property
     def display_name(self) -> str:
@@ -119,6 +120,7 @@ def roster_entry(*, account_id: str, game: str, label: str, username: str,
     accent = resolve_accent(
         entry if isinstance(entry, dict) else {}, account_accent
     ).name()
+    pose = resolve_pose(entry if isinstance(entry, dict) else {})
 
     return RosterEntry(
         account_id=account_id, game=game, label=label, username=username,
@@ -126,6 +128,7 @@ def roster_entry(*, account_id: str, game: str, label: str, username: str,
         footer=footer_text(state, toon_name is not None, is_primary),
         portrait_mode=portrait_mode(game, bool(dna)),
         state=state, message=message, raw_error=raw_error,
+        pose=pose,
     )
 
 
@@ -153,7 +156,9 @@ def lineup_entries(entries: list[RosterEntry], order: list[str],
 
     out: list[LineupEntry] = []
     for e in chosen:
-        pose = resolve_pose({"pose": (poses or {}).get(e.account_id)})
+        pose = resolve_pose({
+            "pose": (poses or {}).get(e.account_id, e.pose),
+        })
         if e.toon_name is None:
             treatment, stem = "placeholder", None
         elif e.portrait_mode == PORTRAIT_SPECIES:

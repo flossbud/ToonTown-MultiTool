@@ -88,6 +88,15 @@ def test_customization_accent_beats_account_accent():
     assert e.accent == "#abcdef"
 
 
+def test_saved_pose_reaches_the_lineup_and_selects_full_body_treatment():
+    entry = _entry("a", customization={"pose": "waving"})
+
+    lineup = gm.lineup_entries([entry], ["a"])
+
+    assert lineup[0].pose == "waving"
+    assert lineup[0].treatment == "standing"
+
+
 def test_account_accent_is_used_without_customization_accent():
     e = _entry("a", rec_accent="#123456")
     assert e.accent == "#123456"

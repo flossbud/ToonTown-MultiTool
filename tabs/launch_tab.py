@@ -935,6 +935,9 @@ class LaunchTab(QWidget):
         self._customizations = manager
         for section in self._sections.values():
             section.set_customizations_manager(manager)
+        if getattr(self, "grandstand", None) is not None:
+            for game in ("ttr", "cc"):
+                self._render_current_view(game)
 
     def _primary_toon_fields(self, account_id: str) -> dict:
         """Primary-toon display fields for a tile, resolved from the recent-toons
