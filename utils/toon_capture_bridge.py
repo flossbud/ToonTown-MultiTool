@@ -23,13 +23,15 @@ class ToonCaptureBridge:
         self._pid_to_account = {p: ga for p, ga in self._pid_to_account.items() if ga != target}
 
     def capture(self, pid: int, toon_name: str, dna: str = "", *,
-                laff=None, max_laff=None, species=None, accent=None) -> None:
+                laff=None, max_laff=None, species=None,
+                accent=None) -> tuple[str, str] | None:
         ga = self._pid_to_account.get(pid)
         if not ga:
-            return
+            return None
         game, account_id = ga
         self._store.record(account_id, toon_name, game, dna,
                            laff=laff, max_laff=max_laff, species=species, accent=accent)
+        return ga
 
 
 def toon_changed(last_seen: dict, wid_key: str, toon_name: str, dna: str,

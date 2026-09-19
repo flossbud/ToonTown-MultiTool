@@ -613,8 +613,12 @@ class LaunchTab(QWidget):
     def capture_toon(self, pid: int, toon_name: str, dna: str = "", *,
                      laff=None, max_laff=None, species=None, accent=None) -> None:
         """Record the in-world toon for whatever account owns ``pid`` (no-op if unknown)."""
-        self._toon_bridge.capture(pid, toon_name, dna, laff=laff, max_laff=max_laff,
-                                  species=species, accent=accent)
+        affected = self._toon_bridge.capture(
+            pid, toon_name, dna, laff=laff, max_laff=max_laff,
+            species=species, accent=accent)
+        if affected is not None:
+            game, _account_id = affected
+            self._render_current_view(game)
 
     def set_overlay_active_provider(self, fn) -> None:
         """Install a ``() -> bool`` predicate reporting whether the transparent

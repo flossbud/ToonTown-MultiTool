@@ -319,6 +319,39 @@ def test_a_toonless_account_does_not_break_the_stage(view):
     assert view.hero.crew_area.slots()[0].treatment == "placeholder"
 
 
+def test_capture_repaints_a_toonless_card_and_lineup(monkeypatch, qapp):
+    from utils.recent_toons import RecentToonsStore
+    from utils.toon_capture_bridge import ToonCaptureBridge
+
+    tab, _cred = _make_grandstand_launch_tab(
+        monkeypatch, ["a"], blocked=False)
+    try:
+        values = {}
+        store_settings = SimpleNamespace(
+            get=lambda key, default=None: values.get(key, default),
+            set=lambda key, value: values.__setitem__(key, value),
+        )
+        tab._recent_toons = RecentToonsStore(store_settings)
+        tab._toon_bridge = ToonCaptureBridge(tab._recent_toons)
+        tab._render_current_view("ttr")
+        before = tab.grandstand.shelf.card_for("a")
+        assert before.footer_text() == "No toon yet"
+
+        tab._toon_bridge.record_launch(4242, "ttr", "a")
+        tab.capture_toon(
+            4242, "Flossbud", "7400", species="cat", accent="#123456")
+
+        card = tab.grandstand.shelf.card_for("a")
+        assert card.name_text() == "Flossbud"
+        card.clicked.emit("a")
+        lineup = tab.grandstand.hero.crew_area.slots()
+        assert [entry.account_id for entry in lineup] == ["a"]
+        assert lineup[0].treatment == "bust"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
 # ── theme ───────────────────────────────────────────────────────────────────
 
 def test_theme_switch_reaches_every_surface(view, monkeypatch):
