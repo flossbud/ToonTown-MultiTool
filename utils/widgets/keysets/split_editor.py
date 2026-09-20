@@ -20,7 +20,7 @@ from PySide6.QtGui import (
     QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen,
 )
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QInputDialog, QLabel, QPushButton, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
 from utils import logical_actions
@@ -28,6 +28,7 @@ from utils.color_math import with_alpha
 from utils.widgets.pill_controls import PillButton
 from . import keyboard_data
 from .game_meta import GAME_META, set_accent
+from .inline_name_edit import InlineNameEdit
 from .movement_key_field import MovementKeyField
 from .palette import (
     card_ink, card_ink_faint, card_ink_soft, conflict_banner_css, detail_card,
@@ -289,12 +290,16 @@ class SplitEditor(QWidget):
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.setSpacing(7)
-        self._title = QLabel("")
+        self._title = InlineNameEdit(self._card)
+        self._title.committed.connect(self._on_name_committed)
         title_row.addWidget(self._title, 0)
         self._pencil = QPushButton("✎")
         self._pencil.setCursor(Qt.PointingHandCursor)
         self._pencil.setFixedSize(20, 20)
-        self._pencil.clicked.connect(self._rename)
+        # NoFocus: clicking the pencil mid-edit must not steal focus (which
+        # would commit) before it asks the title to start editing.
+        self._pencil.setFocusPolicy(Qt.NoFocus)
+        self._pencil.clicked.connect(self._title.begin_edit)
         title_row.addWidget(self._pencil, 0)
         title_row.addStretch(1)
         title_col.addLayout(title_row)
@@ -385,9 +390,7 @@ class SplitEditor(QWidget):
 
     def _restyle_chrome(self) -> None:
         d = self._is_dark
-        self._title.setStyleSheet(
-            "background: transparent; border: none; color: %s; "
-            "font-size: 16px; font-weight: 700;" % card_ink(d))
+        self._title.apply_style(d, self._accent_b)
         self._pencil.setStyleSheet(pencil_css(d))
         self._sub.setStyleSheet(
             "background: transparent; border: none; "
@@ -458,17 +461,22 @@ class SplitEditor(QWidget):
             self._detect_cb(self._game)
         self._refresh_detail()
 
-    def _rename(self) -> None:
+    def begin_rename(self, index: int) -> None:
+        """Rail entry point: select ``index`` and start editing its name.
+        Index 0 (Default) only selects - its title is locked."""
+        self._select(index)
+        self._title.begin_edit()
+
+    def _delete_at(self, index: int) -> None:
+        self._select(index)
+        self._on_delete()
+
+    def _on_name_committed(self, name: str) -> None:
         if self._game is None or self._idx <= 0:
             return
-        names = self._km.get_set_names(self._game)
-        current = names[self._idx] if self._idx < len(names) else ""
-        name, ok = QInputDialog.getText(
-            self, "Rename set", "Set name:", text=current)
-        if ok and name.strip():
-            self._km.update_set_name(self._game, self._idx, name.strip())
-            self._refresh_left()
-            self._refresh_detail()
+        self._km.update_set_name(self._game, self._idx, name)
+        self._refresh_left()
+        self._refresh_detail()
 
     def _apply_capture(self, action: str, value: str) -> None:
         """The path MovementKeyField.key_captured drives: persist, then reload
@@ -500,7 +508,9 @@ class SplitEditor(QWidget):
 
         names = self._km.get_set_names(game)
         name = names[idx] if idx < len(names) else f"Set {idx + 1}"
-        self._title.setText(name)
+        self._title.set_text_quiet(name)
+        self._title.set_locked(idx == 0)
+        self._title.apply_style(self._is_dark, b)
         self._sub.setText(f"{GAME_META[game].title} · movement set {idx + 1}")
         self._pencil.setVisible(idx > 0)
         self._detect_btn.setVisible(idx == 0)
