@@ -30,3 +30,28 @@ def test_unrelated_window_is_none():
 
 def test_cc_via_wm_class_substring():
     assert _game_for_window_props(["corporateclash", "Corporate Clash"], None) == "cc"
+
+
+def test_ttr_flatpak_launcher_window_is_not_a_game():
+    # The TTR flatpak's launcher UI (/app/bin/toontown) has WM_CLASS
+    # "toontown"/"toontown" and title "Toontown Rewritten Launcher". It used to
+    # slip through the WM_NAME-prefix fallback and steal a toon slot.
+    assert _game_for_window_props(
+        ["toontown", "toontown"], "Toontown Rewritten Launcher"
+    ) is None
+
+
+def test_ttr_never_classified_by_title_alone():
+    # TTR on Linux is native-only: the engine always sets WM_CLASS class
+    # "Toontown Rewritten". The title fallback exists for Wine/Proton CC only.
+    assert _game_for_window_props(["foo", "foo"], "Toontown Rewritten") is None
+
+
+def test_cc_launcher_titled_window_is_not_a_game():
+    assert _game_for_window_props(
+        ["steam_proton", "steam_proton"], "Corporate Clash Launcher"
+    ) is None
+
+
+def test_cc_bare_title_under_wine_still_matches():
+    assert _game_for_window_props(["steam_proton", "steam_proton"], "Corporate Clash") == "cc"

@@ -64,6 +64,24 @@ _GAME_BY_MARKER = {
     "Corporate Clash": "cc",
 }
 
+# Games whose engine ALWAYS sets an authoritative WM_CLASS on Linux. TTR is
+# native-only here (no Wine path exists), so a window that merely carries a
+# "Toontown Rewritten..." title without that class is never the game — it is
+# the flatpak launcher UI (WM_CLASS "toontown", title "Toontown Rewritten
+# Launcher"), a news/patch window, etc. Mirrors macos_discovery's
+# _STRICT_BUNDLE_GAMES. CC is absent because under Wine/Proton its WM_CLASS is
+# forced to steam_proton and the title is the only signal.
+_CLASS_ONLY_GAMES = frozenset({"ttr"})
+
+
+def _is_launcher_title(name_str: str, marker: str) -> bool:
+    """True if a marker-prefixed title identifies the game's LAUNCHER/updater
+    rather than the engine, e.g. "Toontown Rewritten Launcher". Tokenized on
+    the remainder after the marker so an engine title carrying a version
+    ("Corporate Clash [1.11.17777]") is untouched."""
+    rest = name_str[len(marker):].strip(" -:—|")
+    return rest.split(" ", 1)[0].lower() == "launcher"
+
 
 def _game_for_window_props(wm_class, wm_name) -> str | None:
     """Classify a window as 'ttr'/'cc'/None from its WM_CLASS and WM_NAME.
@@ -71,7 +89,9 @@ def _game_for_window_props(wm_class, wm_name) -> str | None:
     wm_class is the tuple returned by Xlib's get_wm_class() — (instance, class);
     we match against its class component (index 1). wm_name is the WM_NAME str.
     WM_CLASS substring wins; WM_NAME must *start with* a marker (so a Wine
-    console window titled with the full .exe path does not match).
+    console window titled with the full .exe path does not match). The title
+    fallback never applies to _CLASS_ONLY_GAMES and never matches a launcher
+    title (see _is_launcher_title).
     """
     if wm_class and len(wm_class) >= 2:
         cls = wm_class[1] or ""
@@ -81,7 +101,9 @@ def _game_for_window_props(wm_class, wm_name) -> str | None:
     if wm_name:
         name_str = str(wm_name)
         for marker, game in _GAME_BY_MARKER.items():
-            if name_str.startswith(marker):
+            if game in _CLASS_ONLY_GAMES:
+                continue
+            if name_str.startswith(marker) and not _is_launcher_title(name_str, marker):
                 return game
     return None
 
