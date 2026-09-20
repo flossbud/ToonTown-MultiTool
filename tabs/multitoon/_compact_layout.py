@@ -21,6 +21,7 @@ Both are expressed by the per-card lit/dimmed treatment driven from
 from __future__ import annotations
 
 import os
+import re
 import sys
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -30,7 +31,8 @@ from PySide6.QtCore import (
     QEasingCurve, Signal, QTimer, QEvent, QVariantAnimation, QAbstractAnimation,
 )
 from PySide6.QtGui import (
-    QColor, QFont, QPainter, QPainterPath, QPen, QPixmap, QLinearGradient,
+    QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap,
+    QLinearGradient,
 )
 from PySide6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QGridLayout, QSizePolicy,
@@ -269,6 +271,69 @@ class _GlowLayer(QWidget):
 
 
 # ── Card background (custom paint: concave cutout + accent gradient) ────────
+def _qss_rgba(fragment: str, fallback: QColor) -> QColor:
+    """Parse a CSS `rgba(r,g,b,a)` / `rgb(r,g,b)` fragment (the card palette's
+    glass strings) into a QColor; anything unparseable yields `fallback`."""
+    m = re.match(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([0-9.]+))?\s*\)",
+                 fragment or "")
+    if not m:
+        return QColor(fallback)
+    r, g, b = (int(m.group(i)) for i in (1, 2, 3))
+    a = float(m.group(4)) if m.group(4) is not None else 1.0
+    return QColor(r, g, b, max(0, min(255, round(a * 255))))
+
+
+class _MetaHost(QWidget):
+    """The card's name + counters block. Owns the wallet-tray capsule paint:
+    the currency cells sit in a nested layout (`tray_lay`) and this widget
+    paints the keep-alive-style glass capsule at that layout's geometry, so
+    the tray reads as one object without the labels having to live inside a
+    separate frame (which would reparent them on every layout switch)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("background: transparent;")
+        self._tray_lay = None
+        self._tray_on = False
+        self._glass_bg = QColor(0, 0, 0, 61)      # rgba(0,0,0,0.24)
+        self._glass_border = QColor(0, 0, 0, 77)  # rgba(0,0,0,0.30)
+
+    def set_tray_layout(self, lay) -> None:
+        self._tray_lay = lay
+
+    def sizeHint(self) -> QSize:
+        # The name label reports its FULL text width as its sizeHint (it
+        # elides to whatever it gets). Don't let that drive the card width -
+        # card_size() sizes every overlay surface to the widest cell hint.
+        hint = super().sizeHint()
+        return QSize(self.minimumSizeHint().width(), hint.height())
+
+    def set_tray_visible(self, on: bool) -> None:
+        if on != self._tray_on:
+            self._tray_on = on
+            self.update()
+
+    def set_glass(self, bg: str, border: str) -> None:
+        self._glass_bg = _qss_rgba(bg, self._glass_bg)
+        self._glass_border = _qss_rgba(border, self._glass_border)
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        if not self._tray_on or self._tray_lay is None:
+            return
+        r = QRectF(self._tray_lay.geometry())
+        if r.isEmpty():
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        inner = r.adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = inner.height() / 2
+        p.setPen(QPen(self._glass_border, 1))
+        p.setBrush(self._glass_bg)
+        p.drawRoundedRect(inner, radius, radius)
+        p.end()
+
+
 class _QuadCardBackground(QWidget):
     """Paints one card body: a 20px rounded rect with one corner carved out by
     a 96px circle, filled with a deep body-color gradient and bordered by a 5px
@@ -1098,8 +1163,8 @@ class _CompactLayout(QWidget):
         bg = _QuadCardBackground(cfg["cutout"], glow_host)
 
         # ── Structural layout tree, assembled ONCE. populate() only refills
-        # the leaf layouts (toggle_row / ka_lay / sel_holder / name_holder /
-        # stats_row) with the shared per-slot widgets, so the structural
+        # the leaf layouts (toggle_row / ka_lay / sel_holder / the meta
+        # leaves) with the shared per-slot widgets, so the structural
         # nesting is never re-parented (which would warn on a 2nd populate). ──
         content = QVBoxLayout(cell)
         pad = self._metrics.card_pad
@@ -1151,21 +1216,64 @@ class _CompactLayout(QWidget):
             body_row.addStretch(1)
             body_row.addWidget(portrait_frame, 0, v_align)
 
-        # Meta: name + stats, aligned to the card's outer edge.
-        name_holder = QHBoxLayout()
-        name_holder.setContentsMargins(0, 0, 0, 0)
-        name_holder.setSpacing(0)
-        stats_row = QHBoxLayout()
-        stats_row.setSpacing(16)
-        stats_row.setContentsMargins(0, 0, 0, 0)
-        meta_col = QVBoxLayout()
-        meta_col.setSpacing(5)
+        # Meta: name line (name + laff) over the wallet tray (beans on hand,
+        # bank, tokens in one glass capsule), or - when the name would push
+        # laff off its line - two stacked rows of two. All the leaf layouts
+        # nest under ONE host widget so a layout switch only moves the
+        # counters between sibling layouts (no reparent, no visibility churn).
+        # Text hugs the card's outer edge; see _route_meta for the routing.
+        meta_host = _MetaHost()
+        meta_col = QVBoxLayout(meta_host)
+        meta_col.setSpacing(7)
         meta_col.setContentsMargins(0, 0, 0, 0)
-        meta_col.addLayout(name_holder)
-        meta_col.addLayout(stats_row)
+        name_row = QHBoxLayout()
+        name_row.setContentsMargins(0, 0, 0, 0)
+        name_row.setSpacing(10)
+        tray_lay = QHBoxLayout()
+        tray_lay.setContentsMargins(12, 4, 12, 4)
+        tray_lay.setSpacing(13)
+        tray_row = QHBoxLayout()
+        tray_row.setContentsMargins(0, 0, 0, 0)
+        tray_row.setSpacing(0)
+        stack_r1 = QHBoxLayout()
+        stack_r1.setContentsMargins(0, 0, 0, 0)
+        stack_r1.setSpacing(14)
+        stack_r2 = QHBoxLayout()
+        stack_r2.setContentsMargins(0, 0, 0, 0)
+        stack_r2.setSpacing(14)
+        stack_col = QVBoxLayout()
+        stack_col.setContentsMargins(0, 0, 0, 0)
+        stack_col.setSpacing(4)
+        stack_col.addLayout(stack_r1)
+        stack_col.addLayout(stack_r2)
+        meta_host.set_tray_layout(tray_lay)
+        # The tray hugs its content on the outer side (the capsule is painted
+        # at tray_lay's geometry, so it must not stretch across the card).
+        if cfg["left"]:
+            tray_row.addLayout(tray_lay)
+            tray_row.addStretch(1)
+        else:
+            tray_row.addStretch(1)
+            tray_row.addLayout(tray_lay)
+        # The host is height-locked to the stacked layout (see _size_cell) so
+        # the card never resizes on a switch; the content hugs the card's
+        # outer horizontal edge and the slack sits toward the portrait.
+        if cfg["stack_bottom"]:
+            meta_col.addLayout(name_row)
+            meta_col.addLayout(tray_row)
+            meta_col.addLayout(stack_col)
+            meta_col.addStretch(1)
+        else:
+            meta_col.addStretch(1)
+            meta_col.addLayout(name_row)
+            meta_col.addLayout(tray_row)
+            meta_col.addLayout(stack_col)
+        # Carve clearance: the meta block is padded off the carved side by the
+        # cutout radius so a long name or a wide tray never slides under the
+        # emblem - it wraps/stacks instead (set from metrics in _size_cell).
         meta_row = QHBoxLayout()
         meta_row.setContentsMargins(0, 0, 0, 0)
-        meta_row.addLayout(meta_col, 1)
+        meta_row.addWidget(meta_host, 1)
 
         # The bottom quadrants read [meta] then [portrait+controls].
         if cfg["stack_bottom"]:
@@ -1182,7 +1290,15 @@ class _CompactLayout(QWidget):
             "content": content,      # card content QVBoxLayout (card_pad margins)
             "ctrl_col": ctrl_col,    # controls column QVBoxLayout (scaled spacing)
             "body_row": body_row,    # portrait+controls row (scaled gap)
-            "meta_col": meta_col,    # name+stats column (scaled spacing)
+            "meta_host": meta_host,  # name+counters host (height-locked, paints the tray)
+            "meta_col": meta_col,    # name+counters column (scaled spacing)
+            "meta_row": meta_row,    # carries the carve-clearance margin
+            "name_row": name_row,    # name + laff (tray mode) / name alone (stacked)
+            "tray_lay": tray_lay,    # wallet tray cells: beans on hand, bank, tokens
+            "stack_r1": stack_r1,    # stacked line 1: laff, beans on hand
+            "stack_r2": stack_r2,    # stacked line 2: bank, tokens
+            "stack_col": stack_col,
+            "meta_stacked": None,    # None = not routed yet; else the current mode
             "ctrl_wrap": ctrl_wrap,  # fixed-width controls column (ctrl_w)
             "portrait_frame": portrait_frame,
             "toggle_row": toggle_row,
@@ -1190,8 +1306,6 @@ class _CompactLayout(QWidget):
             "ka_group": ka_pill,  # alias consumed by MultitoonTab
             "ka_lay": ka_lay,
             "sel_holder": sel_holder,
-            "name_holder": name_holder,
-            "stats_row": stats_row,
             "cfg": cfg,
             "content_slot": i,       # which slot's widgets this shell holds (identity at build)
             "accent": QColor("#555555"),
@@ -1395,24 +1509,17 @@ class _CompactLayout(QWidget):
         clear_layout(cell["sel_holder"])
         cell["sel_holder"].addWidget(sel)
 
-        # Name leaf: name expands to the card's outer edge so it elides.
+        # Name + counters: route into the tray or stacked leaves. The labels
+        # are pulled out of whichever shell held them first (a re-populate or
+        # permutation), then _route_meta parents them under this shell's host.
         name_label, _ = tab.toon_labels[i]
         name_label.setAlignment(align | Qt.AlignVCenter)
-        clear_layout(cell["name_holder"])
-        cell["name_holder"].addWidget(name_label, 1)
-
-        # Stats leaf: laff + beans, aligned to the outer edge.
-        for lbl in (tab.laff_labels[i], tab.bean_labels[i]):
-            lbl.show()
-        clear_layout(cell["stats_row"])
-        if cfg["left"]:
-            cell["stats_row"].addWidget(tab.laff_labels[i])
-            cell["stats_row"].addWidget(tab.bean_labels[i])
-            cell["stats_row"].addStretch(1)
-        else:
-            cell["stats_row"].addStretch(1)
-            cell["stats_row"].addWidget(tab.laff_labels[i])
-            cell["stats_row"].addWidget(tab.bean_labels[i])
+        for leaf in ("name_row", "tray_lay", "stack_r1", "stack_r2"):
+            clear_layout(cell[leaf])
+        cell["meta_stacked"] = None
+        for w in (name_label, *tab._stat_labels(i)):
+            w.setParent(cell["meta_host"])
+        self._route_meta(i, cell, force=True)
 
         # Apply all metric-derived sizes/fonts/icons (defaults to scale 1.0).
         self._size_cell(i, cell)
@@ -1482,8 +1589,18 @@ class _CompactLayout(QWidget):
         cell["toggle_row"].setSpacing(toggle_gap)
         cell["ctrl_col"].setSpacing(m.icon_px(10))
         cell["body_row"].setSpacing(m.icon_px(10))
-        cell["stats_row"].setSpacing(m.icon_px(16))
-        cell["meta_col"].setSpacing(m.icon_px(5))
+        cell["meta_col"].setSpacing(m.icon_px(7))
+        cell["name_row"].setSpacing(m.icon_px(10))
+        cell["tray_lay"].setSpacing(m.icon_px(13))
+        cell["stack_r1"].setSpacing(m.icon_px(14))
+        cell["stack_r2"].setSpacing(m.icon_px(14))
+        cell["stack_col"].setSpacing(m.icon_px(4))
+        # Carve clearance on the inner (carved) side only.
+        clear = m.cutout_r
+        if cell["cfg"]["left"]:
+            cell["meta_row"].setContentsMargins(0, 0, clear, 0)
+        else:
+            cell["meta_row"].setContentsMargins(clear, 0, 0, 0)
 
         # Painted body radii/border + portrait ring scale.
         cell["bg"].apply_metrics(m)
@@ -1541,17 +1658,147 @@ class _CompactLayout(QWidget):
         name_font.setBold(True)
         name_label.setFont(name_font)
 
-        # Stats fonts + glyph icons + height cap.
-        stat_size = round(m.font_pt(15))
-        stat_icon = QSize(m.icon_px(16), m.icon_px(16))
+        # Counter heights + fonts/icons (per-mode sizes live in _style_meta_mode).
         stat_h = m.icon_px(22)
-        for lbl in (tab.laff_labels[i], tab.bean_labels[i]):
+        for lbl in tab._stat_labels(i):
             lbl.setFixedHeight(stat_h)
-            lbl.setIconSize(stat_icon)
-            stat_font = QFont()
-            stat_font.setPixelSize(stat_size)
-            stat_font.setWeight(QFont.DemiBold)
+        self._style_meta_mode(i, cell)
+        # Lock the meta block to the taller (stacked) layout's height so the
+        # card does not resize when the layout switches or when counters
+        # arrive: name line + gap + two counter lines + their row gap.
+        name_h = QFontMetrics(name_font).height()
+        cell["meta_host"].setFixedHeight(
+            name_h + m.icon_px(7) + stat_h + m.icon_px(4) + stat_h)
+        # Fonts and clearance changed -> re-decide the meta layout.
+        self._route_meta(i, cell)
+
+    # ── Name + counters (wallet tray / stacked) ─────────────────────────────
+    def refresh_meta(self, slot: int, present=None) -> None:
+        """Re-decide slot `slot`'s meta layout after its name or counters
+        changed (MultitoonTab calls this from its label refreshes). `present`
+        is the (laff, beans, bank, tokens) visibility ABOUT to be applied, so
+        the decision lands before the labels are shown; None reads the
+        labels' current hidden state."""
+        if not (0 <= slot < len(self._slot_to_cell)):
+            return
+        cell = self._cells[self._slot_to_cell[slot]]
+        self._route_meta(slot, cell, present=present)
+
+    def _meta_wants_stack(self, slot: int, cell: dict, present) -> bool:
+        """True when the tray layout does not fit the clearance box (cell
+        width minus padding minus the carve clearance): either the name would
+        push laff off the name line, or the capsule itself is wider than the
+        box (big bank balances). Geometric, not a name-length rule, and
+        measured from font metrics / size hints so it is decided during
+        layout, never after a paint."""
+        tab = self._tab
+        m = self._metrics
+        avail = cell["cell"].width() - 2 * m.card_pad - m.cutout_r
+        if avail <= 0:
+            return False  # not laid out yet; keep the tray until there is a width
+        laff, *currencies = tab._stat_labels(slot)
+        if present[0]:
+            name_label, _ = tab.toon_labels[slot]
+            name_w = QFontMetrics(name_label.font()).horizontalAdvance(name_label.fullText())
+            if name_w + cell["name_row"].spacing() + laff.sizeHint().width() > avail:
+                return True
+        cells = [lbl.sizeHint().width() for lbl, on in zip(currencies, present[1:]) if on]
+        if cells:
+            tray_w = (sum(cells) + m.icon_px(13) * (len(cells) - 1)
+                      + 2 * m.icon_px(12))
+            if tray_w > avail:
+                return True
+        return False
+
+    def _route_meta(self, slot: int, cell: dict, force: bool = False,
+                    present=None) -> None:
+        """Place the name + four counters into the tray leaves or the stacked
+        leaves. Only re-routes when the decision flips (or `force`); the tray
+        capsule paint follows whichever currency cells are showing. Showing a
+        label activates every ancestor layout synchronously, so callers that
+        are about to show labels pass `present` and route FIRST - otherwise a
+        tray that is about to stack would push the window's minimum width."""
+        tab = self._tab
+        if slot >= len(tab.laff_labels):
+            return
+        if present is None:
+            present = tuple(not lbl.isHidden() for lbl in tab._stat_labels(slot))
+        stacked = self._meta_wants_stack(slot, cell, present)
+        if force or stacked != cell["meta_stacked"]:
+            cell["meta_stacked"] = stacked
+            left = cell["cfg"]["left"]
+            name_label, _ = tab.toon_labels[slot]
+            laff, beans, bank, tokens = tab._stat_labels(slot)
+            for leaf in ("name_row", "tray_lay", "stack_r1", "stack_r2"):
+                self._unroute(cell[leaf])
+            if stacked:
+                # Line 1 - live state: laff, beans on hand.
+                # Line 2 - stored totals: bank, tokens.
+                cell["name_row"].addWidget(name_label, 1)
+                self._fill_row(cell["stack_r1"], (laff, beans), left)
+                self._fill_row(cell["stack_r2"], (bank, tokens), left)
+            else:
+                # Laff rides the name line (baseline-ish: bottoms aligned);
+                # the three currencies share the capsule.
+                if left:
+                    cell["name_row"].addWidget(name_label, 0)
+                    cell["name_row"].addWidget(laff, 0, Qt.AlignBottom)
+                    cell["name_row"].addStretch(1)
+                else:
+                    cell["name_row"].addStretch(1)
+                    cell["name_row"].addWidget(name_label, 0)
+                    cell["name_row"].addWidget(laff, 0, Qt.AlignBottom)
+                for lbl in (beans, bank, tokens):
+                    cell["tray_lay"].addWidget(lbl)
+            self._style_meta_mode(slot, cell)
+        cell["meta_host"].set_tray_visible(
+            (not cell["meta_stacked"]) and any(present[1:]))
+
+    @staticmethod
+    def _unroute(layout) -> None:
+        """Empty a meta leaf layout WITHOUT reparenting its widgets (they all
+        stay children of the meta host); drops stretch items too."""
+        while layout.count():
+            layout.takeAt(0)
+
+    @staticmethod
+    def _fill_row(row, widgets, left: bool) -> None:
+        if left:
+            for w in widgets:
+                row.addWidget(w)
+            row.addStretch(1)
+        else:
+            row.addStretch(1)
+            for w in widgets:
+                row.addWidget(w)
+
+    def _style_meta_mode(self, slot: int, cell: dict) -> None:
+        """Per-mode counter type + glyph sizes: 15px/600 text throughout (the
+        handoff's 14.5px inside the tray is not an integer pixel size; 15 is
+        the app's stat size), a 15px laff heart, and currency glyphs at 16px
+        on the stacked lines / 15px inside the tray."""
+        tab = self._tab
+        m = self._metrics
+        if slot >= len(tab.laff_labels):
+            return
+        laff, *currencies = tab._stat_labels(slot)
+        stacked = bool(cell["meta_stacked"])
+        stat_font = QFont()
+        stat_font.setPixelSize(round(m.font_pt(15)))
+        stat_font.setWeight(QFont.DemiBold)
+        laff.setFont(stat_font)
+        laff.setIconSize(QSize(m.icon_px(15), m.icon_px(15)))
+        cur_px = m.icon_px(16 if stacked else 15)
+        for lbl in currencies:
             lbl.setFont(stat_font)
+            lbl.setIconSize(QSize(cur_px, cur_px))
+        # The capsule's padding (12 x 4) only exists while the tray holds the
+        # cells; an empty layout still reports its margins as minimum size.
+        if stacked:
+            cell["tray_lay"].setContentsMargins(0, 0, 0, 0)
+        else:
+            cell["tray_lay"].setContentsMargins(m.icon_px(12), m.icon_px(4),
+                                                m.icon_px(12), m.icon_px(4))
 
     # ── Brand / per-slot render ──────────────────────────────────────────────
     def set_card_brand(self, i: int, game: str | None, enabled: bool = False) -> None:
@@ -1719,13 +1966,18 @@ class _CompactLayout(QWidget):
             "background: transparent; border: none; "
             f"color: rgba({name_rgb.red()},{name_rgb.green()},{name_rgb.blue()},{name_a:.3f});"
         )
+        # Cell height is QSS-owned: the retired full layout's stat style
+        # carried `min-height: 0`, and once a stylesheet has set a widget's
+        # geometry Qt resets that geometry on every later stylesheet that
+        # omits it - which silently undid the pinwheel's setFixedHeight.
+        stat_h = self._metrics.icon_px(22)
         stat_style = (
             "background: transparent; border: none; text-align: left; "
             f"padding: 0; color: rgba({stat_rgb.red()},{stat_rgb.green()},{stat_rgb.blue()},{stat_a:.3f}); "
-            "font-weight: 600;"
+            f"font-weight: 600; min-height: {stat_h}px; max-height: {stat_h}px;"
         )
-        tab.laff_labels[i].setStyleSheet(stat_style)
-        tab.bean_labels[i].setStyleSheet(stat_style)
+        for lbl in tab._stat_labels(i):
+            lbl.setStyleSheet(stat_style)
         tab._apply_keep_alive_dim_progress(i, progress)
 
     # ── Control chrome owned by the layout ───────────────────────────────────
@@ -1749,6 +2001,8 @@ class _CompactLayout(QWidget):
                 f"QFrame#ka_pill_{cell_idx} {{ background: {glass_bg};"
                 f" border: 1px solid {glass_border}; border-radius: {radius}px; }}"
             )
+            # The wallet tray shares the keep-alive capsule's glass.
+            cell["meta_host"].set_glass(glass_bg, glass_border)
 
     def _style_keyset(self, i: int) -> None:
         sel = self._tab.set_selectors[i]
@@ -2378,5 +2632,9 @@ class _CompactLayout(QWidget):
                 if cell["cell"] is obj:
                     self._position_cell_bg(cell)
                     self._position_status_dot(cell)
+                    # Width-driven: the same name that stacks on a narrow
+                    # card gets the tray back on a wider one. Decided here,
+                    # on the resize, so it lands before the next paint.
+                    self._route_meta(cell["content_slot"], cell)
                     break
         return super().eventFilter(obj, event)

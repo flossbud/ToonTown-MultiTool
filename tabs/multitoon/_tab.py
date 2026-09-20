@@ -18,7 +18,7 @@ from utils.theme_manager import (
     resolve_theme, get_theme_colors, apply_card_shadow,
     make_chat_icon, make_click_sync_icon, make_click_sync_warning_icon,
     make_refresh_icon, make_stopwatch_icon,
-    make_heart_icon, make_jellybean_icon,
+    make_heart_icon, make_jellybean_icon, make_bean_jar_icon, make_token_icon,
     get_set_color, SmoothProgressBar, make_section_label,
 )
 from utils.shared_widgets import PulsingDot, ElidingLabel
@@ -1399,7 +1399,9 @@ class MultitoonTab(QWidget):
     _toon_laffs_ready  = Signal(list)
     _toon_max_laffs_ready = Signal(list)
     _toon_beans_ready  = Signal(list)
-    _toon_data_merge_ready = Signal(list, list, list, list, list, list, list)
+    _toon_bank_ready   = Signal(list)
+    _toon_tokens_ready = Signal(list)
+    _toon_data_merge_ready = Signal(list, list, list, list, list, list, list, list, list)
     _cc_toon_info_ready = Signal(list, list)  # (window_ids, list[CCToonInfo | None])
     keep_alive_updated = Signal()
     dot_state_changed = Signal(int, str)
@@ -1429,7 +1431,9 @@ class MultitoonTab(QWidget):
         self._last_refresh_monotonic = float("-inf")
         self.toon_labels = []       # list of (name_label, status_dot)
         self.laff_labels = []       # list of QLabels showing laff
-        self.bean_labels = []       # list of QLabels showing beans
+        self.bean_labels = []       # list of QLabels showing beans on hand (jar)
+        self.bank_labels = []       # list of QLabels showing banked beans
+        self.token_labels = []      # list of QLabels showing Cartoonival tokens (TTR event)
         self.slot_badges = []       # list of QLabel badges
         self.game_badges = []       # list of QLabel game badges
         self.toon_buttons = []
@@ -1466,6 +1470,8 @@ class MultitoonTab(QWidget):
         self.toon_laffs       = [None] * 4
         self.toon_max_laffs   = [None] * 4
         self.toon_beans       = [None] * 4
+        self.toon_bank        = [None] * 4
+        self.toon_tokens      = [None] * 4
         self._refresh_gen     = 0
         self._toon_fetch_inflight_keys = set()
         self._active_profile  = -1  # no profile active initially
@@ -1517,6 +1523,8 @@ class MultitoonTab(QWidget):
         self._toon_laffs_ready.connect(self._apply_toon_laffs)
         self._toon_max_laffs_ready.connect(self._apply_toon_max_laffs)
         self._toon_beans_ready.connect(self._apply_toon_beans)
+        self._toon_bank_ready.connect(self._apply_toon_bank)
+        self._toon_tokens_ready.connect(self._apply_toon_tokens)
         self._toon_data_merge_ready.connect(self._apply_merged_toon_data)
         self._cc_toon_info_ready.connect(self._apply_cc_toon_info)
 
@@ -1662,32 +1670,24 @@ class MultitoonTab(QWidget):
             game_badge.hide()
             self.game_badges.append(game_badge)
 
-            laff_lbl = QPushButton(" ---")
-            laff_lbl.setIcon(make_heart_icon(16))
-            laff_lbl.setObjectName("laff_lbl")
-            laff_lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
-            laff_lbl.setToolTip("Laff")
-            # Reserve the stats-row height even while hidden, so the card is a
-            # CONSISTENT size whether or not toon data has loaded. Without this the
-            # row collapses pre-data and the card grows ~one row taller when stats
-            # arrive - which clips a card sized before its data (e.g. entering
-            # transparent mode before the API responds).
-            _laff_sp = laff_lbl.sizePolicy()
-            _laff_sp.setRetainSizeWhenHidden(True)
-            laff_lbl.setSizePolicy(_laff_sp)
-            laff_lbl.hide()
-            self.laff_labels.append(laff_lbl)
-
-            bean_lbl = QPushButton(" ---")
-            bean_lbl.setIcon(make_jellybean_icon(16))
-            bean_lbl.setObjectName("bean_lbl")
-            bean_lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
-            bean_lbl.setToolTip("Bank Jellybeans")
-            _bean_sp = bean_lbl.sizePolicy()
-            _bean_sp.setRetainSizeWhenHidden(True)
-            bean_lbl.setSizePolicy(_bean_sp)
-            bean_lbl.hide()
-            self.bean_labels.append(bean_lbl)
+            # The four per-toon counters: laff (vitals) plus the three
+            # currencies. Hidden until data lands; the pinwheel's meta block
+            # reserves its own height so the card does not grow when they
+            # arrive. The token label keys off PRESENCE (None = absent), so
+            # a CC toon or an off-season TTR toon never shows a "0".
+            for registry, icon, obj_name, tip in (
+                (self.laff_labels, make_heart_icon(16), "laff_lbl", "Laff"),
+                (self.bean_labels, make_jellybean_icon(16), "bean_lbl", "Jellybeans on hand"),
+                (self.bank_labels, make_bean_jar_icon(16), "bank_lbl", "Jellybeans in the bank"),
+                (self.token_labels, make_token_icon(16), "token_lbl", "Cartoonival Tokens"),
+            ):
+                lbl = QPushButton(" ---")
+                lbl.setIcon(icon)
+                lbl.setObjectName(obj_name)
+                lbl.setAttribute(Qt.WA_TransparentForMouseEvents)
+                lbl.setToolTip(tip)
+                lbl.hide()
+                registry.append(lbl)
 
             btn = ScalePushButton("Enable")
             btn.setCheckable(True)
@@ -2652,9 +2652,12 @@ class MultitoonTab(QWidget):
                 cc_wids = [wid for wid in wids if registry.get_game_for_window(wid) == "cc"]
 
                 if ttr_wids and ttr_enabled:
-                    names, styles, colors, laffs, max_laffs, beans = get_toon_names_by_slot(len(ttr_wids), ttr_wids)
+                    (names, styles, colors, laffs, max_laffs,
+                     beans, bank, tokens) = get_toon_names_by_slot(len(ttr_wids), ttr_wids)
                     if gen == self._refresh_gen:
-                        self._toon_data_merge_ready.emit(list(ttr_wids), list(names), list(styles), list(colors), list(laffs), list(max_laffs), list(beans))
+                        self._toon_data_merge_ready.emit(
+                            list(ttr_wids), list(names), list(styles), list(colors),
+                            list(laffs), list(max_laffs), list(beans), list(bank), list(tokens))
 
                 if cc_wids and cc_enabled:
                     def _cc_data_callback(infos):
@@ -2754,6 +2757,8 @@ class MultitoonTab(QWidget):
         self.toon_laffs = [None] * 4
         self.toon_max_laffs = [None] * 4
         self.toon_beans = [None] * 4
+        self.toon_bank = [None] * 4
+        self.toon_tokens = [None] * 4
         for i in range(4):
             if i < len(self.slot_badges):
                 self.slot_badges[i].set_dna(None)
@@ -3416,6 +3421,8 @@ class MultitoonTab(QWidget):
                 old_laffs   = list(self.toon_laffs)
                 old_maxlaffs= list(self.toon_max_laffs)
                 old_beans   = list(self.toon_beans)
+                old_bank    = list(self.toon_bank)
+                old_tokens  = list(self.toon_tokens)
 
                 for new_idx, wid in enumerate(window_ids):
                     if new_idx >= 4: break
@@ -3434,6 +3441,8 @@ class MultitoonTab(QWidget):
                         self.toon_laffs[new_idx] = old_laffs[old_idx]
                         self.toon_max_laffs[new_idx] = old_maxlaffs[old_idx]
                         self.toon_beans[new_idx] = old_beans[old_idx]
+                        self.toon_bank[new_idx] = old_bank[old_idx]
+                        self.toon_tokens[new_idx] = old_tokens[old_idx]
                         
                         if new_idx < len(self.slot_badges):
                             self.slot_badges[new_idx].set_dna(old_styles[old_idx])
@@ -3468,6 +3477,8 @@ class MultitoonTab(QWidget):
                 self.toon_laffs[i] = None
                 self.toon_max_laffs[i] = None
                 self.toon_beans[i] = None
+                self.toon_bank[i] = None
+                self.toon_tokens[i] = None
                 
                 if getattr(self, 'rapid_fire_enabled', None) is not None:
                     self.rapid_fire_enabled[i] = False
@@ -3514,7 +3525,10 @@ class MultitoonTab(QWidget):
             self._last_captured_toon[key] = (toon_name, dna, laff)
 
     @Slot(list, list, list, list, list, list, list)
-    def _apply_merged_toon_data(self, target_wids, names, styles, colors, laffs, max_laffs, beans):
+    def _apply_merged_toon_data(self, target_wids, names, styles, colors, laffs, max_laffs,
+                                beans, bank=None, tokens=None):
+        bank = bank if bank is not None else [None] * len(names)
+        tokens = tokens if tokens is not None else [None] * len(names)
         wids = list(self.window_manager.ttr_window_ids) if hasattr(self, 'window_manager') and self.window_manager else []
         for source_idx, wid in enumerate(target_wids):
             if wid in wids:
@@ -3537,6 +3551,8 @@ class MultitoonTab(QWidget):
                         self.toon_laffs[global_idx] = laffs[source_idx]
                         self.toon_max_laffs[global_idx] = max_laffs[source_idx]
                         self.toon_beans[global_idx] = beans[source_idx]
+                        self.toon_bank[global_idx] = bank[source_idx] if source_idx < len(bank) else None
+                        self.toon_tokens[global_idx] = tokens[source_idx] if source_idx < len(tokens) else None
                         
                         if global_idx < len(self.slot_badges):
                             self.slot_badges[global_idx].set_dna(styles[source_idx] if styles and source_idx < len(styles) else None)
@@ -3574,10 +3590,7 @@ class MultitoonTab(QWidget):
                 # data path (_apply_merged_toon_data -> _refresh_toon_stats_labels)
                 # will re-show the laff/bean labels on the next poll cycle.
                 self.toon_names[global_idx] = None
-                if global_idx < len(self.laff_labels):
-                    self.laff_labels[global_idx].hide()
-                if global_idx < len(self.bean_labels):
-                    self.bean_labels[global_idx].hide()
+                self._hide_stat_labels(global_idx)
                 self._set_chat_button_visible(global_idx, False)
                 if global_idx < len(self.slot_badges):
                     self.slot_badges[global_idx].set_toon_name(None)
@@ -3596,10 +3609,7 @@ class MultitoonTab(QWidget):
 
             # Hide TTR-only widgets for CC slots: CC log data doesn't expose
             # laff/bean stats, and the chat button is not yet integrated for CC.
-            if global_idx < len(self.laff_labels):
-                self.laff_labels[global_idx].hide()
-            if global_idx < len(self.bean_labels):
-                self.bean_labels[global_idx].hide()
+            self._hide_stat_labels(global_idx)
             self._set_chat_button_visible(global_idx, False)
 
             # Apply portrait (CC paint mode in both layouts since the
@@ -3630,13 +3640,15 @@ class MultitoonTab(QWidget):
 
         self._refresh_toon_name_labels()
 
-    def _on_toon_names_received(self, names, styles, colors, laffs, max_laffs, beans):
+    def _on_toon_names_received(self, names, styles, colors, laffs, max_laffs, beans, bank, tokens):
         self._toon_names_ready.emit(list(names))
         self._toon_styles_ready.emit(list(styles))
         self._toon_colors_ready.emit(list(colors))
         self._toon_laffs_ready.emit(list(laffs))
         self._toon_max_laffs_ready.emit(list(max_laffs))
         self._toon_beans_ready.emit(list(beans))
+        self._toon_bank_ready.emit(list(bank))
+        self._toon_tokens_ready.emit(list(tokens))
 
     @Slot(list)
     def _apply_toon_names(self, names: list):
@@ -3712,38 +3724,75 @@ class MultitoonTab(QWidget):
             self.toon_beans[i] = bean
         self._refresh_toon_stats_labels()
 
+    @Slot(list)
+    def _apply_toon_bank(self, bank: list):
+        for i, val in enumerate(bank):
+            self.toon_bank[i] = val
+        self._refresh_toon_stats_labels()
+
+    @Slot(list)
+    def _apply_toon_tokens(self, tokens: list):
+        for i, val in enumerate(tokens):
+            self.toon_tokens[i] = val
+        self._refresh_toon_stats_labels()
+
+    def _stat_labels(self, i: int) -> tuple:
+        """(laff, beans, bank, tokens) labels for slot `i`."""
+        return (self.laff_labels[i], self.bean_labels[i],
+                self.bank_labels[i], self.token_labels[i])
+
+    def _hide_stat_labels(self, i: int) -> None:
+        """Hide every counter of slot `i` (CC slots have no companion stats)."""
+        if i < len(self.laff_labels):
+            for lbl in self._stat_labels(i):
+                lbl.hide()
+        self._notify_meta_changed(i)
+
+    def _notify_meta_changed(self, i: int | None = None, present=None) -> None:
+        """Tell the pinwheel that slot `i`'s name/counters changed so it can
+        re-decide the wallet-tray vs stacked meta layout (None = every slot).
+        `present` is the counter visibility about to be applied (see
+        _refresh_toon_stats_labels)."""
+        layout = getattr(self, "_compact", None)
+        if layout is None or not hasattr(layout, "refresh_meta"):
+            return
+        for idx in (range(4) if i is None else (i,)):
+            layout.refresh_meta(idx, present)
+
     @Slot()
     def _refresh_toon_stats_labels(self):
         for i in range(len(self.laff_labels)):
-            laff_lbl = self.laff_labels[i]
-            bean_lbl = self.bean_labels[i]
+            laff_lbl, bean_lbl, bank_lbl, token_lbl = self._stat_labels(i)
 
             # Only show if we have data for the toon
             window_available = i < len(self._last_window_ids)
             has_data =  self.toon_names[i] is not None
 
+            present = [False, False, False, False]
             if window_available and has_data:
-                # Update Laff
+                # Laff is the one counter that shows a pair.
                 claff = self.toon_laffs[i]
                 mlaff = self.toon_max_laffs[i]
                 if claff is not None and mlaff is not None:
-                    laff_lbl.setIcon(make_heart_icon(16))
                     laff_lbl.setText(f" {claff}/{mlaff}")
-                    laff_lbl.show()
-                else:
-                    laff_lbl.hide()
-                
-                # Update Beans
-                cbeans = self.toon_beans[i]
-                if cbeans is not None:
-                    bean_lbl.setIcon(make_jellybean_icon(16))
-                    bean_lbl.setText(f" {cbeans:,}")
-                    bean_lbl.show()
-                else:
-                    bean_lbl.hide()
-            else:
-                laff_lbl.hide()
-                bean_lbl.hide()
+                    present[0] = True
+
+                # Currencies: plain integers with thousands separators. The
+                # token cell keys off presence - 0 is a legitimate "0 tokens".
+                for k, (lbl, value) in enumerate(((bean_lbl, self.toon_beans[i]),
+                                                  (bank_lbl, self.toon_bank[i]),
+                                                  (token_lbl, self.toon_tokens[i])), 1):
+                    if value is not None:
+                        lbl.setText(f" {value:,}")
+                        present[k] = True
+
+            # Route the meta layout with the new texts BEFORE showing anything:
+            # showing a label activates the ancestor layouts synchronously, and
+            # a tray that is about to stack would first push the window's
+            # minimum width (which a top-level window never gives back).
+            self._notify_meta_changed(i, tuple(present))
+            for lbl, on in zip((laff_lbl, bean_lbl, bank_lbl, token_lbl), present):
+                lbl.setVisible(on)
 
     @Slot()
     def _refresh_toon_name_labels(self):
@@ -3760,6 +3809,7 @@ class MultitoonTab(QWidget):
         for i, (name_label, _) in enumerate(self.toon_labels):
             display = self.toon_names[i] if self.toon_names[i] else f"Toon {i + 1}"
             name_label.setText(display)
+            self._notify_meta_changed(i)
 
     def set_compact_cc_subtitle(self, slot: int, playground, zone_name):
         """Update the Compact UI subtitle for a CC slot. Hides if both
