@@ -104,11 +104,13 @@ def title_edit_qss(is_dark: bool, accent_b: str, editing: bool) -> str:
         ring = with_alpha(accent_b, 0.6).name(QColor.HexArgb)
         fill = with_alpha(accent_b, 0.12).name(QColor.HexArgb)
         return ("QLineEdit { background: %s; border: 1px solid %s; "
-                "border-radius: 6px; padding: 0 3px; color: %s; }"
-                % (fill, ring, ink))
+                "border-radius: 6px; padding: 0 3px; margin-left: -4px; "
+                "color: %s; }" % (fill, ring, ink))
+    # margin-left cancels padding+border so the glyphs sit flush with the
+    # subtitle below, exactly where the old QLabel put them.
     return ("QLineEdit { background: transparent; "
             "border: 1px solid transparent; border-radius: 6px; "
-            "padding: 0 3px; color: %s; }" % ink)
+            "padding: 0 3px; margin-left: -4px; color: %s; }" % ink)
 
 
 def rail_menu_qss(is_dark: bool) -> str:

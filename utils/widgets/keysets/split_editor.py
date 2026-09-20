@@ -261,6 +261,8 @@ class SplitEditor(QWidget):
         self._panel = SetListPanel(is_dark, self)
         self._panel.set_selected.connect(self._select)
         self._panel.add_requested.connect(self._on_add)
+        self._panel.rename_requested.connect(self.begin_rename)
+        self._panel.delete_requested.connect(self._delete_at)
         # Centre the editor with stretch at both ends so it keeps side margins
         # in the window instead of sitting edge-to-edge.
         outer.addStretch(1)

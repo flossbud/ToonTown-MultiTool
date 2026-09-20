@@ -263,7 +263,11 @@ class SetListPanel(QFrame):
         while self._list_layout.count():
             item = self._list_layout.takeAt(0).widget()
             if item is not None:
-                item.setParent(None)
+                # Hide in place rather than setParent(None): an orphaned card
+                # is a top-level window until deleteLater runs, and a window
+                # popping into existence steals activation from the title
+                # editor a rail gesture just focused.
+                item.hide()
                 item.deleteLater()
         self._items = []
 

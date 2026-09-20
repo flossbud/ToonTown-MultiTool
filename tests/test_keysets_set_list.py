@@ -87,3 +87,12 @@ def test_context_menu_actions_for_non_default(app):
 def test_no_context_menu_for_default(app):
     p = _panel(app)
     assert p._items[0]._build_menu() is None
+
+
+def test_set_data_never_orphans_old_items_as_windows(app):
+    p = _panel(app)
+    old = list(p._items)
+    p.set_data(game_short="TTR", game_accent="#4A8FE7", sets=SETS,
+               set_names=["Default", "Renamed"], selected_index=1)
+    for item in old:
+        assert item.parent() is p and not item.isVisible()

@@ -114,3 +114,19 @@ def test_delete_at_removes_that_set(app, km):
 
 def test_rename_dialog_is_gone(app, km):
     assert not hasattr(SplitEditor, "_rename")
+
+
+def test_rail_rename_signal_starts_editing_that_set(app, km):
+    e = SplitEditor(km); e.show()
+    km.add_set("ttr"); km.add_set("ttr")
+    e.set_game("ttr", default_locked=False)
+    e._panel.rename_requested.emit(2)
+    assert e._idx == 2 and e._title.is_editing() is True
+
+
+def test_rail_delete_signal_deletes_that_set(app, km):
+    e = SplitEditor(km); e.show()
+    km.add_set("ttr"); km.add_set("ttr")
+    e.set_game("ttr", default_locked=False)
+    e._panel.delete_requested.emit(1)
+    assert km.num_sets("ttr") == 2
