@@ -15,14 +15,15 @@ from __future__ import annotations
 from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QMenu, QPushButton, QSizePolicy, QVBoxLayout,
+    QWidget,
 )
 
 from utils.shared_widgets import ElidingLabel
 from .game_meta import set_accent
 from .palette import (
     add_set_qss, rail_chip_qss, rail_header_ink, rail_item, rail_item_ink,
-    rail_panel_qss,
+    rail_menu_qss, rail_panel_qss,
 )
 
 MAX_SETS = 8
@@ -59,6 +60,7 @@ class SetListItem(QWidget):
         self._c, self._b = set_accent(index)
         self._selected = selected
         self._is_dark = is_dark
+        self._swallow_release = False
 
         self.setCursor(Qt.PointingHandCursor)
         self.setAttribute(Qt.WA_StyledBackground, False)
@@ -127,8 +129,37 @@ class SetListItem(QWidget):
         self._panel.set_selected.emit(self._index)
 
     def mouseReleaseEvent(self, e) -> None:
-        if e.button() == Qt.LeftButton and self.rect().contains(e.position().toPoint()):
+        if self._swallow_release:
+            # Trailing release of a double-click: selecting again would
+            # rebuild the rail and cancel the edit the double-click started.
+            self._swallow_release = False
+        elif e.button() == Qt.LeftButton and self.rect().contains(e.position().toPoint()):
             self._emit_click()
+        e.accept()
+
+    def mouseDoubleClickEvent(self, e) -> None:
+        if e.button() == Qt.LeftButton and self._index > 0:
+            self._swallow_release = True
+            self._panel.rename_requested.emit(self._index)
+        e.accept()
+
+    def _build_menu(self):
+        """Rename/Delete menu for a non-Default set; None for index 0."""
+        if self._index <= 0:
+            return None
+        menu = QMenu(self)
+        menu.setStyleSheet(rail_menu_qss(self._is_dark))
+        idx = self._index
+        menu.addAction("Rename", lambda: self._panel.rename_requested.emit(idx))
+        menu.addAction("Delete", lambda: self._panel.delete_requested.emit(idx))
+        return menu
+
+    def contextMenuEvent(self, e) -> None:
+        menu = self._build_menu()
+        if menu is None:
+            e.ignore()
+            return
+        menu.exec(e.globalPos())
         e.accept()
 
     # ── paint ────────────────────────────────────────────────────────────
@@ -170,6 +201,8 @@ class SetListPanel(QFrame):
 
     set_selected = Signal(int)
     add_requested = Signal()
+    rename_requested = Signal(int)
+    delete_requested = Signal(int)
     WIDTH = 266
     MAX_SETS = MAX_SETS
 
