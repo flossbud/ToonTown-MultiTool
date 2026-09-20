@@ -173,3 +173,25 @@ def test_vivid_constants_cross_pinned_to_card_palette():
     from utils import card_palette
     assert kp.VIVID_TOP_F == card_palette.VIVID_TOP_F
     assert kp.VIVID_BOT_F == card_palette.VIVID_BOT_F
+
+
+def test_title_edit_qss_rest_is_transparent_both_themes():
+    for dark in (True, False):
+        qss = kp.title_edit_qss(dark, BLUE_B, editing=False)
+        assert "background: transparent" in qss
+        assert "border: 1px solid transparent" in qss
+        assert kp.card_ink(dark) in qss
+
+
+def test_title_edit_qss_editing_uses_accent_ring():
+    qss = kp.title_edit_qss(True, BLUE_B, editing=True)
+    assert with_alpha(BLUE_B, 0.6).name(QColor.HexArgb) in qss
+    assert with_alpha(BLUE_B, 0.12).name(QColor.HexArgb) in qss
+    assert "border: 1px solid transparent" not in qss
+
+
+def test_rail_menu_qss_follows_theme():
+    dark, light = kp.rail_menu_qss(True), kp.rail_menu_qss(False)
+    assert dark != light
+    assert "QMenu" in dark and "QMenu::item:selected" in dark
+    assert kp.card_ink(False) in light

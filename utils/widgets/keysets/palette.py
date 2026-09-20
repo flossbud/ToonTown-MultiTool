@@ -95,6 +95,37 @@ def pencil_css(is_dark: bool) -> str:
             "QPushButton:hover { color: #0f172a; }")
 
 
+def title_edit_qss(is_dark: bool, accent_b: str, editing: bool) -> str:
+    """InlineNameEdit (the set title). At rest it is indistinguishable from
+    the old title QLabel: transparent, and a transparent 1px border so the
+    box does not grow when the accent ring appears in edit mode."""
+    ink = card_ink(is_dark)
+    if editing:
+        ring = with_alpha(accent_b, 0.6).name(QColor.HexArgb)
+        fill = with_alpha(accent_b, 0.12).name(QColor.HexArgb)
+        return ("QLineEdit { background: %s; border: 1px solid %s; "
+                "border-radius: 6px; padding: 0 3px; color: %s; }"
+                % (fill, ring, ink))
+    return ("QLineEdit { background: transparent; "
+            "border: 1px solid transparent; border-radius: 6px; "
+            "padding: 0 3px; color: %s; }" % ink)
+
+
+def rail_menu_qss(is_dark: bool) -> str:
+    """Context menu on a rail set card (Rename / Delete)."""
+    if is_dark:
+        return ("QMenu { background-color: #1b1e25; color: #ffffff; "
+                "border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; "
+                "padding: 4px; }"
+                "QMenu::item { padding: 5px 18px; border-radius: 5px; }"
+                "QMenu::item:selected { background-color: rgba(255,255,255,0.10); }")
+    return ("QMenu { background-color: #ffffff; color: %s; "
+            "border: 1px solid #cbd5e1; border-radius: 8px; padding: 4px; }"  # border_light
+            "QMenu::item { padding: 5px 18px; border-radius: 5px; }"
+            "QMenu::item:selected { background-color: rgba(15,23,42,0.06); }"
+            % card_ink(False))
+
+
 def field_row(active: bool, accent_b: str, is_dark: bool):
     """FieldRow (bg_css, border_css). Active accent tint is theme-independent."""
     if active:
