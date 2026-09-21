@@ -70,6 +70,22 @@ def test_import_once_runs_exactly_once(facade):
     assert f.import_once(sm, str(flat)) == 0                  # marker file honoured
 
 
+def test_import_once_is_guarded_by_the_marker_even_when_the_first_import_was_partial(facade):
+    f, store, pf, tmp_path = facade
+    flat = tmp_path / "flat"
+    flat.mkdir()
+    (flat / "dna1__portrait__512.png").write_bytes(PNG_SIGNATURE + b"old")  # "head" missing
+    sm = _Settings()
+    RecentToonsStore(sm).record("acc1", "Hiro", "ttr", "dna1")
+    first = f.import_once(sm, str(flat))
+    assert 0 < first < len(POSES)                              # partial: only "portrait" landed
+    marker = os.path.join(store.toons_root(), ".imported")
+    assert os.path.exists(marker)
+    (flat / "dna1__head__512.png").write_bytes(PNG_SIGNATURE + b"new")   # now the rest becomes available
+    assert f.import_once(sm, str(flat)) == 0                  # marker guards the second call
+    assert store.missing_poses("ttr", "Hiro", "dna1") == ["head"]  # never copied in
+
+
 def test_sweep_remembered_queues_missing_work_only(facade, qapp):
     f, store, pf, tmp_path = facade
     sm = _Settings()
