@@ -853,11 +853,25 @@ class _PoseSection(QWidget):
     silhouette_outline_changed = Signal(object, object)  # (hex or None, width key)
     silhouette_shadow_changed = Signal(object, object)   # (hex or None, softness key)
 
-    def __init__(self, dna: Optional[str], current_pose: str, saved_store=None, parent=None):
+    def __init__(
+        self,
+        game: str,
+        toon_name: str,
+        dna: Optional[str],
+        current_pose: str,
+        saved_store=None,
+        parent=None,
+    ):
         super().__init__(parent)
+        self._game = game
+        self._toon_name = toon_name
         self._dna = dna
         self._current_pose = current_pose
         self._saved_store = saved_store
+        # The per-toon render cache; set once the tile grid exists (a DNA is
+        # required to show poses at all). Reads only, plus the one sanctioned
+        # write: the refresh button's invalidate.
+        self._renders = None
         self._tiles: list[_PoseTile] = []
         self._primary_tile_list: list[_PoseTile] = []
         self._placeholder_label: Optional[QLabel] = None
@@ -893,7 +907,7 @@ class _PoseSection(QWidget):
             body_layout.addWidget(self._placeholder_label, 1)
             return
 
-        from utils.rendition_poses import POSE_NAMES, RenditionPoseFetcher
+        from utils.rendition_poses import POSE_NAMES
 
         # Primary row: 5 tiles (PRIMARY_POSES), always visible.
         primary_row = QHBoxLayout()
@@ -969,11 +983,15 @@ class _PoseSection(QWidget):
         )
         body_layout.addWidget(self._adjust_view)
 
-        # Kick off thumbnail fetches for all poses.
-        fetcher = RenditionPoseFetcher.instance()
-        fetcher.pose_ready.connect(self._on_pose_ready)
-        for pose in POSE_NAMES:
-            fetcher.request(self._dna, pose)
+        # Tiles read the per-toon render cache: a sync fill from disk now,
+        # then one tile per `render_landed` (own toon) and every tile on
+        # `set_promoted` (own toon). Connections are bound methods of this
+        # section, so the process-wide facade drops them when it dies.
+        from utils.toon_renders import ToonRenders
+        self._renders = ToonRenders.instance()
+        self._renders.render_landed.connect(self._on_render_landed)
+        self._renders.set_promoted.connect(self._on_set_promoted)
+        self._fill_tiles()
 
     def _build_header(self) -> QWidget:
         header_w = QWidget()
@@ -1086,50 +1104,70 @@ class _PoseSection(QWidget):
                     break
         self.pose_changed.emit(pose)
 
-    def _on_pose_ready(self, dna: str, pose: str, pixmap) -> None:
-        if dna != self._dna:
+    def _pixmap_from_cache(self, pose: str) -> Optional[QPixmap]:
+        """Sync read of one pose. None is not "loading": nothing on disk
+        leaves the tile in its own pending state (shimmer, then the tile's
+        own timeout), and the cache's signals fill it when art arrives. A
+        cache failure is contained the same way."""
+        if self._renders is None:
+            return None
+        try:
+            hit = self._renders.pixmap_for(self._game, self._toon_name, pose)
+        except Exception as exc:                 # noqa: BLE001
+            print(f"[ToonRenders] pose tile read failed: {exc}")
+            return None
+        return hit[0] if hit else None
+
+    def _fill_tiles(self) -> None:
+        for t in self._tiles:
+            pm = self._pixmap_from_cache(t.pose)
+            t.set_pixmap(pm)                     # None: tile shows its own pending state
+            if pm is not None and t.pose == self._current_pose and self._adjust_view is not None:
+                self._adjust_view.set_pixmap(pm)
+
+    def _on_render_landed(self, game: str, name: str, pose: str) -> None:
+        # The facade is process-wide, so this fires for every toon. Only a
+        # landing for THIS toon is worth a read, and only its tile repaints.
+        if game != self._game or name != self._toon_name:
             return
         for t in self._tiles:
             if t.pose == pose:
-                if pixmap is None or pixmap.isNull():
-                    t.set_failed()
-                else:
-                    t.set_pixmap(pixmap)
-                    if pose == self._current_pose and self._adjust_view is not None:
-                        self._adjust_view.set_pixmap(pixmap)
+                pm = self._pixmap_from_cache(pose)
+                t.set_pixmap(pm)
+                if pm is not None and pose == self._current_pose and self._adjust_view is not None:
+                    self._adjust_view.set_pixmap(pm)
                 break
 
-    def _on_tile_retry_requested(self, pose: str) -> None:
-        """Re-request a single pose thumbnail after a tile timeout/failure."""
-        if not self._dna:
+    def _on_set_promoted(self, game: str, name: str) -> None:
+        if game != self._game or name != self._toon_name:
             return
-        from utils.rendition_poses import RenditionPoseFetcher
-        RenditionPoseFetcher.instance().request(self._dna, pose)
+        self._fill_tiles()
+
+    def _on_tile_retry_requested(self, pose: str) -> None:
+        """A failed tile was clicked: ask the cache to fetch this pose first."""
+        if self._renders is None:
+            return
+        try:
+            self._renders.want(self._game, self._toon_name, pose)
+        except Exception as exc:                 # noqa: BLE001
+            print(f"[ToonRenders] pose retry failed: {exc}")
 
     def _on_refresh_clicked(self) -> None:
-        if not self._dna:
+        """The one sanctioned cache write from a widget: drop this toon's
+        current set and re-queue it at high priority. Tiles fall back to
+        their pending state and refill as the cache announces the poses."""
+        if self._renders is None:
             return
-        from utils.rendition_poses import RenditionPoseFetcher, POSE_NAMES
-        fetcher = RenditionPoseFetcher.instance()
-        fetcher.invalidate_dna(self._dna)
         for t in self._tiles:
             t.set_pixmap(None)
-        for pose in POSE_NAMES:
-            fetcher.request(self._dna, pose)
+        try:
+            self._renders.invalidate(self._game, self._toon_name)
+        except Exception as exc:                 # noqa: BLE001
+            print(f"[ToonRenders] pose refresh failed: {exc}")
 
     def _on_adjust_changed(self) -> None:
         self._transform = self._adjust_view.transform()
         self.transform_changed.emit()
-
-    def closeEvent(self, event):
-        try:
-            from utils.rendition_poses import RenditionPoseFetcher
-            RenditionPoseFetcher.instance().pose_ready.disconnect(
-                self._on_pose_ready
-            )
-        except (RuntimeError, TypeError):
-            pass
-        super().closeEvent(event)
 
 
 class _PortraitSection(QWidget):

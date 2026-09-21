@@ -121,7 +121,7 @@ def test_pose_section_expanded_grid_uses_3_columns(qapp):
     """The expanded grid (secondary poses) uses columns 0, 1, 2 only."""
     from utils.widgets.toon_customization_sections import _PoseSection, PRIMARY_POSES
 
-    section = _PoseSection(dna="dna-abc-123", current_pose="portrait")
+    section = _PoseSection("ttr", "Flossbud", dna="dna-abc-123", current_pose="portrait")
     qapp.processEvents()
 
     # The expanded widget's VBoxLayout contains a QGridLayout.
@@ -162,7 +162,7 @@ def test_pose_rows_fit_min_section_viewport(qapp):
 
     viewport = _Panel.MIN_W - _Panel.RAIL_W - 18  # ~502px
 
-    section = _PoseSection(dna="dna-abc-123", current_pose="portrait")
+    section = _PoseSection("ttr", "Flossbud", dna="dna-abc-123", current_pose="portrait")
     qapp.processEvents()
 
     # Primary row: 5 tiles + 4 inter-tile gaps (4px) + body h-margins (8+8).
@@ -207,7 +207,7 @@ def test_pose_section_inline_framing_width_fits_compact(qapp):
     set) must not exceed 527 px so the section doesn't force horizontal
     scroll in the compact panel viewport."""
     from utils.widgets.toon_customization_sections import _PoseSection
-    section = _PoseSection(dna="dna-abc-123", current_pose="portrait")
+    section = _PoseSection("ttr", "Flossbud", dna="dna-abc-123", current_pose="portrait")
     qapp.processEvents()
     # Inline framing view is built unconditionally during _build().
     assert section._adjust_view is not None, "inline framing view must be built"
@@ -250,7 +250,7 @@ def test_pose_primary_five_and_expand(qapp):
     from utils.widgets.toon_customization_sections import _PoseSection, PRIMARY_POSES
 
     assert len(PRIMARY_POSES) == 5
-    s = _PoseSection("dna-test", PRIMARY_POSES[0])
+    s = _PoseSection("ttr", "Flossbud", "dna-test", PRIMARY_POSES[0])
     qapp.processEvents()
 
     assert len(s.primary_tiles()) == 5

@@ -70,39 +70,75 @@ def test_preview_constructs_with_dna(qapp):
     assert w.dna() == "dna-test-123"
 
 
-def test_preview_set_draft_with_pose_requests_pixmap(qapp, monkeypatch):
-    """Setting a draft with a pose should ask the fetcher for that pose."""
-    requested = []
-
-    from utils.rendition_poses import RenditionPoseFetcher
-    monkeypatch.setattr(
-        RenditionPoseFetcher,
-        "request",
-        lambda self, dna, pose: requested.append((dna, pose)),
-    )
-
+def _make_preview(game="ttr", toon_name="Flossbud", dna=None, draft=None):
     from utils.widgets.card_preview_widget import CardPreviewWidget
-    w = CardPreviewWidget(
-        game="ttr", toon_name="Flossbud", draft={}, dna="dna-test-123",
-    )
-    requested.clear()  # ignore constructor-time request
-    w.set_draft({"pose": "portrait-grin"})
-    assert ("dna-test-123", "portrait-grin") in requested
+    return CardPreviewWidget(game=game, toon_name=toon_name, draft=dict(draft or {}), dna=dna)
 
 
-def test_preview_without_dna_does_not_request(qapp, monkeypatch):
-    requested = []
-    from utils.rendition_poses import RenditionPoseFetcher
-    monkeypatch.setattr(
-        RenditionPoseFetcher,
-        "request",
-        lambda self, dna, pose: requested.append((dna, pose)),
-    )
-    from utils.widgets.card_preview_widget import CardPreviewWidget
-    w = CardPreviewWidget(
-        game="ttr", toon_name="Flossbud", draft={"pose": "portrait-grin"}, dna=None,
-    )
-    assert requested == []
+def test_preview_draws_the_draft_pose_from_the_toon_cache(render_cache, qapp):
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1")
+    w = _make_preview(game="ttr", toon_name="Hiro", dna="dna1")
+    assert w._pose_pixmap is not None
+    w.set_draft({"pose": "waving"})
+    assert w._pose_pixmap is not None                               # already on disk
+
+
+def test_preview_repaints_only_when_its_own_live_pose_lands(render_cache, qapp):
+    """The facade is process-wide: a landing for another toon, or for a pose
+    the draft is not showing, must not touch this preview. The gate is the
+    LIVE pose - set_draft can change it after construction."""
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
+    w = _make_preview(game="ttr", toon_name="Hiro", dna="dna1")
+    assert w._pose_pixmap is None                                   # nothing on disk yet
+    w.set_draft({"pose": "waving"})                                 # live pose is now waving
+    complete_set(store, "ttr", "Hiro", "dna1")                      # files appear silently
+    facade.render_landed.emit("ttr", "Other", "waving")
+    assert w._pose_pixmap is None, "another toon's landing repainted this preview"
+    facade.render_landed.emit("ttr", "Hiro", "portrait")
+    assert w._pose_pixmap is None, "a landing for the constructor pose, not the live pose, repainted"
+    facade.render_landed.emit("ttr", "Hiro", "waving")
+    assert w._pose_pixmap is not None
+
+
+def test_preview_repaints_when_its_toon_is_promoted(render_cache, qapp):
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
+    w = _make_preview(game="ttr", toon_name="Hiro", dna="dna1")
+    assert w._pose_pixmap is None
+    complete_set(store, "ttr", "Hiro", "dna1")
+    facade.set_promoted.emit("ttr", "Other")
+    assert w._pose_pixmap is None, "another toon's promotion repainted this preview"
+    facade.set_promoted.emit("ttr", "Hiro")
+    assert w._pose_pixmap is not None
+
+
+@pytest.mark.parametrize("game,dna", [("ttr", None), ("cc", "dna1")])
+def test_preview_without_pose_art_never_reads_the_cache(render_cache, qapp, game, dna):
+    """No DNA, or a CC toon (no pose artwork): the preview never consults the
+    cache, even when a complete set for that name is on disk."""
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
+    complete_set(store, game, "Hiro", "dna1")
+    w = _make_preview(game=game, toon_name="Hiro", dna=dna, draft={"pose": "portrait-grin"})
+    assert w._renders is None
+    assert w._pose_pixmap is None
+    w.set_draft({"pose": "waving"})
+    assert w._pose_pixmap is None
+
+
+def test_preview_never_writes_to_the_cache(render_cache, qapp):
+    """Readers never write: constructing a preview and changing its pose must
+    not discover the DNA or queue downloads. Only the capture hook and the
+    startup sweep tell the cache what a toon wears."""
+    facade, store, pf = render_cache
+    w = _make_preview(game="ttr", toon_name="Hiro", dna="dna1")
+    w.set_draft({"pose": "waving"})
+    assert store.current_dna("ttr", "Hiro") is None
+    assert store.candidate_dna("ttr", "Hiro") is None
+    assert pf.pending_count + pf.in_flight_count == 0
 
 
 def test_preview_current_portrait_transform(qapp):

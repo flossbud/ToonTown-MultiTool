@@ -101,7 +101,6 @@ def test_reset_all_clears_silhouette_visual_state_on_pose_section(qapp, monkeypa
     state. Without this, the swatch row retains the old color and the next
     chip click re-writes silhouette back into the cleared draft."""
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    _reset_singletons()
     panel, _, _, _parent = _build(qapp, dna="dna-test-123", existing={
         "portrait": {"silhouette": {
             "outline": {"color": "#ff0000", "width": "thick"},
@@ -310,24 +309,147 @@ def test_pose_section_with_dna_builds_13_tiles(qapp):
     assert "portrait-grin" in poses
 
 
-def test_refresh_button_calls_invalidate_dna(qapp, monkeypatch):
-    """Clicking the section refresh button must invalidate cached
-    pixmaps for the current DNA."""
-    from utils.rendition_poses import RenditionPoseFetcher
-    calls = []
-    monkeypatch.setattr(
-        RenditionPoseFetcher,
-        "invalidate_dna",
-        lambda self, dna: calls.append(dna),
-    )
-    # Also stub `request` so we don't actually fetch.
-    monkeypatch.setattr(
-        RenditionPoseFetcher, "request", lambda self, dna, pose: None,
-    )
+def test_pose_tiles_fill_from_disk_and_refresh_invalidates(render_cache, qapp):
+    from tests._render_fixtures import complete_set
+    from utils.widgets.toon_customization_sections import _PoseSection
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1")
+    sec = _PoseSection("ttr", "Hiro", "dna1", "portrait")
+    assert all(t._pixmap is not None for t in sec._tiles)
+    sec._on_refresh_clicked()
+    assert store.current_dna("ttr", "Hiro") is None          # current dropped
+    assert store.candidate_dna("ttr", "Hiro") == "dna1"      # re-queued
+    assert pf.pending_count + pf.in_flight_count == len(store.poses)
+
+
+def test_refresh_button_invalidates_this_toon_in_the_cache(render_cache, qapp):
+    """The section's refresh button is the one sanctioned cache write: it
+    goes through ToonRenders.invalidate for the identity the overlay passed
+    in, drops the current set and re-queues every pose. Tiles fall back to
+    their own pending state until the poses re-land."""
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Flossbud", "dna-test-123")
     panel, _, _, _parent = _build(qapp, game="ttr", dna="dna-test-123")
     sec = panel.section("Toon")
+    assert all(t.has_pixmap() for t in sec.tiles())
     sec.click_refresh()
-    assert "dna-test-123" in calls
+    assert store.current_dna("ttr", "Flossbud") is None
+    assert store.candidate_dna("ttr", "Flossbud") == "dna-test-123"
+    assert pf.pending_count + pf.in_flight_count == len(store.poses)
+    assert all(t.is_loading() for t in sec.tiles())
+
+
+def test_pose_tiles_stay_pending_until_the_refreshed_set_promotes(render_cache, qapp):
+    """After a refresh with no previous look to fall back on, a re-landed pose
+    is a candidate file and is never shown; the tiles fill together when the
+    set promotes. Landings and promotions for other toons are ignored."""
+    from tests._render_fixtures import complete_set, real_png
+    from utils.widgets.toon_customization_sections import _PoseSection
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1")
+    sec = _PoseSection("ttr", "Hiro", "dna1", "portrait")
+    sec._on_refresh_clicked()
+    assert all(t.is_loading() for t in sec.tiles())
+    for pose in store.poses:                                   # the candidate re-lands
+        real_png(store.path_for("ttr", "Hiro", "dna1", pose))
+        assert store.mark_landed("ttr", "Hiro", "dna1", pose)
+    facade.render_landed.emit("ttr", "Other", "portrait")
+    facade.render_landed.emit("ttr", "Hiro", "portrait")
+    assert all(t.is_loading() for t in sec.tiles()), "a candidate file was shown"
+    assert store.promote_if_complete("ttr", "Hiro")
+    facade.set_promoted.emit("ttr", "Other")
+    assert all(t.is_loading() for t in sec.tiles()), "another toon's promotion filled the tiles"
+    facade.set_promoted.emit("ttr", "Hiro")
+    assert all(t.has_pixmap() for t in sec.tiles())
+
+
+def test_pose_tile_repaints_from_the_previous_look_as_its_pose_lands(render_cache, qapp):
+    """With a previous look on disk, each `render_landed` for THIS toon fills
+    that one tile (the facade serves the previous look while the refreshed
+    set is pending); the other tiles wait for their own landing."""
+    from tests._render_fixtures import complete_set
+    from utils.widgets.toon_customization_sections import _PoseSection
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1")
+    complete_set(store, "ttr", "Hiro", "dna2")                 # dna2 current, dna1 previous
+    sec = _PoseSection("ttr", "Hiro", "dna2", "portrait")
+    sec._on_refresh_clicked()
+    assert all(t.is_loading() for t in sec.tiles())
+    facade.render_landed.emit("ttr", "Other", "portrait")
+    assert all(t.is_loading() for t in sec.tiles()), "another toon's landing filled a tile"
+    facade.render_landed.emit("ttr", "Hiro", "portrait")
+    by_pose = {t.pose: t for t in sec.tiles()}
+    assert by_pose["portrait"].has_pixmap()
+    assert all(t.is_loading() for pose, t in by_pose.items() if pose != "portrait")
+    assert sec._adjust_view._preview.pixmap() is not None       # the selected pose follows
+
+
+def test_reopening_the_overlay_leaves_no_facade_connections_behind(render_cache, qapp):
+    """The facade is a process-wide singleton and the panel rebuilds its
+    preview and pose section on every open_for (deleteLater, never close()).
+    Every connection to the facade is a bound method of the widget, which
+    PySide drops when the C++ object dies: the receiver count is a constant
+    +2 (preview + section) across re-opens and returns to baseline after the
+    overlay is torn down. A lambda connection would grow this forever and
+    call into dead widgets."""
+    from PySide6.QtCore import QCoreApplication, QEvent, SIGNAL
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Flossbud", "dna-test-123")
+
+    def landed():
+        return pf.receivers(SIGNAL("render_landed(QString,QString,QString)"))
+
+    def promoted():
+        return pf.receivers(SIGNAL("set_promoted(QString,QString)"))
+
+    def flush():
+        for _ in range(5):
+            QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+            qapp.processEvents()
+
+    base_l, base_p = landed(), promoted()
+    panel, mgr, overlay, parent = _build(qapp, game="ttr", dna="dna-test-123")
+    flush()
+    assert (landed() - base_l, promoted() - base_p) == (2, 2)
+    overlay.open_for(slot=0, game="ttr", toon_name="Flossbud", manager=mgr, dna="dna-test-123")
+    flush()
+    assert (landed() - base_l, promoted() - base_p) == (2, 2), "the torn-down pair leaked"
+    assert all(t.has_pixmap() for t in overlay._panel.section("Toon").tiles())
+    overlay.deleteLater()
+    parent.deleteLater()
+    flush()
+    assert (landed() - base_l, promoted() - base_p) == (0, 0)
+    facade.render_landed.emit("ttr", "Flossbud", "portrait")   # nothing left to reach
+    facade.set_promoted.emit("ttr", "Flossbud")
+
+
+def test_pose_tiles_show_pending_state_when_nothing_is_on_disk(render_cache, qapp):
+    """Nothing on disk is not a cache failure: tiles keep their own pending
+    state (shimmer, then the tile's own timeout), and the section never
+    discovers the DNA on the cache's behalf (readers never write)."""
+    from utils.widgets.toon_customization_sections import _PoseSection
+    facade, store, pf = render_cache
+    sec = _PoseSection("ttr", "Hiro", "dna1", "portrait")
+    assert all(t.is_loading() for t in sec.tiles())
+    assert store.current_dna("ttr", "Hiro") is None
+    assert store.candidate_dna("ttr", "Hiro") is None
+    assert pf.pending_count + pf.in_flight_count == 0
+
+
+def test_pose_section_selects_current_pose_into_the_framing_view(render_cache, qapp):
+    """The framing preview shows the currently selected pose from the cache,
+    at construction and when the user picks another tile."""
+    from tests._render_fixtures import complete_set
+    from utils.widgets.toon_customization_sections import _PoseSection
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1")
+    sec = _PoseSection("ttr", "Hiro", "dna1", "portrait")
+    assert sec._adjust_view._preview.pixmap() is not None
+    by_pose = {t.pose: t for t in sec.tiles()}
+    sec._on_tile_clicked("waving")
+    assert sec._adjust_view._preview.pixmap() is by_pose["waving"]._pixmap
 
 
 def test_pose_adjust_preview_initial_state(qapp):
@@ -570,12 +692,6 @@ def test_chip_row_set_current_does_not_emit(qapp):
     assert row.current() == "thick"
 
 
-def _reset_singletons():
-    """Reset module-level singletons for clean test fixtures."""
-    from utils.rendition_poses import RenditionPoseFetcher
-    RenditionPoseFetcher._instance = None
-
-
 def test_portrait_section_no_longer_exposes_circle_outline_api(qapp):
     """circle_outline_changed Signal and set_circle_outline are removed;
     fill + pattern signals must still be present."""
@@ -594,7 +710,7 @@ def test_portrait_section_no_longer_exposes_circle_outline_api(qapp):
 def test_pose_section_emits_silhouette_outline_changed(qapp):
     from utils.widgets.toon_customization_sections import _PoseSection
     from PySide6.QtTest import QSignalSpy
-    sec = _PoseSection(dna="dna-test", current_pose="portrait")
+    sec = _PoseSection("ttr", "Flossbud", dna="dna-test", current_pose="portrait")
     spy = QSignalSpy(sec.silhouette_outline_changed)
     sec.set_silhouette_outline("#ffd84a", "thick")
     assert spy.count() == 1
@@ -605,7 +721,6 @@ def test_pose_section_emits_silhouette_outline_changed(qapp):
 
 def test_panel_silhouette_outline_writes_to_draft(qapp, monkeypatch, tmp_path):
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    _reset_singletons()
     panel, _, _, _parent = _build(qapp, dna="dna-test-123")
     panel.set_silhouette_outline("#ffd84a", "medium")
     draft = panel.draft()
@@ -616,7 +731,6 @@ def test_panel_silhouette_outline_writes_to_draft(qapp, monkeypatch, tmp_path):
 
 def test_panel_silhouette_outline_default_color_removes_subobject(qapp, monkeypatch, tmp_path):
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    _reset_singletons()
     panel, _, _, _parent = _build(qapp, dna="dna-test-123", existing={
         "portrait": {"silhouette": {"outline": {"color": "#fff", "width": "thin"}}},
     })
@@ -628,7 +742,6 @@ def test_panel_silhouette_outline_default_color_removes_subobject(qapp, monkeypa
 
 def test_panel_silhouette_shadow_writes_to_draft(qapp, monkeypatch, tmp_path):
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    _reset_singletons()
     panel, _, _, _parent = _build(qapp, dna="dna-test-123")
     panel.set_silhouette_shadow("#000000", "strong")
     draft = panel.draft()
@@ -639,7 +752,6 @@ def test_panel_silhouette_shadow_writes_to_draft(qapp, monkeypatch, tmp_path):
 
 def test_panel_silhouette_shadow_default_color_removes_subobject(qapp, monkeypatch, tmp_path):
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    _reset_singletons()
     panel, _, _, _parent = _build(qapp, dna="dna-test-123", existing={
         "portrait": {"silhouette": {"shadow": {"color": "#000", "softness": "medium"}}},
     })
@@ -650,7 +762,6 @@ def test_panel_silhouette_shadow_default_color_removes_subobject(qapp, monkeypat
 
 def test_panel_silhouette_shadow_and_outline_coexist(qapp, monkeypatch, tmp_path):
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    _reset_singletons()
     panel, _, _, _parent = _build(qapp, dna="dna-test-123")
     panel.set_silhouette_outline("#ffd84a", "thin")
     panel.set_silhouette_shadow("#000000", "subtle")
@@ -664,7 +775,6 @@ def test_panel_removing_shadow_preserves_existing_outline(qapp, monkeypatch, tmp
     clearing shadow must leave outline in place. Guards the prune-empty
     cleanup in _on_silhouette_shadow."""
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    _reset_singletons()
     panel, _, _, _parent = _build(qapp, dna="dna-test-123", existing={
         "portrait": {"silhouette": {
             "outline": {"color": "#ffd84a", "width": "medium"},
@@ -681,7 +791,6 @@ def test_adjust_view_reset_clears_silhouette_alongside_transform(qapp, monkeypat
     """The inline framing Reset button must wipe both the transform AND
     the silhouette outline/shadow under portrait."""
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    _reset_singletons()
     panel, _, _, _parent = _build(qapp, dna="dna-test-123", existing={
         "portrait": {
             "transform": {"zoom": 1.5, "offset_x": 0.1, "offset_y": 0.0, "rotate": 30.0},
@@ -704,7 +813,6 @@ def test_reset_all_resets_framing_sliders_to_neutral(qapp, monkeypatch, tmp_path
     position (zoom=1.0, rotate=0). Without this, the sliders keep their
     prior values and the next nudge re-applies a stale transform."""
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    _reset_singletons()
     panel, _, _, _parent = _build(
         qapp,
         game="ttr",
@@ -738,7 +846,7 @@ def test_set_transform_from_draft_syncs_sliders(qapp):
     first slider nudge then snapped the preview back to the stale slider value."""
     from utils.widgets.toon_customization_sections import _PoseSection
 
-    sec = _PoseSection(dna="dna-test-slider-sync", current_pose="portrait")
+    sec = _PoseSection("ttr", "Flossbud", dna="dna-test-slider-sync", current_pose="portrait")
     # The _PoseAdjustView is always built when a DNA is set.
     assert sec._adjust_view is not None
 
