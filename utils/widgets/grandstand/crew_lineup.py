@@ -14,8 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-from PySide6.QtCore import QPointF, QRect, QTimer, Qt
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtCore import QPointF, QRect, QRectF, QTimer, Qt
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QWidget
 
 import utils.motion as motion
@@ -80,9 +80,14 @@ class Slot:
 
 
 class CrewLineup(QWidget):
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None,
+                 corner_radius: float = 0.0) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        # Figures hang below the floor (BUST_BOTTOM, STANDING_BOTTOM), so the
+        # stage's own edge cuts them. With a radius that edge is the hero's
+        # rounded outline rather than this widget's square one.
+        self._corner_radius = float(corner_radius)
         self._slots: list[Slot] = []
         self._is_dark = True
         self._anim = QTimer(self)
@@ -263,6 +268,11 @@ class CrewLineup(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        if self._corner_radius > 0:
+            outline = QPainterPath()
+            outline.addRoundedRect(QRectF(self.rect()),
+                                   self._corner_radius, self._corner_radius)
+            painter.setClipPath(outline)
         for slot in self._slots:
             self._paint_slot(painter, slot)
         painter.end()

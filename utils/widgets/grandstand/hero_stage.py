@@ -10,7 +10,9 @@ contract, not a stylistic preference: pinned by test_the_count_appears_nowhere.
 from __future__ import annotations
 
 from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPixmap
+from PySide6.QtGui import (
+    QColor, QLinearGradient, QPainter, QPainterPath, QPixmap,
+)
 from PySide6.QtWidgets import (
     QFrame, QGraphicsDropShadowEffect, QLabel, QPushButton, QVBoxLayout,
     QWidget,
@@ -23,7 +25,6 @@ from utils.widgets.grandstand.game_selector import ART
 COPY_LEFT = 26
 COPY_W = 340
 PLAY_H = 46
-CREW_LEFT = 352
 HERO_RADIUS = 9
 
 GAME_SHORT = {"ttr": "TTR", "cc": "CC"}
@@ -36,6 +37,12 @@ class HeroStage(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("gs_hero")
+        # A QFrame is a styled-background widget, so the app's global
+        # `QWidget { background-color }` rule would paint a square block
+        # under the rounded base — the page colour, or in light mode this
+        # widget's own copy of the page gradient. paintEvent covers the whole
+        # rounded outline itself; nothing may land outside it.
+        self.setStyleSheet("#gs_hero { background: transparent; }")
         self._game = "ttr"
         self._is_dark = True
         self._main: str | None = None
@@ -88,7 +95,12 @@ class HeroStage(QFrame):
         self.official_button.clicked.connect(self.official_clicked.emit)
 
         from utils.widgets.grandstand.crew_lineup import CrewLineup
-        self.crew_area = CrewLineup(self)
+        # The crew spans the whole hero (resizeEvent) and draws over the copy
+        # block when the window is narrow. It is transparent to the mouse
+        # (CrewLineup sets that on itself), so Play and the official-launcher
+        # link underneath still take the click.
+        self.crew_area = CrewLineup(self, corner_radius=HERO_RADIUS)
+        self.crew_area.raise_()
 
         self.set_game("ttr")
         self.set_party([])
@@ -235,15 +247,20 @@ class HeroStage(QFrame):
         self.official_button.adjustSize()
         bw = self.official_button.width()
         self.official_button.move(self.width() - bw - 14, 14)
-        self.crew_area.setGeometry(CREW_LEFT, 0,
-                                   max(0, self.width() - CREW_LEFT), self.height())
+        # The whole stage: CREW_SLOTS right-anchors up to four figures, and a
+        # narrower child clipped the leftmost one at its own edge.
+        self.crew_area.setGeometry(0, 0, self.width(), self.height())
 
     def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         p.save()
-        p.setClipRect(r)
+        # The art is a rectangle: clipping to the rounded outline is what
+        # keeps the corners round once it is painted over the base.
+        outline = QPainterPath()
+        outline.addRoundedRect(r, HERO_RADIUS, HERO_RADIUS)
+        p.setClipPath(outline)
         p.setPen(Qt.NoPen)
         p.setBrush(gp.hero_base(self._game, self._is_dark))
         p.drawRoundedRect(r, HERO_RADIUS, HERO_RADIUS)
