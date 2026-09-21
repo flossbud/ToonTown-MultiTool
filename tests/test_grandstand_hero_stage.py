@@ -5,7 +5,15 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QColor, QImage, QRegion
+from PySide6.QtWidgets import QWidget
 
+import utils.widgets.grandstand.crew_lineup as crew_module
+from tests._render_fixtures import complete_set
+from utils.widgets.grandstand.crew_lineup import (
+    BUST, BUST_BOTTOM, CREW_SLOTS, CrewLineup,
+)
 from utils.widgets.grandstand.hero_stage import HeroStage
 from utils.widgets.grandstand.model import LineupEntry
 
@@ -177,3 +185,111 @@ def test_lineup_is_mounted_and_reached_through_the_hero(hero):
 
     assert isinstance(hero.crew_area, CrewLineup)
     assert [slot.account_id for slot in hero.crew_area.slots()] == ["a"]
+
+
+# ── layout: the crew spans the hero (live 2026-09-21) ───────────────────────
+
+def _lineup(aid, treatment="bust"):
+    return LineupEntry(
+        account_id=aid, game="ttr", toon_name=aid.title(), treatment=treatment,
+        pose="portrait", dna="7400", icon_stem=None, species="dog",
+        accent="#4a8fe7", initial=aid[:1].upper(),
+    )
+
+
+def _transparent_render(widget):
+    """The widget's own paint, children included, over nothing: `grab()`
+    fills the window background first, so it can never show alpha 0."""
+    img = QImage(widget.size(), QImage.Format_ARGB32_Premultiplied)
+    img.fill(Qt.transparent)
+    widget.render(img, QPoint(), QRegion(), QWidget.RenderFlag.DrawChildren)
+    return img
+
+
+def test_the_crew_spans_the_whole_hero(hero, qapp):
+    """The crew was a child at x=352 spanning only the hero's right part, so
+    a right-anchored lineup ran off its left edge. It now covers the hero and
+    sits above the copy block — and Play must still take the click, which
+    means the crew is transparent to the mouse (childAt skips such widgets)."""
+    hero.resize(820, 232)
+    qapp.processEvents()
+    assert hero.crew_area.geometry() == hero.rect()
+    assert hero.children()[-1] is hero.crew_area        # topmost sibling
+    assert hero.crew_area.testAttribute(Qt.WA_TransparentForMouseEvents)
+    play = hero.play_button
+    centre = play.mapTo(hero, play.rect().center())
+    assert hero.crew_area.geometry().contains(centre)   # the crew covers Play
+    assert hero.childAt(centre) is play
+
+
+def test_four_busts_are_never_clipped_at_the_left(hero, render_cache, qapp):
+    """Live: four selected toons, the leftmost bust cut off at a vertical
+    edge. CREW_SLOTS[4] right-anchors the first bust 336 px in and a bust is
+    196 wide, so with the crew 820 - 352 = 468 wide its paint box began at
+    -64 — inside the hero, outside the crew widget, clipped."""
+    _facade, store, _pf = render_cache
+    colours = {"a": "#ff0000", "b": "#0000ff", "c": "#0000ff", "d": "#0000ff"}
+    for aid, colour in colours.items():
+        complete_set(store, "ttr", aid.title(), "7400", colour)
+    hero.resize(820, 232)
+    qapp.processEvents()
+    hero.set_lineup([_lineup(aid) for aid in "abcd"])
+    crew = hero.crew_area
+    crew.settle()
+    qapp.processEvents()
+
+    first = crew.slots()[0]
+    slot_w, slot_h = first.size
+    assert (first.right, slot_w) == (CREW_SLOTS[4][0], BUST[0]) == (336, 196)
+    old_crew_width = 820 - 352                 # the pre-fix child at CREW_LEFT
+    assert old_crew_width - first.right - slot_w == -64      # the defect
+    x = crew.width() - first.right - slot_w
+    assert x >= 0, f"leftmost bust starts at {x}: clipped by the crew's edge"
+
+    y = crew.height() - slot_h - BUST_BOTTOM
+    probe = crew.grab().toImage().pixelColor(int(x) + slot_w // 2,
+                                             y + slot_h // 2)
+    assert probe == QColor(colours["a"]), (
+        f"leftmost bust's centre painted {probe.name()}, not its own render")
+
+
+def test_the_crew_respects_the_hero_corners(hero, render_cache, qapp,
+                                            monkeypatch):
+    """A bust hangs 14 px below the floor (BUST_BOTTOM), so the right-anchored
+    slot's box reaches the hero's bottom-right corner. The crew spans the hero
+    now, so its square widget edge would poke out of the hero's rounded
+    outline; the crew clips itself to HERO_RADIUS instead. The ±3° tilt keeps
+    the real slot 4 px shy of the exact corner pixel, so this stage is
+    untilted: the box must actually cover the pixel for the clip to matter."""
+    monkeypatch.setattr(crew_module, "ROT", [0, 0, 0, 0])
+    _facade, store, _pf = render_cache
+    for aid in "abcd":
+        complete_set(store, "ttr", aid.title(), "7400", "#ff0000")
+    entries = [_lineup(aid) for aid in "abcd"]
+    hero.resize(820, 232)
+    qapp.processEvents()
+    hero.set_lineup(entries)
+    crew = hero.crew_area
+    crew.settle()
+    qapp.processEvents()
+    w, h = crew.width(), crew.height()
+    last = crew.slots()[-1]
+    assert last.right == 0 and last.rotation == 0
+    box_bottom = (h - last.size[1] - BUST_BOTTOM) + last.size[1]
+    assert box_bottom > h                                # hangs below the floor
+
+    img = _transparent_render(crew)
+    assert img.pixelColor(w - 2, h - 2).alpha() == 0, (
+        f"corner painted {img.pixelColor(w - 2, h - 2).name(QColor.HexArgb)}")
+    inside = img.pixelColor(w - 12, h - 12)
+    assert inside == QColor("#ff0000")
+
+    # Control: the same stage with no radius (a standalone lineup's default)
+    # does paint that corner pixel — so it is the clip that removed it.
+    bare = CrewLineup()
+    bare.resize(w, h)
+    bare.set_entries(entries)
+    bare.settle()
+    qapp.processEvents()
+    assert _transparent_render(bare).pixelColor(w - 2, h - 2) == QColor("#ff0000")
+    bare.deleteLater()

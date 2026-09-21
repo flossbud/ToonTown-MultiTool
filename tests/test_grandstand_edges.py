@@ -294,6 +294,59 @@ def test_launch_tab_delete_prunes_the_mounted_party(monkeypatch, qapp):
         tab.close()
 
 
+def test_a_short_window_scrolls_the_tab_rather_than_clipping_the_cards(
+        monkeypatch, qapp):
+    """Live 2026-09-21: the cards' bottom borders were cut off. The shelf's
+    scroll area (vertical bar OFF) reported a minimum height of a few rows of
+    nothing, so on a short window the layout squeezed it below its 244 px
+    strip and the 216 px cards ran past the viewport — measured at 852x640:
+    viewport 190, card bottoms at 232 — while the tab's outer scroll area,
+    which nothing below it constrained, never engaged (maximum 0). The shelf
+    now floors its scroll area at the strip (plus the horizontal bar when it
+    shows), so the outer area scrolls instead."""
+    from PySide6.QtCore import QPoint, QRect
+    monkeypatch.setenv("TTMT_GRANDSTAND", "1")
+    monkeypatch.setattr(LaunchTab, "_start_keyring_probe", lambda self: None)
+    accounts = [
+        SimpleNamespace(id=aid, game="ttr", label=aid, username=aid,
+                        password="pw", launcher_token="")
+        for aid in ("a", "b", "c", "d")
+    ]
+    cred = MagicMock(keyring_available=True, keyring_probe_pending=False)
+    cred.get_accounts_metadata.side_effect = lambda: list(accounts)
+    cred.get_account_metadata.side_effect = lambda index: accounts[index]
+    settings = MagicMock()
+    settings.get.side_effect = lambda _key, default=None: default
+    tab = LaunchTab(cred_manager=cred, settings_manager=settings)
+    try:
+        tab.resize(852, 640)
+        tab.show()
+        qapp.processEvents()
+        qapp.processEvents()
+        shelf = tab.grandstand.shelf
+        viewport = shelf.scroll.viewport()
+        strip_min = shelf._strip.minimumSizeHint().height()
+        assert strip_min == 244                      # cards 216 + 16 + 12
+        cards = shelf.cards()
+        assert len(cards) == 4
+        for card in cards:
+            origin = card.mapTo(viewport, QPoint(0, 0))
+            box = QRect(origin, card.size())
+            assert viewport.rect().contains(box), (
+                f"card {card.account_id()} runs to {box.bottom() + 1} in a "
+                f"{viewport.height()} px viewport")
+        assert viewport.height() >= strip_min
+        overflow = tab._scroll.verticalScrollBar().maximum()
+        assert overflow > 0                          # the outer area took over
+        # The defect, in this window: without the floor the outer area stays
+        # at 0 and the shelf loses exactly those `overflow` pixels, leaving a
+        # viewport shorter than the strip (190 < 244 at 852x640).
+        assert viewport.height() - overflow < strip_min
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
 # ── degraded art (spec §7) ──────────────────────────────────────────────────
 
 def test_an_account_with_no_dna_still_paints(view, qapp):

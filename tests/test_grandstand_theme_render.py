@@ -12,16 +12,16 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPalette, QPixmap
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QColor, QImage, QPalette, QPixmap, QRegion
+from PySide6.QtWidgets import QApplication, QWidget
 
 from tests._render_fixtures import complete_set
 from utils import theme_manager
 from utils.widgets.grandstand import palette as gp
 from utils.widgets.grandstand.card_shelf import CardShelf
 from utils.widgets.grandstand.game_selector import GameSelector
-from utils.widgets.grandstand.hero_stage import COPY_LEFT, HeroStage
+from utils.widgets.grandstand.hero_stage import COPY_LEFT, HERO_RADIUS, HeroStage
 from utils.widgets.grandstand.model import RosterEntry
 from utils.widgets.grandstand.roster_card import (
     CARD_H, CARD_W, PORTRAIT, RosterCard,
@@ -302,4 +302,34 @@ def test_disabled_play_keeps_its_translucency(qapp):
         assert expected in style
         assert len(expected) == 9
         assert expected.lower() != "#ffffffff"
+    hero.close()
+
+
+def test_the_hero_art_does_not_fill_the_corners(themed_app):
+    """Live 2026-09-21: the hero's corners were square. paintEvent drew the
+    rounded base, then clipped to the plain rect and painted the art over it
+    — square. Rendered alone into a transparent image (`QWidget.render` with
+    DrawChildren only, since `grab()` fills the window background and the hero
+    is opaque RGB32 to it), nothing may land outside the rounded outline. Under
+    the real stylesheet that also means the hero's own styled background: the
+    global `QWidget { background-color }` rule would otherwise paint a square
+    block (the page colour, or in light mode the hero's OWN copy of the page
+    gradient) under the rounded base."""
+    _qapp, theme = themed_app
+    hero = HeroStage()
+    hero.set_game("ttr")
+    hero.resize(818, 232)
+    hero.show()
+    QApplication.instance().processEvents()
+    img = QImage(hero.size(), QImage.Format_ARGB32_Premultiplied)
+    img.fill(Qt.transparent)
+    hero.render(img, QPoint(), QRegion(), QWidget.RenderFlag.DrawChildren)
+    w, h = hero.width(), hero.height()
+    for x, y in ((1, 1), (w - 2, 1), (1, h - 2), (w - 2, h - 2)):
+        px = img.pixelColor(x, y)
+        assert px.alpha() == 0, (
+            f"{theme}: hero painted {px.name(QColor.HexArgb)} at ({x},{y}), "
+            "outside its rounded outline")
+    inside = img.pixelColor(HERO_RADIUS + 2, HERO_RADIUS + 2)
+    assert inside.alpha() == 255, f"{theme}: inside the outline is not opaque"
     hero.close()

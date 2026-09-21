@@ -160,12 +160,16 @@ class CardShelf(QWidget):
         bar = self.scroll.horizontalScrollBar()
         bar.valueChanged.connect(self._fades.update)
         bar.rangeChanged.connect(lambda *_: self._fades.update())
+        # The bar's height comes and goes with its range, and the strip's
+        # floor must include it.
+        bar.rangeChanged.connect(self._fit_strip)
 
         self.add_tile = _AddTile(self._strip)
         self.add_tile.clicked.connect(self.add_account_clicked.emit)
         self._row.insertWidget(self._row.count() - 1, self.add_tile)
 
         self.apply_theme(True)
+        self._fit_strip()
         self._fades.setGeometry(self.scroll.geometry())
         self._fades.raise_()
 
@@ -274,6 +278,18 @@ class CardShelf(QWidget):
         anim.start(QPropertyAnimation.DeleteWhenStopped)
         self._shake_anim = anim
         return True
+
+    def _fit_strip(self, *_) -> None:
+        """The scroll area is never shorter than its strip. Its own minimum
+        size hint is a few rows of nothing (its vertical bar is off), so a
+        short window would squeeze the viewport below the cards and cut their
+        bottoms; with this floor the launch tab's outer scroll area scrolls
+        instead. The horizontal bar, when it shows, sits inside the area's
+        height, so it counts."""
+        bar = self.scroll.horizontalScrollBar()
+        bar_h = bar.sizeHint().height() if bar.maximum() > bar.minimum() else 0
+        self.scroll.setMinimumHeight(
+            self._strip.minimumSizeHint().height() + bar_h)
 
     # ── edge fades ─────────────────────────────────────────────────────────
 
