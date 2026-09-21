@@ -5,6 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
+from unittest.mock import MagicMock
 
 from utils.widgets.grandstand.party import LaunchParty
 from utils.widgets.grandstand.view import (
@@ -122,6 +123,44 @@ def test_legacy_sections_still_show_when_the_flag_is_off(qapp, monkeypatch):
         qapp.processEvents()
         assert tab.ttr_section.isVisible() is True
         assert tab.cc_section.isVisible() is True
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_populated_demo_fixtures_feed_the_grandstand_shelf(
+        qapp, monkeypatch):
+    """With both flags set the shelf shows the fixture accounts, and each
+    card carries its fixture state — the way every card state is put on
+    screen for milestone validation."""
+    monkeypatch.setenv("TTMT_GRANDSTAND", "1")
+    monkeypatch.setenv("TTMT_DEMO_LAUNCH_TAB", "populated")
+    from tabs.launch_tab import LaunchTab
+    from utils.launch_tab_demo_mode import get_demo_fixtures
+
+    monkeypatch.setattr(LaunchTab, "_start_keyring_probe", lambda self: None)
+    cred = MagicMock(keyring_available=True, keyring_probe_pending=False)
+    cred.get_accounts_metadata.return_value = []
+    settings = MagicMock()
+    settings.get.side_effect = lambda _key, default=None: default
+    tab = LaunchTab(cred_manager=cred, settings_manager=settings)
+    try:
+        fixtures = get_demo_fixtures()
+        assert fixtures is not None
+        for game in ("ttr", "cc"):
+            if tab.grandstand.active_game() != game:
+                tab.grandstand.selector.game_clicked.emit(game)
+            cards = tab.grandstand.shelf.cards()
+            assert [(card.entry().label, card.state()) for card in cards] == [
+                (fixture["label"], fixture["state"])
+                for fixture in fixtures[game]
+            ]
+        # The failure detail rides along with the state, not just its name.
+        failed = next(f for f in fixtures["ttr"] if f["state"] == "failed")
+        tab.grandstand.selector.game_clicked.emit("ttr")
+        card = next(c for c in tab.grandstand.shelf.cards()
+                    if c.entry().label == failed["label"])
+        assert card.raw_error() == failed["raw"]
     finally:
         tab.shutdown()
         tab.close()

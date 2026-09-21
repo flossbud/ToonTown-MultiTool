@@ -434,6 +434,9 @@ class LaunchTab(QWidget):
         self._page: dict[str, int] = {"ttr": 0, "cc": 0}
         self._keyring_banner = None
         self._grandstand_credential_kind = "ok"
+        # Demo fixtures (TTMT_DEMO_LAUNCH_TAB) when Grandstand renders them
+        # instead of the credential store; None on the real roster.
+        self._grandstand_demo = None
         self._probe_thread = None
         self._probe_worker = None
         self._pending_2fa: set = set()
@@ -1044,17 +1047,29 @@ class LaunchTab(QWidget):
         self._render_section(game)
         self.refresh_theme()  # re-applies Multitoon dot_state last (see refresh_theme)
 
+    @staticmethod
+    def _demo_accounts(demo, game: str) -> list[tuple[str, dict]]:
+        """(account_id, fixture) pairs for one game's demo fixtures, in fixture
+        order. Both launchers key their demo slots by these ids."""
+        return [(fixture.get("id", f"demo_{game}_{i}"), fixture)
+                for i, fixture in enumerate(demo.get(game, []))]
+
+    @staticmethod
+    def _demo_slot(account_id: str, fixture: dict) -> AccountSlot:
+        """A slot pinned to the fixture's state; no worker ever moves it."""
+        return AccountSlot(account_id=account_id,
+                           state=fixture.get("state", LoginState.IDLE),
+                           message=fixture.get("message", ""),
+                           raw_error=fixture.get("raw", ""))
+
     def _build_demo(self, demo):
         for game in ("ttr", "cc"):
             self._slots[game] = {}
             self._loading[game] = []
             accounts = demo.get(game, [])
             dicts = []
-            for i, acct in enumerate(accounts):
-                aid = acct.get("id", f"demo_{game}_{i}")
-                slot = AccountSlot(account_id=aid, state=acct.get("state", "idle"),
-                                   message=acct.get("message", ""),
-                                   raw_error=acct.get("raw", ""))
+            for aid, acct in self._demo_accounts(demo, game):
+                slot = self._demo_slot(aid, acct)
                 self._slots[game][aid] = slot
                 dicts.append({"label": acct.get("label", ""), "username": acct.get("username", ""),
                               "id": aid, "state": slot.state, "message": slot.message,
@@ -1085,8 +1100,9 @@ class LaunchTab(QWidget):
                 w.deleteLater()
         self._keyring_banner = None
 
+        demo = get_demo_fixtures()
         if grandstand_enabled():
-            self._build_grandstand()
+            self._build_grandstand(demo)
             return
 
         # Banner (pending / warning / darwin-locked) at top. On darwin a denied
@@ -1101,7 +1117,6 @@ class LaunchTab(QWidget):
             self._keyring_banner = KeyringWarningBanner(self.cred_manager, parent=self)
             self._layout.addWidget(self._keyring_banner, alignment=Qt.AlignHCenter)
 
-        demo = get_demo_fixtures()
         if demo is not None:
             self._build_demo(demo)
             self._rebuild_sections_container()
@@ -1114,14 +1129,29 @@ class LaunchTab(QWidget):
         self._render_section("cc")
         self._layout.addStretch()
 
-    def _build_grandstand(self) -> None:
+    def _build_grandstand(self, demo=None) -> None:
         """Mount the Grandstand roster view (TTMT_GRANDSTAND=1). The old
         section/tile path is left entirely untouched behind the flag until the
         cut-over task removes it."""
         self._party = LaunchParty(self.settings_manager)
-        self._reconcile_slots()
+        self._grandstand_demo = demo
+        if demo is None:
+            self._reconcile_slots()
+            valid_ids = {
+                game: {a.id for a in self._ordered_accounts(game)}
+                for game in ("ttr", "cc")
+            }
+        else:
+            # Demo fixtures replace the credential store as the data source;
+            # the same fixture module drives both launchers.
+            valid_ids = {}
+            for game in ("ttr", "cc"):
+                self._slots[game] = {
+                    aid: self._demo_slot(aid, fixture)
+                    for aid, fixture in self._demo_accounts(demo, game)}
+                valid_ids[game] = set(self._slots[game])
         for game in ("ttr", "cc"):
-            self._party.prune(game, {a.id for a in self._ordered_accounts(game)})
+            self._party.prune(game, valid_ids[game])
 
         self.grandstand = GrandstandView(self._party, log=self.log, parent=self)
         self._push_credential_state()
@@ -1151,6 +1181,20 @@ class LaunchTab(QWidget):
         """Build RosterEntry values for one game and hand them to the view."""
         from utils.widgets.grandstand.model import roster_entry
         entries = []
+        if self._grandstand_demo is not None:
+            # Fixture slots are pinned, so their state is read directly rather
+            # than through _effective_state (no launcher or timer to consult).
+            for aid, fixture in self._demo_accounts(self._grandstand_demo, game):
+                slot = self._slots[game][aid]
+                entries.append(roster_entry(
+                    account_id=aid, game=game,
+                    label=fixture.get("label", ""),
+                    username=fixture.get("username", ""), rec=None, entry={},
+                    state=slot.state, message=slot.message,
+                    raw_error=slot.raw_error, is_primary=False))
+            self.grandstand.set_accounts(game, entries)
+            self.grandstand.set_main_toon_names(game, {})
+            return
         for acct in self._ordered_accounts(game):
             slot = self._slots[game].get(acct.id)
             st, msg, raw = self._effective_state(game, slot) if slot else ("idle", "", "")
