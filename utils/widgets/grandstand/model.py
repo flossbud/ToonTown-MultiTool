@@ -38,6 +38,11 @@ FULL_BODY_POSES = frozenset({"waving", "crying", "cake-topper"})
 # each toon's saved pose is (handoff §4.1d).
 CARD_POSE = "head"
 
+# The hero stage likewise draws one pose for every toon, so the crew reads as
+# one group rather than a mix of each toon's saved customizer pose. A pose in
+# FULL_BODY_POSES would stand the crew on the floor; a bust sits lower.
+STAGE_POSE = "portrait"
+
 # The hero has four slots (handoff §4.1b).
 LINEUP_SLOTS = 4
 
@@ -158,9 +163,9 @@ def lineup_entries(entries: list[RosterEntry],
 
     out: list[LineupEntry] = []
     for e in chosen:
-        # The entry's pose was resolved once in roster_entry; it is the one
-        # source of truth for both the card and the stage.
-        pose = e.pose
+        # The saved customizer pose (e.pose) feeds the badge, radial and
+        # preview; the stage draws STAGE_POSE for everyone.
+        pose = STAGE_POSE
         if e.toon_name is None:
             treatment, stem = "placeholder", None
         elif e.portrait_mode == PORTRAIT_SPECIES:
