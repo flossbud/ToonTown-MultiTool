@@ -90,6 +90,8 @@ class RosterEntry:
 class LineupEntry:
     """Everything one hero slot draws."""
     account_id: str
+    game: str
+    toon_name: Optional[str]
     treatment: str            # standing | bust | cameo | placeholder
     pose: str
     dna: str
@@ -168,7 +170,8 @@ def lineup_entries(entries: list[RosterEntry],
         else:
             treatment, stem = "bust", None
         out.append(LineupEntry(
-            account_id=e.account_id, treatment=treatment, pose=pose, dna=e.dna,
+            account_id=e.account_id, game=e.game, toon_name=e.toon_name,
+            treatment=treatment, pose=pose, dna=e.dna,
             icon_stem=stem, species=e.species, accent=e.accent,
             initial=e.initial))
     return out

@@ -193,3 +193,9 @@ def test_unknown_species_has_no_icon_stem():
 def test_ids_absent_from_the_entry_list_are_skipped():
     out = gm.lineup_entries([_entry("a")], ["ghost", "a"])
     assert [e.account_id for e in out] == ["a"]
+
+
+def test_lineup_entries_carry_the_toons_identity():
+    entries = [_entry("a", toon="Hiro")]
+    (le,) = gm.lineup_entries(entries, ["a"])
+    assert (le.game, le.toon_name) == ("ttr", "Hiro")

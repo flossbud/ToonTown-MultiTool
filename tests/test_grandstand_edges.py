@@ -11,7 +11,6 @@ import pytest
 
 from tabs.launch_tab import LaunchTab
 from utils.credential_copy import KEYRING_WARNING_COPY
-from utils.rendition_poses import RenditionPoseFetcher
 from utils.widgets.grandstand.card_shelf import CardShelf
 from utils.widgets.grandstand.model import RosterEntry
 from utils.widgets.grandstand.party import LaunchParty
@@ -19,11 +18,9 @@ from utils.widgets.grandstand.view import GrandstandView
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
-    monkeypatch.setattr(RenditionPoseFetcher, "cached_pixmap",
-                        lambda self, dna, pose: None)
-    monkeypatch.setattr(RenditionPoseFetcher, "request",
-                        lambda self, dna, pose: None)
+def _isolated_renders(render_cache):
+    """Every card asks the toon render cache for a head pose. `render_cache`
+    (tests/conftest.py) installs an isolated cache whose downloads never run."""
 
 
 def _entry(aid, toon="Flossbud", species="cat", game="ttr", dna="7400"):

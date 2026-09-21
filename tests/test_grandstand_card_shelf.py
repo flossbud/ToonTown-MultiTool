@@ -10,21 +10,15 @@ from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QApplication
 
 import utils.motion as motion
-from utils.rendition_poses import RenditionPoseFetcher
 from utils.widgets.grandstand import palette as gp
 from utils.widgets.grandstand.card_shelf import HEAD_H, CardShelf
 from utils.widgets.grandstand.model import RosterEntry
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
-    """Every card builds a RosterCard, which asks the rendition fetcher for a
-    head pose. Isolate that HTTP boundary — same pattern as
-    tests/test_grandstand_crew_lineup.py."""
-    monkeypatch.setattr(RenditionPoseFetcher, "cached_pixmap",
-                        lambda self, dna, pose: None)
-    monkeypatch.setattr(RenditionPoseFetcher, "request",
-                        lambda self, dna, pose: None)
+def _isolated_renders(render_cache):
+    """Every card asks the toon render cache for a head pose. `render_cache`
+    (tests/conftest.py) installs an isolated cache whose downloads never run."""
 
 
 def _entry(aid):

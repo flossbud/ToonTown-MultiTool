@@ -20,7 +20,7 @@ from PySide6.QtWidgets import QWidget
 
 import utils.motion as motion
 from utils.cc_race_assets import load_race_pixmap
-from utils.rendition_poses import RenditionPoseFetcher
+from utils.toon_renders import ToonRenders
 from utils.toon_silhouette import paint_race_silhouette
 from utils.widgets.grandstand import palette as gp
 from utils.widgets.grandstand.model import LineupEntry
@@ -64,7 +64,8 @@ class Slot:
     opacity: float = 1.0
     lift: float = 0.0
     is_new: bool = True
-    requested_key: Optional[tuple[str, str]] = None
+    game: str = "ttr"
+    toon_name: Optional[str] = None
     pixmap: Optional[QPixmap] = field(default=None, repr=False)
 
     @property
@@ -89,8 +90,9 @@ class CrewLineup(QWidget):
         self._anim.timeout.connect(self._tick)
         self._elapsed = 0
 
-        self._fetcher = RenditionPoseFetcher.instance()
-        self._fetcher.pose_ready.connect(self._on_pose_ready)
+        self._renders = ToonRenders.instance()
+        self._renders.render_landed.connect(self._on_render_landed)
+        self._renders.set_promoted.connect(self._on_set_promoted)
 
     # ── inbound ────────────────────────────────────────────────────────────
 
@@ -113,6 +115,8 @@ class CrewLineup(QWidget):
             if slot is None:
                 slot = Slot(
                     account_id=entry.account_id,
+                    game=entry.game,
+                    toon_name=entry.toon_name,
                     treatment=entry.treatment,
                     pose=entry.pose,
                     dna=entry.dna,
@@ -134,6 +138,7 @@ class CrewLineup(QWidget):
                 )
                 slot.treatment, slot.pose = entry.treatment, entry.pose
                 slot.dna = entry.dna
+                slot.game, slot.toon_name = entry.game, entry.toon_name
                 slot.icon_stem = entry.icon_stem
                 slot.species = entry.species
                 slot.accent, slot.initial = entry.accent, entry.initial
@@ -185,29 +190,29 @@ class CrewLineup(QWidget):
     # ── art ────────────────────────────────────────────────────────────────
 
     def _load_art(self, slot: Slot) -> None:
-        """Use cached art synchronously and request only cache misses."""
-        slot.requested_key = None
         if slot.treatment == "cameo":
-            slot.pixmap = (
-                load_race_pixmap(slot.icon_stem) if slot.icon_stem else None
-            )
+            slot.pixmap = load_race_pixmap(slot.icon_stem) if slot.icon_stem else None
             return
-        if slot.treatment == "placeholder" or not slot.dna:
+        if slot.treatment == "placeholder" or not slot.dna or not slot.toon_name:
             slot.pixmap = None
             return
-        slot.pixmap = self._fetcher.cached_pixmap(slot.dna, slot.pose)
-        if slot.pixmap is None:
-            slot.requested_key = (slot.dna, slot.pose)
-            self._fetcher.request(*slot.requested_key)
+        hit = self._renders.pixmap_for(slot.game, slot.toon_name, slot.pose)
+        slot.pixmap = hit[0] if hit else None
 
-    def _on_pose_ready(self, dna: str, pose: str, pixmap) -> None:
-        """Ignore asynchronous replies no current slot is waiting for."""
+    def _on_render_landed(self, game: str, name: str, pose: str) -> None:
         touched = False
-        key = (dna, pose)
         for slot in self._slots:
-            if slot.requested_key == key:
-                slot.pixmap = pixmap
-                slot.requested_key = None
+            if slot.game == game and slot.toon_name == name and slot.pose == pose:
+                self._load_art(slot)
+                touched = True
+        if touched:
+            self.update()
+
+    def _on_set_promoted(self, game: str, name: str) -> None:
+        touched = False
+        for slot in self._slots:
+            if slot.game == game and slot.toon_name == name:
+                self._load_art(slot)
                 touched = True
         if touched:
             self.update()

@@ -19,8 +19,8 @@ from PySide6.QtWidgets import (
     QApplication, QFrame, QLabel, QPushButton, QToolButton, QWidget,
 )
 
-from utils.rendition_poses import RenditionPoseFetcher
 from utils.shared_widgets import PulsingDot
+from utils.toon_renders import PREVIOUS_LOOK_TOOLTIP, ToonRenders
 from utils.toon_silhouette import paint_race_silhouette
 from utils.widgets.account_tile import summarize_error
 from utils.widgets.grandstand import palette as gp
@@ -170,8 +170,10 @@ class RosterCard(QFrame):
         self._message = ""
         self._raw_error = ""
 
-        self._fetcher = RenditionPoseFetcher.instance()
-        self._fetcher.pose_ready.connect(self._on_pose_ready)
+        self._renders = ToonRenders.instance()
+        self._renders.render_landed.connect(self._on_render_landed)
+        self._renders.set_promoted.connect(self._on_set_promoted)
+        self._tier: Optional[str] = None
 
         self.ribbon = _Chip(24, self, on_focus=self._refresh_controls)
         self.ribbon.setObjectName("card_ribbon")
@@ -333,23 +335,39 @@ class RosterCard(QFrame):
         e = self._entry
         return e is not None and e.portrait_mode == PORTRAIT_RENDER and bool(e.dna)
 
+    def portrait_tier(self) -> Optional[str]:
+        """`"current"`, `"previous"` (older outfit shown while a newer one
+        downloads), or None when nothing is drawn."""
+        return self._tier
+
     def _load_portrait(self) -> None:
-        self._pixmap = None
+        self._pixmap, self._tier = None, None
+        self.setToolTip("")
         if not self._wants_render():
             return
         e = self._entry
-        self._pixmap = self._fetcher.cached_pixmap(e.dna, CARD_POSE)
-        if self._pixmap is None:
-            self._fetcher.request(e.dna, CARD_POSE)
-
-    def _on_pose_ready(self, dna: str, pose: str, pixmap) -> None:
-        # The fetcher is a process-wide singleton, so this fires for every
-        # card. Re-check what THIS entry wants now, not what it wanted then.
-        if not self._wants_render():
+        hit = self._renders.pixmap_for(e.game, e.toon_name or "", CARD_POSE)
+        if hit is None:
             return
-        if dna == self._entry.dna and pose == CARD_POSE:
-            self._pixmap = pixmap
-            self.update()
+        self._pixmap, self._tier = hit
+        if self._tier == "previous":
+            self.setToolTip(PREVIOUS_LOOK_TOOLTIP)
+
+    def _on_render_landed(self, game: str, name: str, pose: str) -> None:
+        # The facade is process-wide, so this fires for every card. Only a
+        # landing of THIS card's pose for THIS toon is worth a repaint.
+        e = self._entry
+        if e is None or pose != CARD_POSE or game != e.game or name != (e.toon_name or ""):
+            return
+        self._load_portrait()
+        self.update()
+
+    def _on_set_promoted(self, game: str, name: str) -> None:
+        e = self._entry
+        if e is None or game != e.game or name != (e.toon_name or ""):
+            return
+        self._load_portrait()
+        self.update()
 
     # ── interaction ────────────────────────────────────────────────────────
 

@@ -93,3 +93,32 @@ def _no_real_hotkey_grabs(monkeypatch):
     # Close the wake pipe __init__ opened so the stubbed provider leaks no fds.
     monkeypatch.setattr(X11GlobalHotkeys, "start",
                         lambda self: (self._close_wake_pipe(), False)[1])
+
+
+@pytest.fixture
+def render_cache(qapp, tmp_path):
+    """An isolated ToonRenders whose downloads never touch the network.
+    Returns (facade, store, prefetcher). Every grandstand/radial/preview test
+    that shows a toon should use this instead of patching the legacy fetcher."""
+    from utils.render_prefetcher import RenderPrefetcher
+    from utils.toon_render_store import ToonRenderStore
+    from utils.toon_renders import ToonRenders
+    from utils.rendition_poses import DownloadError
+
+    def _offline(dna, pose):
+        raise DownloadError("timeout", None, "tests are offline")
+
+    store = ToonRenderStore(str(tmp_path / "renders"))
+    pf = RenderPrefetcher(store, downloader=_offline, executor=_NeverRuns())
+    facade = ToonRenders(store, pf)
+    ToonRenders.install_for_tests(facade)
+    yield facade, store, pf
+    ToonRenders.install_for_tests(None)
+
+
+class _NeverRuns:
+    """Executor that accepts work and never runs it: tests must never wait on
+    a download, and a queued item is observable via prefetcher.pending_count."""
+    def submit(self, fn, *a):
+        from concurrent.futures import Future
+        return Future()

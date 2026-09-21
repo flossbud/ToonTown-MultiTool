@@ -16,13 +16,16 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette, QPixmap
 from PySide6.QtWidgets import QApplication
 
+from tests._render_fixtures import complete_set
 from utils import theme_manager
-from utils.rendition_poses import RenditionPoseFetcher
 from utils.widgets.grandstand import palette as gp
 from utils.widgets.grandstand.card_shelf import CardShelf
 from utils.widgets.grandstand.game_selector import GameSelector
 from utils.widgets.grandstand.hero_stage import COPY_LEFT, HeroStage
 from utils.widgets.grandstand.model import RosterEntry
+from utils.widgets.grandstand.roster_card import (
+    CARD_H, CARD_W, PORTRAIT, RosterCard,
+)
 
 
 def _distance(a, b):
@@ -160,12 +163,8 @@ def test_selector_logo_labels_do_not_paint_the_app_background(themed_app):
 
 
 def test_shelf_containers_do_not_paint_the_app_background(themed_app,
-                                                           monkeypatch):
+                                                           render_cache):
     """The head and gaps between cards must reveal the shelf panel."""
-    monkeypatch.setattr(RenditionPoseFetcher, "cached_pixmap",
-                        lambda self, dna, pose: None)
-    monkeypatch.setattr(RenditionPoseFetcher, "request",
-                        lambda self, dna, pose: None)
     _qapp, theme = themed_app
     shelf = CardShelf()
     shelf.set_entries([_entry("a"), _entry("b")])
@@ -180,6 +179,37 @@ def test_shelf_containers_do_not_paint_the_app_background(themed_app,
             f"{theme}: shelf {area} painted {probe.name()} over panel "
             f"{panel.name()}")
     shelf.close()
+
+
+def test_card_portrait_is_the_disk_render_under_the_real_stylesheet(
+        themed_app, render_cache):
+    """The migrated card, under the real theme: with a complete set on disk
+    the portrait box shows the render's own pixels. A solid-colour PNG from
+    `complete_set` makes the expected colour exact; a silhouette, the card
+    wash or a styled child painting over the box would all read far from it,
+    which the bare-card probe at the same pixel confirms."""
+    _qapp, theme = themed_app
+    _facade, store, _pf = render_cache
+    expected = QColor("#ff0000")
+    x, y = CARD_W // 2, 12 + PORTRAIT // 2       # centre of the portrait box
+
+    bare = RosterCard()
+    bare.set_entry(_entry("a"))                   # nothing on disk: silhouette
+    without = _render(bare, CARD_W, CARD_H).pixelColor(x, y)
+    bare.close()
+    assert without != Qt.magenta
+    assert _distance(without, expected) > 100, (
+        f"{theme}: probe at ({x},{y}) is not discriminating")
+
+    complete_set(store, "ttr", "Ta", "7400", expected.name())
+    card = RosterCard()
+    card.set_entry(_entry("a"))
+    face = _render(card, CARD_W, CARD_H).pixelColor(x, y)
+    card.close()
+    assert _distance(face, expected) < 4, (
+        f"{theme}: portrait box painted {face.name()}, not the disk render "
+        f"{expected.name()}")
+    assert card.portrait_tier() == "current"
 
 
 def test_themed_app_fixture_restores_global_state(qapp):

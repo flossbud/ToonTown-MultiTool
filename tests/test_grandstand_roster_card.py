@@ -10,23 +10,13 @@ from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 
-from utils.rendition_poses import RenditionPoseFetcher
+from tests._render_fixtures import complete_set
+from utils.toon_renders import PREVIOUS_LOOK_TOOLTIP
 from utils.widgets.grandstand import palette as gp
 from utils.widgets.grandstand.model import CARD_POSE, RosterEntry
 from utils.widgets.grandstand.roster_card import (
     CARD_H, CARD_W, HEAD_FIT, RosterCard,
 )
-
-
-@pytest.fixture
-def no_network(monkeypatch):
-    """Exercise the real fetcher integration while isolating its external HTTP
-    boundary — same pattern as tests/test_grandstand_crew_lineup.py. Tests that
-    care about cache hits or requests override these themselves."""
-    monkeypatch.setattr(RenditionPoseFetcher, "cached_pixmap",
-                        lambda self, dna, pose: None)
-    monkeypatch.setattr(RenditionPoseFetcher, "request",
-                        lambda self, dna, pose: None)
 
 
 def _entry(aid="a", *, toon="Flossbud", species="cat", game="ttr",
@@ -39,14 +29,14 @@ def _entry(aid="a", *, toon="Flossbud", species="cat", game="ttr",
 
 
 @pytest.fixture
-def card(qapp, no_network):
+def card(qapp, render_cache):
     c = RosterCard()
     c.set_entry(_entry())
     return c
 
 
 @pytest.fixture
-def hosted(qapp, no_network):
+def hosted(qapp, render_cache):
     """A card owned by a parent, the way the shelf owns it.
 
     A standalone top-level card cannot express a resting state offscreen: Qt
@@ -347,7 +337,7 @@ def test_starred_state_reports(card):
     assert card.is_starred() is True
 
 
-def test_species_card_paints_a_silhouette(qapp, no_network):
+def test_species_card_paints_a_silhouette(qapp, render_cache):
     """The fallback must actually draw. Rendering with a species and without
     one must differ; deleting the paint_race_silhouette call makes them equal."""
     from utils.cc_race_assets import asset_stem_for_species
@@ -409,53 +399,55 @@ def test_pencil_and_gear_brighten_on_their_own_hover(card):
     assert gp.control_chip(True, True)["ink"].name() not in card.pencil.styleSheet()
 
 
-def test_render_mode_requests_the_head_pose_on_a_cache_miss(qapp, monkeypatch):
-    asked = []
-    monkeypatch.setattr(RenditionPoseFetcher, "cached_pixmap",
-                        lambda self, dna, pose: None)
-    monkeypatch.setattr(RenditionPoseFetcher, "request",
-                        lambda self, dna, pose: asked.append((dna, pose)))
+def test_render_mode_draws_the_cached_head_immediately(render_cache, qapp):
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Flossbud", "7400", "#ff0000")
     c = RosterCard()
     c.set_entry(_entry())
-    assert asked == [("7400", CARD_POSE)]
+    assert c.portrait_pixmap() is not None
+    assert c.portrait_tier() == "current"
+    assert c.toolTip() == ""
 
 
-def test_a_cached_portrait_is_used_without_a_request(qapp, monkeypatch):
-    """The synchronous cache-hit branch: no fetch, pixmap available at once."""
-    hit = QPixmap(16, 16)
-    hit.fill(Qt.blue)
-    asked = []
-    monkeypatch.setattr(RenditionPoseFetcher, "cached_pixmap",
-                        lambda self, dna, pose: hit)
-    monkeypatch.setattr(RenditionPoseFetcher, "request",
-                        lambda self, dna, pose: asked.append(dna))
+def test_render_mode_with_nothing_cached_wants_the_head_pose(render_cache, qapp):
+    facade, store, pf = render_cache
+    store.note_dna("ttr", "Flossbud", "7400")          # discovered, not yet fetched
     c = RosterCard()
     c.set_entry(_entry())
-    assert asked == []
-    assert c.portrait_pixmap() is hit
+    assert c.portrait_pixmap() is None
+    key = ("ttr", "Flossbud", "7400", CARD_POSE)
+    assert key in pf._queue or key in pf._in_flight        # the want went in
 
 
-def test_species_mode_never_fetches_a_rendition(qapp, monkeypatch):
-    """A Corporate Clash account carries a dna but paints its species
-    silhouette — `model.portrait_mode` already rules that (Task 4), and
-    `lineup_entries` branches on the same field. The card must agree."""
+def test_species_mode_never_consults_the_render_cache(render_cache, qapp, monkeypatch):
+    facade, store, pf = render_cache
+    complete_set(store, "cc", "Flossbud", "7400")
     asked = []
-    monkeypatch.setattr(RenditionPoseFetcher, "cached_pixmap",
-                        lambda self, dna, pose: None)
-    monkeypatch.setattr(RenditionPoseFetcher, "request",
-                        lambda self, dna, pose: asked.append(dna))
+    monkeypatch.setattr(facade, "pixmap_for", lambda *a: asked.append(a))
     c = RosterCard()
     c.set_entry(_entry(game="cc", species="bear", mode="species"))
     assert asked == []
     assert c.portrait_pixmap() is None
 
 
-def test_a_late_pose_reply_is_ignored_in_species_mode(qapp, no_network):
-    """The fetcher is a shared singleton, so a reply for this dna can arrive
-    at a card whose entry no longer wants a rendition."""
+def test_previous_look_is_shown_with_the_tooltip(render_cache, qapp):
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Flossbud", "old", "#ff0000")
+    store.note_dna("ttr", "Flossbud", "7400")          # new outfit, nothing landed
     c = RosterCard()
-    c.set_entry(_entry(game="cc", species="bear", mode="species"))
-    pm = QPixmap(8, 8)
-    pm.fill(Qt.red)
-    c._on_pose_ready("7400", CARD_POSE, pm)
+    c.set_entry(_entry())
+    assert c.portrait_tier() == "previous"
+    assert c.toolTip() == PREVIOUS_LOOK_TOOLTIP
+
+
+def test_card_repaints_when_its_own_pose_lands(render_cache, qapp):
+    facade, store, pf = render_cache
+    store.note_dna("ttr", "Flossbud", "7400")
+    c = RosterCard()
+    c.set_entry(_entry())
     assert c.portrait_pixmap() is None
+    complete_set(store, "ttr", "Flossbud", "7400", "#00ff00")
+    pf.render_landed.emit("ttr", "Flossbud", "portrait")   # not our pose
+    assert c.portrait_pixmap() is None
+    pf.render_landed.emit("ttr", "Flossbud", CARD_POSE)
+    assert c.portrait_pixmap() is not None

@@ -7,7 +7,6 @@ os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 import pytest
 from PySide6.QtGui import QFontMetrics
 
-from utils.rendition_poses import RenditionPoseFetcher
 from utils.widgets.grandstand.model import RosterEntry
 from utils.widgets.grandstand.roster_card import (
     ACTION_MAP, URGENT_STATES, RosterCard,
@@ -18,11 +17,9 @@ ALL_STATES = ["idle", "logging_in", "launching", "loading", "queued",
 
 
 @pytest.fixture(autouse=True)
-def no_network(monkeypatch):
-    monkeypatch.setattr(RenditionPoseFetcher, "cached_pixmap",
-                        lambda self, dna, pose: None)
-    monkeypatch.setattr(RenditionPoseFetcher, "request",
-                        lambda self, dna, pose: None)
+def _isolated_renders(render_cache):
+    """Every card asks the toon render cache for a head pose. `render_cache`
+    (tests/conftest.py) installs an isolated cache whose downloads never run."""
 
 
 def _entry(aid="a", state="idle"):

@@ -5,11 +5,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QColor, QPixmap
 
 import utils.motion as motion
 import utils.widgets.grandstand.crew_lineup as crew_module
-from utils.rendition_poses import RenditionPoseFetcher
+from tests._render_fixtures import complete_set
 from utils.widgets.grandstand.crew_lineup import (
     CAMEO, CREW_SLOTS, ROT, CrewLineup,
 )
@@ -18,23 +18,17 @@ from utils.widgets.grandstand.model import LineupEntry
 
 def _e(aid, treatment="bust", stem=None, species=None, dna="7400",
        pose="portrait"):
-    return LineupEntry(account_id=aid, treatment=treatment, pose=pose,
+    return LineupEntry(account_id=aid, game="ttr", toon_name=aid.title(),
+                       treatment=treatment, pose=pose,
                        dna=dna, icon_stem=stem, species=species,
                        accent="#4a8fe7", initial=aid[:1].upper())
 
 
 @pytest.fixture
-def crew(qapp, monkeypatch):
-    # Exercise the real fetcher integration while isolating its external HTTP
-    # boundary. Dedicated tests below inspect requests and deliver replies.
-    monkeypatch.setattr(
-        RenditionPoseFetcher, "cached_pixmap",
-        lambda self, dna, pose: None,
-    )
-    monkeypatch.setattr(
-        RenditionPoseFetcher, "request",
-        lambda self, dna, pose: None,
-    )
+def crew(qapp, render_cache):
+    # The real cache integration, isolated: `render_cache` installs a
+    # ToonRenders whose downloads never run. Dedicated tests below put sets
+    # on disk and fire the cache's own signals.
     c = CrewLineup()
     c.resize(500, 232)
     yield c
@@ -147,63 +141,61 @@ def test_reduced_motion_snaps_to_the_end_state(crew, monkeypatch):
         assert slot.right == slot.target_right
 
 
-def test_same_account_with_new_dna_keeps_slot_and_requests_fresh_art(
-        crew, monkeypatch):
-    requests = []
-    monkeypatch.setattr(
-        RenditionPoseFetcher, "request",
-        lambda self, dna, pose: requests.append((dna, pose)),
-    )
+def _asking(facade, monkeypatch):
+    """Record every (game, toon, pose) the lineup asks the cache for."""
+    asked = []
+    monkeypatch.setattr(facade, "pixmap_for", lambda *a: asked.append(a))
+    return asked
+
+
+def test_same_account_with_new_dna_keeps_slot_and_refreshes_art(
+        crew, render_cache, monkeypatch):
+    facade, _store, _pf = render_cache
+    asked = _asking(facade, monkeypatch)
     crew.set_entries([_e("a", dna="7400")])
     crew.settle()
     first = crew.slot_for("a")
-    requests.clear()
+    asked.clear()
 
     crew.set_entries([_e("a", dna="8500")])
 
     assert crew.slot_for("a") is first
     assert first.dna == "8500"
-    assert requests == [("8500", "portrait")]
+    assert asked == [("ttr", "A", "portrait")]
 
 
 def test_same_account_with_new_pose_keeps_slot_and_refreshes_art(
-        crew, monkeypatch):
-    requests = []
-    monkeypatch.setattr(
-        RenditionPoseFetcher, "request",
-        lambda self, dna, pose: requests.append((dna, pose)),
-    )
+        crew, render_cache, monkeypatch):
+    facade, _store, _pf = render_cache
+    asked = _asking(facade, monkeypatch)
     crew.set_entries([_e("a", pose="portrait")])
     crew.settle()
     first = crew.slot_for("a")
-    requests.clear()
+    asked.clear()
 
     crew.set_entries([_e("a", pose="portrait-grin")])
 
     assert crew.slot_for("a") is first
     assert first.pose == "portrait-grin"
     assert (first.opacity, first.lift) == (1.0, 0.0)
-    assert requests == [("7400", "portrait-grin")]
+    assert asked == [("ttr", "A", "portrait-grin")]
 
 
 def test_same_account_with_new_treatment_keeps_slot_and_refreshes_art(
-        crew, monkeypatch):
-    requests = []
-    monkeypatch.setattr(
-        RenditionPoseFetcher, "request",
-        lambda self, dna, pose: requests.append((dna, pose)),
-    )
+        crew, render_cache, monkeypatch):
+    facade, _store, _pf = render_cache
+    asked = _asking(facade, monkeypatch)
     crew.set_entries([_e("a", treatment="bust")])
     crew.settle()
     first = crew.slot_for("a")
-    requests.clear()
+    asked.clear()
 
     crew.set_entries([_e("a", treatment="standing")])
 
     assert crew.slot_for("a") is first
     assert first.treatment == "standing"
     assert (first.opacity, first.lift) == (1.0, 0.0)
-    assert requests == [("7400", "portrait")]
+    assert asked == [("ttr", "A", "portrait")]
 
 
 def test_species_only_change_updates_the_retained_fallback_slot(crew):
@@ -234,37 +226,82 @@ def test_cameo_icon_change_keeps_slot_and_replaces_art(crew, monkeypatch):
     assert first.pixmap is dog
 
 
-def test_pose_reply_must_match_the_key_the_slot_requested(crew):
-    crew.set_entries([_e("a", treatment="bust", dna="7400")])
-    first = crew.slot_for("a")
-
-    # The live DNA/pose remain identical, but cameo art does not request a
-    # rendition. A late reply for the old bust must therefore be ignored.
-    crew.set_entries([
-        _e("a", treatment="cameo", stem=None, species="bear", dna="7400")
-    ])
-    current = crew.slot_for("a")
-    assert current is first
-    assert current.requested_key is None
-
-    stale = QPixmap(2, 2)
-    crew._on_pose_ready("7400", "portrait", stale)
-
-    assert current.pixmap is None
+def _pixel(pixmap):
+    return pixmap.toImage().pixelColor(0, 0)
 
 
-def test_pose_reply_only_updates_a_slot_waiting_for_that_art(crew):
-    crew.set_entries([_e("a", dna="7400")])
+def test_a_slot_whose_toon_has_a_complete_set_draws_it(crew, render_cache):
+    _facade, store, _pf = render_cache
+    complete_set(store, "ttr", "A", "7400", "#ff0000")
+
+    crew.set_entries([_e("a")])
+
     slot = crew.slot_for("a")
-    ready = QPixmap(2, 2)
+    assert slot.pixmap is not None
+    assert _pixel(slot.pixmap) == QColor("#ff0000")     # the disk render itself
 
-    crew._on_pose_ready("stale-dna", "portrait", ready)
-    crew._on_pose_ready("7400", "stale-pose", ready)
+
+def test_a_slot_whose_toon_has_nothing_cached_draws_none_and_queues_the_pose(
+        crew, render_cache):
+    _facade, store, pf = render_cache
+    store.note_dna("ttr", "A", "7400")          # discovered, not yet fetched
+
+    crew.set_entries([_e("a", pose="portrait-grin")])
+
+    assert crew.slot_for("a").pixmap is None
+    key = ("ttr", "A", "7400", "portrait-grin")
+    assert key in pf._queue or key in pf._in_flight        # the want went in
+
+
+def test_a_landing_never_puts_a_rendition_on_a_cameo_slot(crew, render_cache):
+    """The live DNA/pose stay identical across bust -> cameo, but cameo art
+    is the race icon, not a rendition. A landing for that toon's pose must
+    therefore leave the cameo alone."""
+    _facade, store, pf = render_cache
+    store.note_dna("ttr", "A", "7400")
+    crew.set_entries([_e("a", treatment="bust")])
+    first = crew.slot_for("a")
+    crew.set_entries([_e("a", treatment="cameo", stem=None, species="bear")])
+    assert crew.slot_for("a") is first
+
+    complete_set(store, "ttr", "A", "7400", "#ff0000")
+    pf.render_landed.emit("ttr", "A", "portrait")
+
+    assert first.pixmap is None
+
+
+def test_render_landed_fills_only_the_slot_whose_toon_and_pose_it_is(
+        crew, render_cache):
+    _facade, store, pf = render_cache
+    store.note_dna("ttr", "A", "7400")
+    crew.set_entries([_e("a")])                # pose "portrait"
+    slot = crew.slot_for("a")
     assert slot.pixmap is None
 
-    crew._on_pose_ready("7400", "portrait", ready)
-    assert slot.pixmap is ready
-    assert slot.requested_key is None
+    complete_set(store, "ttr", "A", "7400", "#00ff00")
+    pf.render_landed.emit("ttr", "A", "head")            # not this slot's pose
+    pf.render_landed.emit("ttr", "Hiro", "portrait")     # not this slot's toon
+    pf.render_landed.emit("cc", "A", "portrait")         # not this slot's game
+    assert slot.pixmap is None
+
+    pf.render_landed.emit("ttr", "A", "portrait")
+    assert slot.pixmap is not None
+    assert _pixel(slot.pixmap) == QColor("#00ff00")
+
+
+def test_set_promoted_refreshes_the_slot_to_the_new_look(crew, render_cache):
+    _facade, store, pf = render_cache
+    complete_set(store, "ttr", "A", "old", "#ff0000")
+    crew.set_entries([_e("a", dna="old")])
+    slot = crew.slot_for("a")
+    assert _pixel(slot.pixmap) == QColor("#ff0000")
+
+    complete_set(store, "ttr", "A", "new", "#00ff00")    # promoted on disk
+    pf.set_promoted.emit("ttr", "Hiro")                   # someone else's
+    assert _pixel(slot.pixmap) == QColor("#ff0000")
+
+    pf.set_promoted.emit("ttr", "A")
+    assert _pixel(slot.pixmap) == QColor("#00ff00")
 
 
 def test_paints_without_error_in_every_treatment(crew, qapp):

@@ -11,10 +11,11 @@ from utils.widgets.grandstand.model import LineupEntry
 
 
 @pytest.fixture
-def hero(qapp):
+def hero(qapp, render_cache):
     """Shown, because the blocked-mode contract is about VISIBILITY. On a hidden
     parent every child reports isVisible() == False, so a hidden fixture makes
-    the central assertion pass vacuously."""
+    the central assertion pass vacuously. The stage owns a CrewLineup that
+    reads the toon render cache; `render_cache` keeps that isolated."""
     h = HeroStage()
     h.resize(852, 232)
     h.show()
@@ -163,21 +164,13 @@ def test_missing_backdrop_falls_back_to_the_flat_base(hero, qapp):
     qapp.processEvents()
 
 
-def test_lineup_is_mounted_and_reached_through_the_hero(hero, monkeypatch):
-    from utils.rendition_poses import RenditionPoseFetcher
+def test_lineup_is_mounted_and_reached_through_the_hero(hero):
     from utils.widgets.grandstand.crew_lineup import CrewLineup
 
-    monkeypatch.setattr(
-        RenditionPoseFetcher, "cached_pixmap",
-        lambda self, dna, pose: None,
-    )
-    monkeypatch.setattr(
-        RenditionPoseFetcher, "request",
-        lambda self, dna, pose: None,
-    )
     entry = LineupEntry(
-        account_id="a", treatment="bust", pose="portrait", dna="7400",
-        icon_stem=None, species="dog", accent="#4a8fe7", initial="A",
+        account_id="a", game="ttr", toon_name="A", treatment="bust",
+        pose="portrait", dna="7400", icon_stem=None, species="dog",
+        accent="#4a8fe7", initial="A",
     )
 
     hero.set_lineup([entry])
