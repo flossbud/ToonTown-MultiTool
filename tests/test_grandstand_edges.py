@@ -485,10 +485,10 @@ def test_late_customizations_manager_repaints_grandstand_entries(
             ("ttr",), ("cc",)]
         entry = tab.grandstand.shelf.card_for("a").entry()
         assert entry.accent == "#abcdef"
-        assert entry.pose == "waving"
+        assert entry.pose == "waving"                 # saved pose survives on the entry
         lineup = tab.grandstand.hero.crew_area.slots()
-        assert lineup[0].pose == "waving"
-        assert lineup[0].treatment == "standing"
+        assert lineup[0].pose == "portrait"           # but the stage draws STAGE_POSE
+        assert lineup[0].treatment == "bust"
     finally:
         tab.shutdown()
         tab.close()

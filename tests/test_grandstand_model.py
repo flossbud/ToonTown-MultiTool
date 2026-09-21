@@ -88,13 +88,17 @@ def test_customization_accent_beats_account_accent():
     assert e.accent == "#abcdef"
 
 
-def test_saved_pose_reaches_the_lineup_and_selects_full_body_treatment():
+def test_the_stage_draws_one_pose_for_everyone_whatever_they_saved():
+    """The saved customizer pose still reaches the roster entry (badge, radial
+    and preview use it) but the stage ignores it: STAGE_POSE for the crew."""
     entry = _entry("a", customization={"pose": "waving"})
+    assert entry.pose == "waving"
 
     lineup = gm.lineup_entries([entry], ["a"])
 
-    assert lineup[0].pose == "waving"
-    assert lineup[0].treatment == "standing"
+    assert gm.STAGE_POSE == "portrait"
+    assert lineup[0].pose == gm.STAGE_POSE
+    assert lineup[0].treatment == "bust"
 
 
 def test_account_accent_is_used_without_customization_accent():
@@ -134,25 +138,28 @@ def test_lineup_is_capped_at_four_slots():
 
 
 @pytest.mark.parametrize("pose", ["waving", "crying", "cake-topper"])
-def test_full_body_pose_stands(pose):
-    entries = [_entry("a", customization={"pose": pose})]
-    standing = gm.lineup_entries(entries, ["a"])
+def test_a_full_body_stage_pose_stands_the_crew(pose, monkeypatch):
+    """Switching STAGE_POSE to a full-body pose is a one-constant change that
+    must still put the crew on the floor."""
+    monkeypatch.setattr(gm, "STAGE_POSE", pose)
+    standing = gm.lineup_entries([_entry("a")], ["a"])
+    assert standing[0].pose == pose
     assert standing[0].treatment == "standing"
 
 
-def test_bust_pose_does_not_stand():
-    entries = [_entry("a", customization={"pose": "portrait-grin"})]
-    bust = gm.lineup_entries(entries, ["a"])
+def test_a_bust_stage_pose_does_not_stand(monkeypatch):
+    monkeypatch.setattr(gm, "STAGE_POSE", "portrait-grin")
+    bust = gm.lineup_entries([_entry("a")], ["a"])
     assert bust[0].treatment == "bust"
 
 
-def test_the_entry_pose_is_the_only_pose_the_lineup_reads():
-    """One mechanism carries the pose: roster_entry resolves it, the lineup
-    reads it back. No side channel may supply a different one."""
+def test_the_stage_pose_has_no_side_channel():
+    """One mechanism carries the stage pose: the STAGE_POSE constant. No call
+    parameter and no per-entry value may supply a different one."""
     import inspect
     assert "poses" not in inspect.signature(gm.lineup_entries).parameters
     entry = _entry("a", customization={"pose": "waving"})
-    assert gm.lineup_entries([entry], ["a"])[0].pose == entry.pose == "waving"
+    assert gm.lineup_entries([entry], ["a"])[0].pose == gm.STAGE_POSE != entry.pose
 
 
 def test_species_account_becomes_a_cameo_with_its_race_icon():
