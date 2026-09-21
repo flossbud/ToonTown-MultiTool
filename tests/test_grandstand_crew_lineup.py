@@ -17,8 +17,9 @@ from utils.widgets.grandstand.model import LineupEntry
 
 
 def _e(aid, treatment="bust", stem=None, species=None, dna="7400",
-       pose="portrait"):
-    return LineupEntry(account_id=aid, game="ttr", toon_name=aid.title(),
+       pose="portrait", game="ttr", toon_name=None):
+    return LineupEntry(account_id=aid, game=game,
+                       toon_name=aid.title() if toon_name is None else toon_name,
                        treatment=treatment, pose=pose,
                        dna=dna, icon_stem=stem, species=species,
                        accent="#4a8fe7", initial=aid[:1].upper())
@@ -162,6 +163,40 @@ def test_same_account_with_new_dna_keeps_slot_and_refreshes_art(
     assert crew.slot_for("a") is first
     assert first.dna == "8500"
     assert asked == [("ttr", "A", "portrait")]
+
+
+def test_same_account_with_new_toon_name_keeps_slot_and_refreshes_art(
+        crew, render_cache, monkeypatch):
+    """The cache is keyed by (game, toon); a same-dna entry under another
+    name is another toon's folder, so the art must be asked for again."""
+    facade, _store, _pf = render_cache
+    asked = _asking(facade, monkeypatch)
+    crew.set_entries([_e("a", toon_name="Hiro")])
+    crew.settle()
+    first = crew.slot_for("a")
+    asked.clear()
+
+    crew.set_entries([_e("a", toon_name="Blue Cat")])       # same dna, same pose
+
+    assert crew.slot_for("a") is first
+    assert first.toon_name == "Blue Cat"
+    assert asked == [("ttr", "Blue Cat", "portrait")]
+
+
+def test_same_account_with_new_game_keeps_slot_and_refreshes_art(
+        crew, render_cache, monkeypatch):
+    facade, _store, _pf = render_cache
+    asked = _asking(facade, monkeypatch)
+    crew.set_entries([_e("a", game="ttr")])
+    crew.settle()
+    first = crew.slot_for("a")
+    asked.clear()
+
+    crew.set_entries([_e("a", game="cc")])                   # same dna, same name
+
+    assert crew.slot_for("a") is first
+    assert first.game == "cc"
+    assert asked == [("cc", "A", "portrait")]
 
 
 def test_same_account_with_new_pose_keeps_slot_and_refreshes_art(

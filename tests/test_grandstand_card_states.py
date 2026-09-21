@@ -16,12 +16,6 @@ ALL_STATES = ["idle", "logging_in", "launching", "loading", "queued",
               "need_2fa", "running", "failed"]
 
 
-@pytest.fixture(autouse=True)
-def _isolated_renders(render_cache):
-    """Every card asks the toon render cache for a head pose. `render_cache`
-    (tests/conftest.py) installs an isolated cache whose downloads never run."""
-
-
 def _entry(aid="a", state="idle"):
     return RosterEntry(account_id=aid, game="ttr", label="Alt",
                        username="flossbud", toon_name="Flossbud", species="cat",

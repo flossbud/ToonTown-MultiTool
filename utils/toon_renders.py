@@ -127,17 +127,29 @@ class ToonRenders(QObject):
 
     def import_once(self, settings_manager, flat_dir: str) -> int:
         """First run only: copy remembered toons' renders out of the legacy
-        flat cache. A marker file makes it idempotent."""
+        flat cache. A marker file makes it idempotent. The store promotes
+        silently, so every toon left with a current set is announced here as
+        `set_promoted` -- a card mounted before this warm would otherwise keep
+        its silhouette until something else rebuilt it."""
         marker = os.path.join(self.store.toons_root(), ".imported")
         if os.path.exists(marker):
             return 0
-        n = self.store.import_flat_cache(flat_dir, self._remembered(settings_manager))
+        remembered = self._remembered(settings_manager)
+        n = self.store.import_flat_cache(flat_dir, remembered)
         try:
             os.makedirs(os.path.dirname(marker), exist_ok=True)
             with open(marker, "w") as f:
                 f.write("1\n")
         except OSError:
             pass
+        if n > 0:
+            announced: set[tuple[str, str]] = set()
+            for game, name, _dna in remembered:
+                if (game, name) in announced:
+                    continue
+                announced.add((game, name))
+                if self.store.current_dna(game, name):
+                    self.prefetcher.set_promoted.emit(game, name)
         return n
 
     def sweep_remembered(self, settings_manager) -> int:

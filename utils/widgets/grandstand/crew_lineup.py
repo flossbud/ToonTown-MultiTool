@@ -129,10 +129,14 @@ class CrewLineup(QWidget):
                 )
                 self._load_art(slot)
             else:
+                # The cache is keyed by (game, toon): a same-dna entry under
+                # another name or game is another toon's folder.
                 art_key_changed = (
                     slot.treatment != entry.treatment
                     or slot.pose != entry.pose
                     or slot.dna != entry.dna
+                    or slot.game != entry.game
+                    or slot.toon_name != entry.toon_name
                     or slot.icon_stem != entry.icon_stem
                     or slot.species != entry.species
                 )

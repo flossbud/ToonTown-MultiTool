@@ -142,7 +142,40 @@ def test_a_4xx_marks_the_pose_failed_and_is_not_a_breaker_event(rig, qapp):
     assert pf.breaker_open is False
     assert breaker == []
     assert "waving" not in store.missing_poses("ttr", "Hiro", "dna1")
-    assert promoted == []                             # 2/3 landed: not complete
+    assert promoted == [("ttr", "Hiro")]              # 2 landed + 1 refused: complete
+    assert store.current_dna("ttr", "Hiro") == "dna1"
+
+
+def test_a_refused_final_pose_still_promotes_the_set(qapp, tmp_path):
+    """Complete means every pose landed OR was refused, with at least one
+    landed. When the refusal is the LAST result in, the 4xx branch is the
+    only place left that can promote -- it must not just mark and move on."""
+    store = ToonRenderStore(str(tmp_path), poses=("head", "portrait"))
+    dl = _Downloader({("dna1", "head"): PNG, ("dna1", "portrait"): "client"})
+    pf = RenderPrefetcher(store, downloader=dl, executor=_Immediate(), max_in_flight=1)
+    landed, promoted = [], []
+    pf.render_landed.connect(lambda g, n, p: landed.append((g, n, p)))
+    pf.set_promoted.connect(lambda g, n: promoted.append((g, n)))
+    pf.discovered("ttr", "Hiro", "dna1")             # head first (enqueued first), then portrait
+    _drain(qapp, pf)
+    assert dl.calls == [("dna1", "head"), ("dna1", "portrait")]
+    assert landed == [("ttr", "Hiro", "head")]
+    assert promoted == [("ttr", "Hiro")]
+    assert store.current_dna("ttr", "Hiro") == "dna1"
+    assert store.candidate_dna("ttr", "Hiro") is None
+
+
+def test_an_outfit_refused_for_every_pose_is_dropped_and_nothing_promotes(rig, qapp):
+    store, dl, pf, landed, promoted, breaker = rig
+    dl.default = "client"
+    pf.discovered("ttr", "Hiro", "dna1")
+    _drain(qapp, pf)
+    assert len(dl.calls) == len(POSES)                # each pose asked exactly once
+    assert landed == [] and promoted == []
+    assert store.candidate_dna("ttr", "Hiro") is None   # abandoned, not pending forever
+    assert store.current_dna("ttr", "Hiro") is None
+    assert pf.breaker_open is False and breaker == []
+    assert pf.pending_count == 0 and pf.in_flight_count == 0
 
 
 def test_breaker_opens_after_three_consecutive_failures_and_stops_downloading(rig, qapp):

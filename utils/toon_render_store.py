@@ -9,8 +9,10 @@ Layout (one folder per toon, up to two complete DNA sets):
 
 A DNA becomes *current* only once every pose in the contract is on disk and
 PNG-valid; until then the previous complete set keeps serving, so a
-half-fetched outfit is never visible. Nothing expires by age: a render is a
-pure function of its DNA. See docs/superpowers/specs/2026-09-21-toon-render-cache-design.md.
+half-fetched outfit is never visible. An outfit the origin refuses for every
+pose can never complete, so it is dropped rather than left pending. Nothing
+expires by age: a render is a pure function of its DNA.
+See docs/superpowers/specs/2026-09-21-toon-render-cache-design.md.
 """
 from __future__ import annotations
 
@@ -200,9 +202,23 @@ class ToonRenderStore:
                 if p not in failed and not self._valid_png(os.path.join(d, dna, f"{p}.png"))]
 
     def promote_if_complete(self, game: str, name: str) -> bool:
+        """Promote the candidate once it is complete. A candidate with nothing
+        landed and every pose refused is dead -- it can never satisfy the
+        >=1-landed rule -- so it is abandoned here (files and record dropped,
+        candidate cleared) instead of pinning the toon on its previous look
+        with no way to refresh. Returns True only on a promotion."""
         d, m = self._manifest(game, name)
         cand = m.get("candidate")
-        if not cand or not self._set_complete(d, m, cand):
+        if not cand:
+            return False
+        rec = m.get("sets", {}).get(cand, {})
+        if not rec.get("landed") and set(rec.get("failed", [])) >= set(self._poses):
+            self._drop_set(d, m, cand)
+            m["candidate"] = None
+            self._write_manifest(d, m)
+            self._warn(f"{game}/{name}: outfit {cand} refused for every pose; dropped")
+            return False
+        if not self._set_complete(d, m, cand):
             return False
         older = m.get("previous")
         m["previous"], m["current"], m["candidate"] = m.get("current"), cand, None

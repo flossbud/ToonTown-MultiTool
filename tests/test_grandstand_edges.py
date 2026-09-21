@@ -17,12 +17,6 @@ from utils.widgets.grandstand.party import LaunchParty
 from utils.widgets.grandstand.view import GrandstandView
 
 
-@pytest.fixture(autouse=True)
-def _isolated_renders(render_cache):
-    """Every card asks the toon render cache for a head pose. `render_cache`
-    (tests/conftest.py) installs an isolated cache whose downloads never run."""
-
-
 def _entry(aid, toon="Flossbud", species="cat", game="ttr", dna="7400"):
     return RosterEntry(account_id=aid, game=game, label=f"L{aid}",
                        username=f"u{aid}", toon_name=toon, species=species,

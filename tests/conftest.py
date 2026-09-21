@@ -95,11 +95,13 @@ def _no_real_hotkey_grabs(monkeypatch):
                         lambda self: (self._close_wake_pipe(), False)[1])
 
 
-@pytest.fixture
-def render_cache(qapp, tmp_path):
-    """An isolated ToonRenders whose downloads never touch the network.
-    Returns (facade, store, prefetcher). Every grandstand/radial/preview test
-    that shows a toon should use this instead of patching the legacy fetcher."""
+@pytest.fixture(autouse=True)
+def _offline_renders(tmp_path):
+    """Offline by construction: every test runs against an isolated ToonRenders
+    whose downloads never run, so a widget that asks `ToonRenders.instance()`
+    can never lazily build the real facade (real `download_pose`, real pool)
+    just because a test forgot to request `render_cache`. The store lives
+    under this test's tmp_path; the singleton is reset afterwards."""
     from utils.render_prefetcher import RenderPrefetcher
     from utils.toon_render_store import ToonRenderStore
     from utils.toon_renders import ToonRenders
@@ -114,6 +116,14 @@ def render_cache(qapp, tmp_path):
     ToonRenders.install_for_tests(facade)
     yield facade, store, pf
     ToonRenders.install_for_tests(None)
+
+
+@pytest.fixture
+def render_cache(qapp, _offline_renders):
+    """The isolated ToonRenders `_offline_renders` already installed for this
+    test, as (facade, store, prefetcher). Every grandstand/radial/preview test
+    that puts renders on disk or fires the cache's signals asks for this."""
+    return _offline_renders
 
 
 class _NeverRuns:

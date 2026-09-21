@@ -5,13 +5,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QPoint, Qt
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPushButton, QWidget
 
 from tests._render_fixtures import complete_set
-from utils.toon_renders import PREVIOUS_LOOK_TOOLTIP
+from utils.toon_renders import PREVIOUS_LOOK_TOOLTIP, ToonRenders
 from utils.widgets.grandstand import palette as gp
 from utils.widgets.grandstand.model import CARD_POSE, RosterEntry
 from utils.widgets.grandstand.roster_card import (
@@ -451,3 +451,42 @@ def test_card_repaints_when_its_own_pose_lands(render_cache, qapp):
     assert c.portrait_pixmap() is None
     pf.render_landed.emit("ttr", "Flossbud", CARD_POSE)
     assert c.portrait_pixmap() is not None
+
+
+def test_a_card_built_without_render_cache_still_gets_the_offline_facade(qapp):
+    """tests/conftest.py installs an offline ToonRenders for every test; a
+    test that forgets `render_cache` must never lazily build the real one."""
+    from tests.conftest import _NeverRuns
+    c = RosterCard()
+    c.set_entry(_entry())
+    facade = ToonRenders.instance()
+    assert c._renders is facade
+    assert isinstance(facade.prefetcher._executor, _NeverRuns)
+    with pytest.raises(Exception, match="offline"):
+        facade.prefetcher._download("7400", CARD_POSE)
+
+
+def test_a_destroyed_card_no_longer_receives_the_caches_signals(render_cache, qapp):
+    """The connections are receiver-owned: destroying the card must drop them,
+    so a landing after destruction neither raises nor reaches a dead wrapper.
+    The DeferredDelete is flushed explicitly -- outside a running event loop
+    processEvents() alone leaves it posted. `QObject.receivers` takes the
+    SIGNAL() spelling as a str on PySide6 6.11."""
+    facade, store, pf = render_cache
+    landed_sig = "2render_landed(QString,QString,QString)"
+    promoted_sig = "2set_promoted(QString,QString)"
+    before = (pf.receivers(landed_sig), pf.receivers(promoted_sig))
+    c = RosterCard()
+    c.set_entry(_entry())
+    assert pf.receivers(landed_sig) == before[0] + 1
+    assert pf.receivers(promoted_sig) == before[1] + 1
+
+    c.setParent(None)
+    c.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    qapp.processEvents()
+
+    assert pf.receivers(landed_sig) == before[0]
+    assert pf.receivers(promoted_sig) == before[1]
+    facade.render_landed.emit("ttr", "Flossbud", CARD_POSE)     # must not raise
+    facade.set_promoted.emit("ttr", "Flossbud")

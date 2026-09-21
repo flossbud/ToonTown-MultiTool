@@ -15,12 +15,6 @@ from utils.widgets.grandstand.card_shelf import HEAD_H, CardShelf
 from utils.widgets.grandstand.model import RosterEntry
 
 
-@pytest.fixture(autouse=True)
-def _isolated_renders(render_cache):
-    """Every card asks the toon render cache for a head pose. `render_cache`
-    (tests/conftest.py) installs an isolated cache whose downloads never run."""
-
-
 def _entry(aid):
     return RosterEntry(account_id=aid, game="ttr", label=f"L{aid}",
                        username=f"u{aid}", toon_name=f"T{aid}", species="cat",

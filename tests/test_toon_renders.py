@@ -83,6 +83,21 @@ def test_tier_is_previous_while_a_newer_outfit_is_pending(facade):
     assert tier == "current" and pm.toImage().pixelColor(0, 0) == QColor("#00ff00")
 
 
+def test_tier_returns_to_current_once_a_dead_outfit_is_dropped(facade):
+    """A newer outfit the origin refuses for every pose is abandoned by the
+    store, so the tooltip's "new render pending" must not stick to the toon."""
+    f, store, pf = facade
+    _complete(store, "ttr", "Hiro", "dna1", "#ff0000")
+    store.note_dna("ttr", "Hiro", "dna2")
+    assert f.pixmap_for("ttr", "Hiro", "head")[1] == "previous"     # pending: tooltip case
+    for pose in POSES:
+        store.mark_failed("ttr", "Hiro", "dna2", pose)
+    assert store.promote_if_complete("ttr", "Hiro") is False
+    pm, tier = f.pixmap_for("ttr", "Hiro", "head")
+    assert tier == "current" and pm.toImage().pixelColor(0, 0) == QColor("#ff0000")
+    assert store.candidate_dna("ttr", "Hiro") is None
+
+
 def test_lru_is_dropped_on_promotion_so_the_new_outfit_shows(facade):
     f, store, pf = facade
     _complete(store, "ttr", "Hiro", "dna1", "#ff0000")

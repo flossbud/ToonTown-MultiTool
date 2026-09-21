@@ -70,6 +70,31 @@ def test_import_once_runs_exactly_once(facade):
     assert f.import_once(sm, str(flat)) == 0                  # marker file honoured
 
 
+def test_import_once_announces_each_set_it_promoted(facade):
+    """The import promotes inside the store, which emits nothing, and the
+    sweep then finds nothing to fetch -- so a card mounted before the warm
+    would keep its silhouette. import_once must announce the promotions."""
+    f, store, pf, tmp_path = facade
+    flat = tmp_path / "flat"
+    flat.mkdir()
+    for pose in POSES:
+        (flat / f"dna1__{pose}__512.png").write_bytes(PNG_SIGNATURE + b"old")
+    (flat / "dna2__portrait__512.png").write_bytes(PNG_SIGNATURE + b"half")   # partial: no promotion
+    sm = _Settings()
+    rt = RecentToonsStore(sm)
+    rt.record("acc1", "Hiro", "ttr", "dna1")
+    rt.record("acc2", "Hiro", "ttr", "dna1")            # same toon twice: one announcement
+    rt.record("acc3", "Blue Cat", "ttr", "dna2")
+    seen = []
+    f.set_promoted.connect(lambda g, n: seen.append((g, n)))
+    assert f.import_once(sm, str(flat)) == 3               # dna1 x2 poses + dna2's one
+    assert seen == [("ttr", "Hiro")]
+    assert store.current_dna("ttr", "Hiro") == "dna1"
+    assert store.current_dna("ttr", "Blue Cat") is None
+    assert f.import_once(sm, str(flat)) == 0              # marker: nothing to announce
+    assert seen == [("ttr", "Hiro")]
+
+
 def test_import_once_is_guarded_by_the_marker_even_when_the_first_import_was_partial(facade):
     f, store, pf, tmp_path = facade
     flat = tmp_path / "flat"

@@ -172,6 +172,40 @@ def test_an_all_refused_set_never_promotes(store):
     assert store.current_dna("ttr", "Hiro") is None
 
 
+def test_an_outfit_refused_for_every_pose_is_dropped_not_kept_as_candidate(store, capsys):
+    """Nothing landed and every pose refused: that outfit can never complete.
+    Left as the candidate it would pin the toon on "previous" forever, block
+    the user's refresh, and never be retried. Drop it; current keeps serving."""
+    store.note_dna("ttr", "Hiro", DNA1)
+    _land_all(store, "ttr", "Hiro", DNA1)
+    assert store.promote_if_complete("ttr", "Hiro") is True
+    store.note_dna("ttr", "Hiro", DNA2)
+    store.path_for("ttr", "Hiro", DNA2, "head")            # the set's folder exists, empty
+    assert os.path.isdir(os.path.join(store.toon_dir("ttr", "Hiro"), DNA2))
+    for pose in POSES:
+        store.mark_failed("ttr", "Hiro", DNA2, pose)
+    assert store.promote_if_complete("ttr", "Hiro") is False
+    assert store.candidate_dna("ttr", "Hiro") is None
+    assert not os.path.isdir(os.path.join(store.toon_dir("ttr", "Hiro"), DNA2))
+    with open(os.path.join(store.toon_dir("ttr", "Hiro"), "manifest.json")) as f:
+        assert DNA2 not in json.load(f)["sets"]
+    assert store.current_dna("ttr", "Hiro") == DNA1
+    path, tier = store.lookup("ttr", "Hiro", "head")
+    assert tier == "current" and DNA1 in path
+    assert "refused for every pose" in capsys.readouterr().out
+
+
+def test_a_partly_refused_outfit_with_nothing_landed_stays_a_candidate(store):
+    """Only a refusal of EVERY pose is terminal; with a pose still outstanding
+    the outfit may yet complete."""
+    store.note_dna("ttr", "Hiro", DNA1)
+    for pose in POSES[:-1]:
+        store.mark_failed("ttr", "Hiro", DNA1, pose)
+    assert store.promote_if_complete("ttr", "Hiro") is False
+    assert store.candidate_dna("ttr", "Hiro") == DNA1
+    assert store.missing_poses("ttr", "Hiro", DNA1) == [POSES[-1]]
+
+
 def test_invalidate_defers_to_an_outfit_already_on_its_way(store):
     """Refreshing while a newer outfit downloads must not send the toon dark:
     current stays served, and the caller gets the candidate to re-prioritise."""

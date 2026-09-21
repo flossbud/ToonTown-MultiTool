@@ -215,6 +215,11 @@ class RenderPrefetcher(QObject):
         if err.kind not in BREAKER_KINDS:          # a 4xx: the server refused this pose
             if not stale:
                 self._store.mark_failed(game, name, dna, pose)
+                # A refused pose counts towards completeness (the origin will
+                # never render it), so this may be the result that completes
+                # the set -- or the one that proves the whole outfit is dead.
+                if self._store.promote_if_complete(game, name):
+                    self.set_promoted.emit(game, name)
             self._consecutive = 0
             if self._open:
                 self.fire_probe_now()               # answered ⇒ probe the next item now
