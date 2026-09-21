@@ -67,6 +67,22 @@ def test_previous_set_serves_with_tier_previous(facade):
     assert tier == "previous" and pm.toImage().pixelColor(0, 0) == QColor("#ff0000")
 
 
+def test_tier_is_previous_while_a_newer_outfit_is_pending(facade):
+    """The store's tier names the slot that served; the facade's names the
+    user's situation. A complete look served while a newer outfit is still
+    downloading IS the previous look, whichever slot holds it."""
+    f, store, pf = facade
+    _complete(store, "ttr", "Hiro", "dna1", "#ff0000")
+    store.note_dna("ttr", "Hiro", "dna2")          # candidate pending, nothing landed
+    pm, tier = f.pixmap_for("ttr", "Hiro", "head")
+    assert tier == "previous" and pm.toImage().pixelColor(0, 0) == QColor("#ff0000")
+
+    _complete(store, "ttr", "Hiro", "dna2", "#00ff00")
+    pf.set_promoted.emit("ttr", "Hiro")
+    pm, tier = f.pixmap_for("ttr", "Hiro", "head")
+    assert tier == "current" and pm.toImage().pixelColor(0, 0) == QColor("#00ff00")
+
+
 def test_lru_is_dropped_on_promotion_so_the_new_outfit_shows(facade):
     f, store, pf = facade
     _complete(store, "ttr", "Hiro", "dna1", "#ff0000")

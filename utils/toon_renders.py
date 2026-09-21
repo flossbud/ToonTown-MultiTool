@@ -1,7 +1,8 @@
 """What a widget asks: `pixmap_for(game, toon, pose)`. Sync, from disk, with
 a small decoded-pixmap LRU. Consumers repaint on `render_landed` (their pose)
 and `set_promoted` (always). `tier == "previous"` means the toon's last
-complete look is being shown while a newer outfit downloads."""
+complete look is being shown while a newer outfit downloads -- the user's
+notion, which the facade owns; the store's tier only names the slot served."""
 from __future__ import annotations
 
 import os
@@ -70,6 +71,10 @@ class ToonRenders(QObject):
             self.want(game, name, pose)
             return None
         path, tier = hit
+        # The store's "current" is the slot served. To the user it is the
+        # previous look whenever a newer outfit (the candidate) is pending.
+        if tier == "current" and self.store.candidate_dna(game, name):
+            tier = "previous"
         pm = self._lru.get(path)
         if pm is None:
             # QPixmap(path) consults Qt's own name+mtime+size decode cache, which
