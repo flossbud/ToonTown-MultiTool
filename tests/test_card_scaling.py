@@ -296,8 +296,11 @@ def test_layout_spacings_and_ka_pill_margins_scale(qapp, tmp_path, monkeypatch):
     assert cell["toggle_row"].spacing() == 9
     assert cell["ctrl_col"].spacing() == 10
     assert cell["body_row"].spacing() == 10
-    assert cell["stats_row"].spacing() == 16
-    assert cell["meta_col"].spacing() == 5
+    assert cell["meta_col"].spacing() == 7
+    assert cell["name_row"].spacing() == 10
+    assert cell["tray_lay"].spacing() == 13
+    assert cell["stack_r1"].spacing() == 14
+    assert cell["stack_col"].spacing() == 4
     assert ka_margins() == (5, 0, 11, 0)
     assert cell["ka_lay"].spacing() == 9
 
@@ -315,8 +318,11 @@ def test_layout_spacings_and_ka_pill_margins_scale(qapp, tmp_path, monkeypatch):
     assert cell["toggle_row"].spacing() == m.icon_px(9) != 9
     assert cell["ctrl_col"].spacing() == m.icon_px(10) != 10
     assert cell["body_row"].spacing() == m.icon_px(10) != 10
-    assert cell["stats_row"].spacing() == m.icon_px(16) != 16
-    assert cell["meta_col"].spacing() == m.icon_px(5) != 5
+    assert cell["meta_col"].spacing() == m.icon_px(7) != 7
+    assert cell["name_row"].spacing() == m.icon_px(10) != 10
+    assert cell["tray_lay"].spacing() == m.icon_px(13) != 13
+    assert cell["stack_r1"].spacing() == m.icon_px(14) != 14
+    assert cell["stack_col"].spacing() == m.icon_px(4) != 4
     assert ka_margins() == (m.icon_px(5), 0, m.icon_px(11), 0)
     assert ka_margins() != (5, 0, 11, 0)
     assert cell["ka_lay"].spacing() == m.icon_px(9) != 9

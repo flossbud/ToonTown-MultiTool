@@ -62,7 +62,7 @@ def _debug_log(key: str, msg: str) -> None:
 
 
 def _fetch_toon(port: int, timeout: float = 5.0) -> dict | None:
-    """Query /all.json on the given port to get toon, laff, and bean data. Tries IPv6 then IPv4."""
+    """Query /all.json on the given port to get toon, laff, bean, bank and token data. Tries IPv6 then IPv4."""
     for host in TTR_API_HOSTS:
         conn_host = f"[{host}]" if ":" in host else host
         try:
@@ -320,7 +320,9 @@ _wid_to_style: dict = {}   # window_id -> Rendition DNA string
 _wid_to_color: dict = {}   # window_id -> headColor hex string
 _wid_to_laff: dict = {}
 _wid_to_max_laff: dict = {}
-_wid_to_beans: dict = {}
+_wid_to_beans: dict = {}     # window_id -> jellybeans on hand (jar)
+_wid_to_bank: dict = {}      # window_id -> jellybeans in the bank
+_wid_to_tokens: dict = {}    # window_id -> Cartoonival tokens (absent outside the event)
 _wid_to_timestamp: dict = {}
 _wid_to_name_lock = threading.Lock()
 
@@ -337,6 +339,8 @@ def clear_stale_names(current_window_ids: list):
             _wid_to_laff.pop(wid, None)
             _wid_to_max_laff.pop(wid, None)
             _wid_to_beans.pop(wid, None)
+            _wid_to_bank.pop(wid, None)
+            _wid_to_tokens.pop(wid, None)
             _wid_to_timestamp.pop(wid, None)
 
 
@@ -374,14 +378,38 @@ def _mark_full_scan_done(current_window_ids: list):
         _last_full_scan_wids = frozenset(current_window_ids) if current_window_ids else frozenset()
 
 
+def _parse_tokens(raw) -> int | None:
+    """Normalise the `tokens` field of /all.json to an int, or None when the
+    field is absent. The doc only says the field "contains the Toon's current
+    quantity of Cartoonival Tokens", so accept a bare number or a
+    {"current": N} object; anything else reads as absent."""
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        return int(raw)
+    if isinstance(raw, dict):
+        cur = raw.get("current")
+        if isinstance(cur, (int, float)) and not isinstance(cur, bool):
+            return int(cur)
+    return None
+
+
+def _empty_slots(num_slots: int):
+    """The all-None result tuple, one list per field, in return order."""
+    return tuple([None] * num_slots for _ in range(8))
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def get_toon_names_by_slot(num_slots: int, current_window_ids: list = None):
     """
-    Fetch toon names, styles, and head colors ordered by slot.
-    Returns (names, styles, colors) — all lists of length num_slots.
+    Fetch toon names, styles, head colors, laff, max laff, beans on hand, bank
+    beans and Cartoonival tokens ordered by slot.
+    Returns (names, styles, colors, laffs, max_laffs, beans, bank, tokens) -
+    all lists of length num_slots. `tokens` is None when the API omits the
+    field (outside Cartoonival), never 0 - the card keys the cell off presence.
     """
-    found = {}  # port -> (name, style, headColor)
+    found = {}  # port -> (name, style, headColor, laff, max_laff, beans, bank, tokens)
     found_lock = threading.Lock()
 
     def _query(port):
@@ -401,17 +429,21 @@ def get_toon_names_by_slot(num_slots: int, current_window_ids: list = None):
             current_laff = laff_data.get("current")
             max_laff = laff_data.get("max")
 
-            beans_data = data.get("beans", {}).get("bank", {})
-            bank_beans = beans_data.get("current")
+            beans_data = data.get("beans") or {}
+            jar_beans = (beans_data.get("jar") or {}).get("current")
+            bank_beans = (beans_data.get("bank") or {}).get("current")
+            tokens = _parse_tokens(data.get("tokens"))
 
             if _DEBUG and _log_callback:
-                msg = f"[TTR API] Port {port}: name={name!r}, laff={current_laff}/{max_laff}, bank={bank_beans}"
+                msg = (f"[TTR API] Port {port}: name={name!r}, laff={current_laff}/{max_laff}, "
+                       f"beans={jar_beans}, bank={bank_beans}, tokens={tokens}")
                 with _last_logged_lock:
                     if _last_logged.get(port) != msg:
                         _last_logged[port] = msg
                         _log_callback(msg)
             with found_lock:
-                found[port] = (name, style, headColor, current_laff, max_laff, bank_beans)
+                found[port] = (name, style, headColor, current_laff, max_laff,
+                               jar_beans, bank_beans, tokens)
 
     do_full_scan = _should_full_scan(current_window_ids)
     with _approved_ports_lock:
@@ -421,7 +453,7 @@ def get_toon_names_by_slot(num_slots: int, current_window_ids: list = None):
         )
 
     if not ports_to_scan:
-        return [None]*num_slots, [None]*num_slots, [None]*num_slots, [None]*num_slots, [None]*num_slots, [None]*num_slots
+        return _empty_slots(num_slots)
 
     threads = [
         threading.Thread(target=_query, args=(port,), daemon=True)
@@ -444,7 +476,7 @@ def get_toon_names_by_slot(num_slots: int, current_window_ids: list = None):
                     _last_logged.pop(p, None)
 
     if not found:
-        return [None]*num_slots, [None]*num_slots, [None]*num_slots, [None]*num_slots, [None]*num_slots, [None]*num_slots
+        return _empty_slots(num_slots)
 
     found_names  = {p: v[0] for p, v in found.items()}
     found_styles = {p: v[1] for p, v in found.items()}
@@ -452,6 +484,8 @@ def get_toon_names_by_slot(num_slots: int, current_window_ids: list = None):
     found_laff   = {p: v[3] for p, v in found.items()}
     found_max_laff = {p: v[4] for p, v in found.items()}
     found_beans  = {p: v[5] for p, v in found.items()}
+    found_bank   = {p: v[6] for p, v in found.items()}
+    found_tokens = {p: v[7] for p, v in found.items()}
 
     port_to_wid = _build_port_to_window_id(current_window_ids or [], set(found_names.keys()))
 
@@ -492,6 +526,16 @@ def get_toon_names_by_slot(num_slots: int, current_window_ids: list = None):
                 beans = found_beans.get(port)
                 if beans is not None:
                     _wid_to_beans[wid] = beans
+                bank = found_bank.get(port)
+                if bank is not None:
+                    _wid_to_bank[wid] = bank
+                # Tokens are presence-keyed: drop the entry when the event
+                # field disappears so the card hides the cell.
+                tokens = found_tokens.get(port)
+                if tokens is not None:
+                    _wid_to_tokens[wid] = tokens
+                else:
+                    _wid_to_tokens.pop(wid, None)
 
         # Clear out any windows that are open but no longer returned API data (e.g. logged out back to menu)
         for wid in current_window_ids or []:
@@ -502,6 +546,8 @@ def get_toon_names_by_slot(num_slots: int, current_window_ids: list = None):
                 _wid_to_laff.pop(wid, None)
                 _wid_to_max_laff.pop(wid, None)
                 _wid_to_beans.pop(wid, None)
+                _wid_to_bank.pop(wid, None)
+                _wid_to_tokens.pop(wid, None)
                 _wid_to_timestamp.pop(wid, None)
 
         name_snapshot  = dict(_wid_to_name)
@@ -510,6 +556,8 @@ def get_toon_names_by_slot(num_slots: int, current_window_ids: list = None):
         laff_snapshot  = dict(_wid_to_laff)
         max_laff_snapshot = dict(_wid_to_max_laff)
         beans_snapshot = dict(_wid_to_beans)
+        bank_snapshot  = dict(_wid_to_bank)
+        tokens_snapshot = dict(_wid_to_tokens)
 
     names  = [None] * num_slots
     styles = [None] * num_slots
@@ -517,6 +565,8 @@ def get_toon_names_by_slot(num_slots: int, current_window_ids: list = None):
     laffs  = [None] * num_slots
     max_laffs = [None] * num_slots
     beans  = [None] * num_slots
+    bank   = [None] * num_slots
+    tokens = [None] * num_slots
 
     if current_window_ids is not None:
         for i, wid in enumerate(current_window_ids):
@@ -527,6 +577,8 @@ def get_toon_names_by_slot(num_slots: int, current_window_ids: list = None):
                 laffs[i]  = laff_snapshot.get(wid)
                 max_laffs[i] = max_laff_snapshot.get(wid)
                 beans[i]  = beans_snapshot.get(wid)
+                bank[i]   = bank_snapshot.get(wid)
+                tokens[i] = tokens_snapshot.get(wid)
     else:
         for i, (port, name) in enumerate(sorted(found_names.items())):
             if i < num_slots:
@@ -536,14 +588,16 @@ def get_toon_names_by_slot(num_slots: int, current_window_ids: list = None):
                 laffs[i]  = found_laff.get(port)
                 max_laffs[i] = found_max_laff.get(port)
                 beans[i]  = found_beans.get(port)
+                bank[i]   = found_bank.get(port)
+                tokens[i] = found_tokens.get(port)
 
-    return names, styles, colors, laffs, max_laffs, beans
+    return names, styles, colors, laffs, max_laffs, beans, bank, tokens
 
 
 def get_toon_names_threaded(num_slots: int, callback, current_window_ids: list = None) -> None:
     """
-    Fetch toon names, styles, head colors, laff, max_laff, and beans down in a background thread.
-    callback(names, styles, colors, laffs, max_laffs, beans) is called on completion.
+    Fetch toon names, styles, head colors, laff, max_laff, beans, bank and tokens in a background thread.
+    callback(names, styles, colors, laffs, max_laffs, beans, bank, tokens) is called on completion.
     """
     def _run():
         res = get_toon_names_by_slot(num_slots, current_window_ids)

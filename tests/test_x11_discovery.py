@@ -194,6 +194,117 @@ class TestFindWindowIdsByClass:
             )
         assert results == ["101"]
 
+    def test_gnome_frame_window_does_not_shadow_its_client(self):
+        """Same mutter-x11-frames title-copying hazard as find_game_windows:
+        the frame matches on WM_NAME, the client on WM_CLASS, and only the
+        client is a real game window."""
+        client = _make_window(
+            52428809,
+            wm_class=("com.toontownrewritten.Launcher", "Toontown Rewritten"),
+            wm_name="Toontown Rewritten",
+        )
+        frame = _make_window(
+            10485863,
+            wm_class=("mutter-x11-frames", "mutter-x11-frames"),
+            wm_name="Toontown Rewritten",
+            children=[client],
+        )
+        root = _make_window(1, children=[frame])
+        with patch.object(x11_discovery, "_open_display",
+                          return_value=_patched_display(root)):
+            results = x11_discovery.find_window_ids_by_class(
+                ["Toontown Rewritten"],
+                title_prefixes=["Toontown Rewritten"],
+            )
+        assert results == ["52428809"]
+
+
+class TestFindGameWindows:
+    def test_pairs_ids_with_game_tags(self):
+        ttr = _make_window(101, wm_class=("ttrengine", "Toontown Rewritten"))
+        cc = _make_window(202, wm_class=("corporateclash", "Corporate Clash"))
+        firefox = _make_window(303, wm_class=("Navigator", "firefox"))
+        root = _make_window(1, children=[ttr, firefox, cc])
+
+        with patch.object(x11_discovery, "_open_display",
+                          return_value=_patched_display(root)):
+            assert x11_discovery.find_game_windows() == [("101", "ttr"),
+                                                         ("202", "cc")]
+
+    def test_gnome_frame_window_does_not_double_count_its_client(self):
+        """GNOME/Mutter decorates Xwayland clients with a helper process
+        (mutter-x11-frames) whose frame window COPIES the client's title onto
+        its own WM_NAME. That trips the WM_NAME fallback, so every game window
+        got discovered twice — once as the frame, once as the real client —
+        which fed 8 candidates into a 4-cell grid and pushed real toons out of
+        the card slots entirely. Only the innermost match is a client."""
+        client = _make_window(
+            52428809,
+            wm_class=("com.toontownrewritten.Launcher", "Toontown Rewritten"),
+            wm_name="Toontown Rewritten",
+        )
+        frame = _make_window(
+            10485863,
+            wm_class=("mutter-x11-frames", "mutter-x11-frames"),
+            wm_name="Toontown Rewritten",
+            children=[client],
+        )
+        root = _make_window(1, children=[frame])
+
+        with patch.object(x11_discovery, "_open_display",
+                          return_value=_patched_display(root)):
+            assert x11_discovery.find_game_windows() == [("52428809", "ttr")]
+
+    def test_four_gnome_framed_windows_yield_four_clients_in_tree_order(self):
+        """The live four-toon case: eight matches collapse to four clients."""
+        pairs = []
+        frames = []
+        for i, (frame_id, client_id) in enumerate(
+            [(10485863, 52428809), (10485954, 48234505),
+             (10485824, 46137353), (10485784, 33554441)]
+        ):
+            client = _make_window(
+                client_id,
+                wm_class=("com.toontownrewritten.Launcher", "Toontown Rewritten"),
+                wm_name="Toontown Rewritten",
+            )
+            frames.append(_make_window(
+                frame_id,
+                wm_class=("mutter-x11-frames", "mutter-x11-frames"),
+                wm_name="Toontown Rewritten",
+                children=[client],
+            ))
+            pairs.append((str(client_id), "ttr"))
+        root = _make_window(1, children=frames)
+
+        with patch.object(x11_discovery, "_open_display",
+                          return_value=_patched_display(root)):
+            assert x11_discovery.find_game_windows() == pairs
+
+    def test_unframed_game_window_is_still_matched(self):
+        """An override-redirect / unreparented game window has no matching
+        descendant, so the innermost-match rule must keep it."""
+        ttr = _make_window(101, wm_class=("ttrengine", "Toontown Rewritten"))
+        root = _make_window(1, children=[ttr])
+
+        with patch.object(x11_discovery, "_open_display",
+                          return_value=_patched_display(root)):
+            assert x11_discovery.find_game_windows() == [("101", "ttr")]
+
+    def test_non_matching_ancestor_is_unaffected(self):
+        """A plain wrapper that doesn't match keeps its matching child."""
+        ttr = _make_window(101, wm_class=("ttrengine", "Toontown Rewritten"))
+        wrapper = _make_window(50, wm_class=None, children=[ttr])
+        root = _make_window(1, children=[wrapper])
+
+        with patch.object(x11_discovery, "_open_display",
+                          return_value=_patched_display(root)):
+            assert x11_discovery.find_game_windows() == [("101", "ttr")]
+
+    def test_no_display_returns_empty(self):
+        with patch.object(x11_discovery, "_open_display", return_value=None):
+            assert x11_discovery.find_game_windows() == []
+
 
 class TestGetWindowRootX:
     def test_returns_translated_x(self):

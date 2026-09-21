@@ -243,35 +243,43 @@ def make_mouse_icon(size: int = 16) -> QIcon:
     return QIcon(pixmap)
 
 
-def make_lightning_icon(size: int = 14, color: QColor | None = None) -> QIcon:
-    """Draw a stylised lightning bolt for the keep-alive toggle."""
+def make_stopwatch_icon(size: int = 14, color: QColor | None = None) -> QIcon:
+    """Draw a stylised stopwatch for the keep-alive toggle."""
     pixmap = QPixmap(size, size)
     pixmap.fill(QColor(0, 0, 0, 0))
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.Antialiasing)
 
-    fill = color or QColor(220, 220, 220)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(fill)
+    ink = color or QColor(220, 220, 220)
 
-    # Classic zigzag bolt traced through 6 points. Coordinates are in
-    # normalized 0..1 space and scaled to `size`; tuned so the bolt
-    # reads at 14 px (the default for the Multitoon icon buttons).
-    norm_points = [
-        (0.55, 0.05),
-        (0.20, 0.55),
-        (0.45, 0.55),
-        (0.35, 0.95),
-        (0.80, 0.40),
-        (0.55, 0.40),
-    ]
-    path = QPainterPath()
-    px, py = norm_points[0]
-    path.moveTo(px * size, py * size)
-    for nx, ny in norm_points[1:]:
-        path.lineTo(nx * size, ny * size)
-    path.closeSubpath()
-    painter.drawPath(path)
+    # Coordinates are in normalized 0..1 space and scaled to `size`; tuned so
+    # the case, crown and hand stay separable at 13 px (the Multitoon pill
+    # toggle) without going spindly at 20 px (the Settings card).
+    stroke = max(1.0, size * 0.105)
+    cx, cy = 0.5 * size, 0.585 * size
+    radius = 0.345 * size
+
+    # Crown (the plunger above the case), drawn first so the case stroke
+    # overlaps its base rather than leaving a seam.
+    crown_w, crown_h = size * 0.26, size * 0.17
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(ink)
+    painter.drawRoundedRect(
+        QRectF(cx - crown_w / 2, size * 0.05, crown_w, crown_h),
+        stroke * 0.4, stroke * 0.4,
+    )
+
+    # Case ring + a single hand pointing to roughly 1-2 o'clock.
+    pen = QPen(ink, stroke)
+    pen.setCapStyle(Qt.RoundCap)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+    painter.drawEllipse(QPointF(cx, cy), radius, radius)
+    hand = radius * 0.62
+    painter.drawLine(
+        QPointF(cx, cy),
+        QPointF(cx + hand * 0.72, cy - hand * 0.72),
+    )
 
     painter.end()
     return QIcon(pixmap)
@@ -317,33 +325,81 @@ def make_heart_icon(size: int = 16, color: QColor = None) -> QIcon:
 
 
 def make_jellybean_icon(size: int = 16, color: QColor = None) -> QIcon:
-    """Draw a jellybean icon using Qt primitives."""
-    color = color or QColor("#E8A838")
+    """The game's kidney-shaped jellybean, candy pink: one open curve stroked
+    twice with round caps (dark under-stroke, pink over-stroke) plus a specular
+    dot. The round caps and the curve's inner concavity produce the bean
+    silhouette AND its outline in one shape. Spec box is 24x24; scaled to
+    `size`. `color` overrides the over-stroke (the outline darkens from it)."""
+    fill = color or QColor("#ff6fae")
+    outline = QColor("#b03064") if color is None else fill.darker(160)
     def draw(p, s, c):
+        k = s / 24.0
+        p.translate(s / 2, s / 2)
+        p.rotate(-10)
+        p.translate(-s / 2, -s / 2)
+        p.scale(k, k)
+        path = QPainterPath(QPointF(14.2, 6.6))
+        path.cubicTo(6.4, 9.4, 6.4, 15.4, 12.2, 18.2)
+        p.setBrush(Qt.NoBrush)
+        # Keep the endpoints (11.8 apart) wider than the over-stroke (8.8) or
+        # the two round caps merge and the glyph reads as a pink heart.
+        for col, width in ((outline, 11.0), (fill, 8.8)):
+            pen = QPen(col, width)
+            pen.setCapStyle(Qt.RoundCap)
+            p.setPen(pen)
+            p.drawPath(path)
         p.setPen(Qt.NoPen)
-        p.setBrush(c)
+        p.setBrush(QColor("#ffd4e6"))
+        p.drawEllipse(QPointF(12.3, 7.2), 1.5, 1.5)
+    return _draw_nav_icon(size, fill, draw)
 
-        p.translate(s/2, s/2)
-        p.rotate(30) # Tilt it like a jellybean
 
-        # Draw a rounded rect (pill shape) slightly curved if possible,
-        # but a simple pill is fine for 16x16
-        pill_w = s * 0.5
-        pill_h = s * 0.8
-        rect = QRectF(-pill_w/2, -pill_h/2, pill_w, pill_h)
-        path = QPainterPath()
-        path.addRoundedRect(rect, pill_w/2, pill_w/2)
-        p.drawPath(path)
+def make_bean_jar_icon(size: int = 16) -> QIcon:
+    """The game's glass jellybean jar: translucent body (the card colour reads
+    through as glass), four candy dots, and a red screw lid painted LAST so it
+    overhangs the neck. Spec box is 24x24; scaled to `size`."""
+    def draw(p, s, c):
+        k = s / 24.0
+        p.scale(k, k)
+        body = QPainterPath(QPointF(7.8, 6.6))
+        body.lineTo(16.2, 6.6)
+        body.cubicTo(16.2, 8.7, 19.8, 9.6, 19.8, 14.0)
+        body.cubicTo(19.8, 18.4, 16.5, 21.4, 12.0, 21.4)
+        body.cubicTo(7.5, 21.4, 4.2, 18.4, 4.2, 14.0)
+        body.cubicTo(4.2, 9.6, 7.8, 8.7, 7.8, 6.6)
+        body.closeSubpath()
+        p.setPen(QPen(QColor("#a9dced"), 1.3))
+        p.setBrush(QColor(214, 241, 250, 102))
+        p.drawPath(body)
+        p.setPen(Qt.NoPen)
+        for (x, y, r, col) in ((9.4, 13.4, 1.7, "#ff6fae"), (14.4, 12.8, 1.7, "#57c96a"),
+                               (11.9, 17.2, 1.7, "#f2b431"), (15.6, 16.6, 1.6, "#6cc4ef")):
+            p.setBrush(QColor(col))
+            p.drawEllipse(QPointF(x, y), r, r)
+        p.setPen(QPen(QColor("#a32a24"), 1.2))
+        p.setBrush(QColor("#e0453c"))
+        p.drawRoundedRect(QRectF(4.6, 2.1, 14.8, 5.1), 1.9, 1.9)
+    return _draw_nav_icon(size, QColor("#a9dced"), draw)
 
-        # Add a little white highlight to make it look like a bean
-        hl_w = pill_w * 0.3
-        hl_h = pill_h * 0.3
-        p.setBrush(QColor(255, 255, 255, 100))
-        p.drawEllipse(QRectF(-pill_w*0.2, -pill_h*0.25, hl_w, hl_h))
 
-        p.rotate(-30)
-        p.translate(-s/2, -s/2)
-    return _draw_nav_icon(size, color, draw)
+def make_token_icon(size: int = 16) -> QIcon:
+    """Cartoonival token: a gold party popper - filled cone plus three confetti
+    dots bursting up-right. Spec box is 24x24; scaled to `size`."""
+    gold = QColor("#f0b429")
+    def draw(p, s, c):
+        k = s / 24.0
+        p.scale(k, k)
+        cone = QPainterPath(QPointF(2.9, 21.1))
+        cone.lineTo(8.8, 6.2)
+        cone.lineTo(17.7, 15.1)
+        cone.closeSubpath()
+        p.setPen(QPen(QColor("#b9821b"), 1.2))
+        p.setBrush(gold)
+        p.drawPath(cone)
+        p.setPen(Qt.NoPen)
+        for (x, y, r) in ((17.6, 5.0, 1.8), (20.6, 9.8, 1.1), (13.4, 3.2, 1.1)):
+            p.drawEllipse(QPointF(x, y), r, r)
+    return _draw_nav_icon(size, gold, draw)
 
 
 def make_nav_gamepad(size: int = 22, color: QColor = None) -> QIcon:

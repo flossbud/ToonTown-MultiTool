@@ -110,7 +110,7 @@ def test_control_rects_follow_permuted_shells(qt_app, monkeypatch, tmp_path):
 
 
 def test_keep_alive_control_rect_is_button_not_pill(qt_app, monkeypatch, tmp_path):
-    # Only the keep-alive lightning button blocks clicks; its enclosing pill (which
+    # Only the keep-alive stopwatch button blocks clicks; its enclosing pill (which
     # also holds the progress bar) must stay click-through. The button rect must be
     # the one in control_rects AND sit strictly inside the wider pill.
     tab = _make_tab(monkeypatch, tmp_path)
@@ -263,5 +263,23 @@ def test_deliver_ghost_click_disabled_control_is_inert(qt_app, monkeypatch, tmp_
         center = btn.mapTo(root, QPoint(btn.width() // 2, btn.height() // 2))
         compact.deliver_ghost_click(0, center.x(), center.y())
         assert seen == []
+    finally:
+        tab.input_service.shutdown()
+
+
+def test_feature_chip_is_click_through(qt_app, monkeypatch, tmp_path):
+    # The discovery affordance never blocks clicks in peek mode - same rule the
+    # full-width bubble follows. Only real gameplay controls are opaque.
+    tab = _make_tab(monkeypatch, tmp_path)
+    try:
+        tab.settings_manager.set("click_sync_enabled", True)
+        qt_app.processEvents()
+        compact = _show_compact(tab, qt_app)
+        cell = compact._cells[0]
+        root = cell["cell"]
+        s = cell.get("content_slot", 0)
+        chip = tab.feature_chips[s]
+        chip_rect = QRect(chip.mapTo(root, QPoint(0, 0)), chip.size())
+        assert chip_rect not in compact.control_rects(0)
     finally:
         tab.input_service.shutdown()

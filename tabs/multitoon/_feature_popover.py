@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
-from utils.icon_factory import make_click_sync_icon, make_lightning_icon
+from utils.icon_factory import make_click_sync_icon, make_stopwatch_icon
 from utils.settings_keys import CLICK_SYNC_ENABLED
 from utils.shared_widgets import Switch
 from utils.theme_manager import (
@@ -373,7 +373,7 @@ class FeatureDiscoveryPopover(QWidget):
         self._chips["sync"].setPixmap(
             make_click_sync_icon(15, QColor(sync_ink)).pixmap(15, 15))
         self._chips["ka"].setPixmap(
-            make_lightning_icon(13, QColor(ka_ink)).pixmap(13, 13))
+            make_stopwatch_icon(13, QColor(ka_ink)).pixmap(13, 13))
         self.setStyleSheet(f"""
             QFrame#feature_popover_panel {{
                 background: {c['bg_card']};

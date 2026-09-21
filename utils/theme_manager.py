@@ -435,7 +435,7 @@ V2_ACCENTS = {
 
 # Keep-Alive feature accent (feature-discovery popover + pill spec,
 # Redesign/design_handoff_new_feature). The theme's own orange (#c47a2a)
-# reads too brown for the lightning affordance; the design uses this
+# reads too brown for the keep-alive affordance; the design uses this
 # brighter pair. Theme-agnostic, like V2_ACCENTS.
 KEEP_ALIVE_ACCENT = "#ff9500"
 KEEP_ALIVE_ACCENT_BORDER = "#ffb04d"

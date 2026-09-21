@@ -207,8 +207,8 @@ jobs:
           PY
 
           base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name  "flossbud"
+          git config user.email "flossbud27@gmail.com"
 
           for branch in main dev; do
             git fetch origin "$branch"

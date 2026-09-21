@@ -12,7 +12,7 @@ def test_base_metrics_at_scale_1():
     m = CardMetrics(scale=1.0)
     assert m.portrait == 172 and m.card_radius == 20 and m.cutout_r == 96
     assert m.emblem == 156 and m.grid_gap == 18
-    assert m.card_border == 5 and m.card_pad == 18 and m.card_min_h == 232
+    assert m.card_border == 5 and m.card_pad == 18 and m.card_min_h == 252
     assert m.ctrl_w == 158 and m.portrait_ring == 4
 
 

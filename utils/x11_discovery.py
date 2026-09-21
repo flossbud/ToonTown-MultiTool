@@ -64,6 +64,24 @@ _GAME_BY_MARKER = {
     "Corporate Clash": "cc",
 }
 
+# Games whose engine ALWAYS sets an authoritative WM_CLASS on Linux. TTR is
+# native-only here (no Wine path exists), so a window that merely carries a
+# "Toontown Rewritten..." title without that class is never the game — it is
+# the flatpak launcher UI (WM_CLASS "toontown", title "Toontown Rewritten
+# Launcher"), a news/patch window, etc. Mirrors macos_discovery's
+# _STRICT_BUNDLE_GAMES. CC is absent because under Wine/Proton its WM_CLASS is
+# forced to steam_proton and the title is the only signal.
+_CLASS_ONLY_GAMES = frozenset({"ttr"})
+
+
+def _is_launcher_title(name_str: str, marker: str) -> bool:
+    """True if a marker-prefixed title identifies the game's LAUNCHER/updater
+    rather than the engine, e.g. "Toontown Rewritten Launcher". Tokenized on
+    the remainder after the marker so an engine title carrying a version
+    ("Corporate Clash [1.11.17777]") is untouched."""
+    rest = name_str[len(marker):].strip(" -:—|")
+    return rest.split(" ", 1)[0].lower() == "launcher"
+
 
 def _game_for_window_props(wm_class, wm_name) -> str | None:
     """Classify a window as 'ttr'/'cc'/None from its WM_CLASS and WM_NAME.
@@ -71,7 +89,9 @@ def _game_for_window_props(wm_class, wm_name) -> str | None:
     wm_class is the tuple returned by Xlib's get_wm_class() — (instance, class);
     we match against its class component (index 1). wm_name is the WM_NAME str.
     WM_CLASS substring wins; WM_NAME must *start with* a marker (so a Wine
-    console window titled with the full .exe path does not match).
+    console window titled with the full .exe path does not match). The title
+    fallback never applies to _CLASS_ONLY_GAMES and never matches a launcher
+    title (see _is_launcher_title).
     """
     if wm_class and len(wm_class) >= 2:
         cls = wm_class[1] or ""
@@ -81,9 +101,36 @@ def _game_for_window_props(wm_class, wm_name) -> str | None:
     if wm_name:
         name_str = str(wm_name)
         for marker, game in _GAME_BY_MARKER.items():
-            if name_str.startswith(marker):
+            if game in _CLASS_ONLY_GAMES:
+                continue
+            if name_str.startswith(marker) and not _is_launcher_title(name_str, marker):
                 return game
     return None
+
+
+def _drop_if_frame(results, own_index: int, own_matched: bool,
+                   descendant_matched: bool) -> None:
+    """Remove this window's own match when a descendant also matched.
+
+    A reparenting window manager wraps each client in a frame window that is
+    the client's parent, so a match that CONTAINS another match is the frame,
+    never the game. Normally frames are invisible to us - they carry no
+    WM_CLASS and no WM_NAME - but GNOME/Mutter decorates Xwayland clients from
+    a separate helper process (``mutter-x11-frames``) whose frame windows copy
+    the client's title onto their own WM_NAME. That trips the WM_NAME-prefix
+    fallback in ``_game_for_window_props``, so on GNOME every game window was
+    discovered twice: once as the frame, once as the real client.
+
+    Deduping by innermost match (rather than by a WM_STATE probe or a
+    ``mutter-x11-frames`` denylist) costs no extra X round trip, needs no
+    window-manager cooperation, and still keeps an unreparented or
+    override-redirect game window, which has no matching descendant.
+
+    ``own_index`` is where this window's entry was appended BEFORE recursing,
+    so descendant entries sit after it and the pop leaves their order intact.
+    """
+    if own_matched and descendant_matched:
+        results.pop(own_index)
 
 
 def find_window_ids_by_class(
@@ -102,6 +149,9 @@ def find_window_ids_by_class(
     ``"Corporate Clash [1.11.17777]"``. We require startswith (not substring)
     so the sibling Wine console window whose title is the .exe's full Windows
     path is not falsely matched.
+
+    Only the innermost match on each branch is returned; a match that contains
+    another match is a window-manager frame (see ``_drop_if_frame``).
 
     Returns window IDs as decimal strings.
     """
@@ -126,7 +176,10 @@ def _walk_collect(
     targets: tuple[str, ...],
     prefixes: tuple[str, ...],
     results: list[str],
-) -> None:
+) -> bool:
+    """Depth-first collect into ``results``; returns whether this subtree
+    matched. Keeps only the innermost match per branch - see
+    ``_drop_if_frame`` for why an outer match is a window-manager frame."""
     matched = False
     if targets:
         try:
@@ -136,7 +189,6 @@ def _walk_collect(
         if wm_class and len(wm_class) >= 2:
             cls = wm_class[1] or ""
             if any(target in cls for target in targets):
-                results.append(str(window.id))
                 matched = True
     if not matched and prefixes:
         try:
@@ -146,20 +198,28 @@ def _walk_collect(
         if wm_name:
             name_str = str(wm_name)
             if any(name_str.startswith(p) for p in prefixes):
-                results.append(str(window.id))
+                matched = True
+    own_index = len(results)
+    if matched:
+        results.append(str(window.id))
     try:
         children = window.query_tree().children
     except Exception:
         children = []
+    descendant_matched = False
     for child in children:
-        _walk_collect(child, targets, prefixes, results)
+        if _walk_collect(child, targets, prefixes, results):
+            descendant_matched = True
+    _drop_if_frame(results, own_index, matched, descendant_matched)
+    return matched or descendant_matched
 
 
 def find_game_windows() -> list[tuple[str, str]]:
     """Return (window_id, game) for all visible TTR/CC windows.
 
-    game is "ttr" or "cc". Mirrors find_window_ids_by_class' matching but keeps
-    the game identity instead of discarding it.
+    game is "ttr" or "cc". Mirrors find_window_ids_by_class' matching (including
+    the innermost-match frame rule) but keeps the game identity instead of
+    discarding it.
     """
     d = _open_display()
     if d is None:
@@ -173,7 +233,10 @@ def find_game_windows() -> list[tuple[str, str]]:
     return results
 
 
-def _walk_collect_games(window, results: list[tuple[str, str]]) -> None:
+def _walk_collect_games(window, results: list[tuple[str, str]]) -> bool:
+    """Depth-first collect into ``results``; returns whether this subtree
+    matched. Keeps only the innermost match per branch - see ``_drop_if_frame``
+    for why an outer match is a window-manager frame."""
     try:
         wm_class = window.get_wm_class()
     except Exception:
@@ -183,14 +246,19 @@ def _walk_collect_games(window, results: list[tuple[str, str]]) -> None:
     except Exception:
         wm_name = None
     game = _game_for_window_props(wm_class, wm_name)
+    own_index = len(results)
     if game is not None:
         results.append((str(window.id), game))
     try:
         children = window.query_tree().children
     except Exception:
         children = []
+    descendant_matched = False
     for child in children:
-        _walk_collect_games(child, results)
+        if _walk_collect_games(child, results):
+            descendant_matched = True
+    _drop_if_frame(results, own_index, game is not None, descendant_matched)
+    return game is not None or descendant_matched
 
 
 def get_window_root_x(wid: str) -> int | None:
