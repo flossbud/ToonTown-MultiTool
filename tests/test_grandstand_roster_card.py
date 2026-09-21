@@ -236,6 +236,78 @@ def test_keyboard_can_trigger_the_pencil_and_gear(hosted, qapp):
     assert edits == ["a"] and gears == ["a"]
 
 
+def test_the_action_is_in_the_tab_order(hosted):
+    """A full party refuses Space on a fifth card, so the visible per-card
+    Launch is the only keyboard route for accounts 5-16. It must be reachable
+    the same way the pencil and gear are."""
+    assert hosted.action.focusPolicy() == Qt.TabFocus
+
+
+def test_tab_walks_from_the_card_to_its_action_before_leaving(hosted, qapp):
+    """Traversal, not policy: repeated Tab from the focused card must land on
+    the action while still inside the card. `setFocus()` cannot show this."""
+    hosted.set_state("idle")
+    hosted.set_selected(False)
+    hosted.setFocus()
+    qapp.processEvents()
+    landings = []
+    for _ in range(8):
+        assert hosted.focusNextChild() is True
+        qapp.processEvents()
+        focused = QApplication.focusWidget()
+        if not hosted.isAncestorOf(focused):
+            break
+        landings.append(focused)
+    assert hosted.action in landings
+
+
+@pytest.mark.parametrize("state,signal_name", [
+    ("idle", "launch_clicked"),
+    ("failed", "retry_clicked"),
+])
+@pytest.mark.parametrize("key", [Qt.Key_Space, Qt.Key_Return])
+def test_keyboard_can_trigger_the_action(hosted, qapp, state, signal_name, key):
+    """Space and Return on the focused action fire the state's own signal —
+    and only that. Return must not fall through to the card body, whose own
+    Return toggles selection."""
+    seen, toggled = [], []
+    getattr(hosted, signal_name).connect(seen.append)
+    hosted.clicked.connect(toggled.append)
+    hosted.set_state(state)
+    hosted.set_selected(False)
+
+    hosted.setFocus()                            # reveals the action
+    qapp.processEvents()
+    hosted.action.setFocus()
+    qapp.processEvents()
+    assert hosted.action.hasFocus() is True
+    QTest.keyClick(hosted.action, key)
+
+    assert seen == ["a"]
+    assert toggled == []
+
+
+def test_focus_on_the_action_keeps_it_revealed_until_focus_leaves(hosted, qapp):
+    """The action is the last stop in the card's focus cluster. Landing on it
+    must not read as leaving the card; leaving it for another widget must."""
+    hosted.set_state("idle")
+    hosted.set_selected(False)
+    hosted.setFocus()
+    qapp.processEvents()
+    hosted.gear.setFocus()
+    qapp.processEvents()
+    hosted.action.setFocus()
+    qapp.processEvents()
+    assert hosted.action.hasFocus() is True
+    assert hosted.action_visible() is True
+    assert hosted.controls_revealed() is True
+
+    hosted.parentWidget().findChild(QPushButton).setFocus()   # the focus sink
+    qapp.processEvents()
+    assert hosted.action_visible() is False
+    assert hosted.controls_revealed() is False
+
+
 def test_focus_leaving_the_card_entirely_hides_the_controls(hosted, qapp):
     # The card's own focus is what reveals the chips; a hidden chip cannot be
     # focused.

@@ -3,8 +3,8 @@
 Fixed 148x216. Four controls, each a distinct job: the ribbon adds the account
 to the launch party and then shows its place on stage, the star sets the
 game-wide main, the pencil opens the appearance editor and the gear opens
-account settings. Pencil and gear reveal on hover *or focus* so they are
-keyboard-reachable.
+account settings. Pencil, gear and the state action reveal on hover *or
+focus* so they are keyboard-reachable.
 
 The card always draws the `head` pose regardless of the toon's saved pose, so
 the shelf reads as one rank rather than a row of unrelated crops.
@@ -108,6 +108,40 @@ class _Chip(QToolButton):
         super().mouseReleaseEvent(event)
 
 
+class _ActionButton(QPushButton):
+    """The card's state action (Launch, Retry, Enter 2FA, Quit, Cancel).
+
+    Keyboard-reachable like the pencil and gear: Tab lands on it and it tells
+    the card when focus arrives or leaves, so the focus-within reveal keeps it
+    on screen while it is the focused control. Return activates it as Space
+    does — QPushButton only clicks on Return as a dialog default, and left
+    alone the key would fall through to the card body, whose Return toggles
+    selection instead.
+    """
+
+    def __init__(self, parent: QWidget, on_focus=None) -> None:
+        super().__init__(parent)
+        self.setFocusPolicy(Qt.TabFocus)
+        self._on_focus = on_focus
+
+    def focusInEvent(self, event) -> None:
+        if self._on_focus is not None:
+            self._on_focus()
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event) -> None:
+        if self._on_focus is not None:
+            self._on_focus()
+        super().focusOutEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            self.click()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 class RosterCard(QFrame):
     clicked = Signal(str)
     star_clicked = Signal(str)
@@ -176,13 +210,12 @@ class RosterCard(QFrame):
         footer_font.setPixelSize(11)
         self.footer.setFont(footer_font)
 
-        self.action = QPushButton(self)
+        self.action = _ActionButton(self, on_focus=self._refresh_controls)
         self.action.setObjectName("card_action")
         # Pencil and gear occupy x=6..29 and x=118..141. The action owns the
         # clear lane between them whenever the hover/focus cluster is present.
         self.action.setGeometry(34, CARD_H - 30, 80, 24)
         self.action.setCursor(Qt.PointingHandCursor)
-        self.action.setFocusPolicy(Qt.NoFocus)
         self.action.clicked.connect(self._on_action)
         self.action.setVisible(False)
 
