@@ -75,7 +75,11 @@ class Switch(QWidget):
         self.setFixedSize(self.TRACK_W + 2 * self.HALO, self.TRACK_H + 2 * self.HALO)
         self.setCursor(Qt.PointingHandCursor)
 
-        self._anim = QPropertyAnimation(self, b"thumbX")
+        # parent=self: Qt owns the animation and destroys it inside the
+        # widget's destructor (which deregisters it from the animation
+        # timer). An unparented animation is freed by Python GC instead,
+        # possibly on a worker thread, leaving a dangling timer entry.
+        self._anim = QPropertyAnimation(self, b"thumbX", parent=self)
         self._anim.setDuration(160)
         self._anim.setEasingCurve(QEasingCurve.OutCubic)
 
@@ -195,7 +199,8 @@ class IOSSegmentedControl(QWidget):
         self.setCursor(Qt.PointingHandCursor)
 
         self._anim_x_val = 0.0
-        self._anim = QPropertyAnimation(self, b"_anim_x")
+        # parent=self: see Switch -- the animation must die with the widget.
+        self._anim = QPropertyAnimation(self, b"_anim_x", parent=self)
         self._anim.setDuration(150)
         self._anim.setEasingCurve(QEasingCurve.OutCubic)
 
@@ -293,7 +298,14 @@ class PulsingDot(QWidget):
         # frame so the status dot fades to the same level on hover.
         self._peek_opacity: float = 1.0
 
-        self._anim = QVariantAnimation()
+        # Parented to the widget so Qt destroys the animation inside the
+        # widget's own destructor, where ~QAbstractAnimation deregisters it
+        # from the unified animation timer on the GUI thread. Unparented,
+        # the C++ object belonged to the Python wrapper and was freed by
+        # the cyclic GC -- on whatever thread happened to run it -- while
+        # still registered; the next driver tick then dereferenced freed
+        # memory (SIGSEGV in QUnifiedTimer::updateAnimationTimers).
+        self._anim = QVariantAnimation(self)
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(1.0)
         self._anim.setDuration(2800)
@@ -360,6 +372,19 @@ class PulsingDot(QWidget):
             self._pulsing = False
             self._anim.stop()
             self._pulse_val = 0.0
+
+    # Same contract as Spinner: animate only while visible. setParent(None)
+    # and card/tab hides deliver a hide event, so a pulsing dot is already
+    # unregistered from the animation timer before any deferred delete
+    # runs. _pulsing is left alone so a re-show resumes the pulse.
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._pulsing:
+            self._anim.start()   # no-op if already running
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._anim.stop()
 
     def _on_pulse(self, val):
         # Map linear 0->1 through sin(pi*val) to get smooth 0->1->0 per cycle
