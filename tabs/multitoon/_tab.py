@@ -121,9 +121,11 @@ class ToonPortraitWidget(QWidget):
         self.setMinimumSize(38, 38)
         self.setMaximumSize(64, 64)
         self.setCursor(Qt.PointingHandCursor)
-        from utils.rendition_poses import RenditionPoseFetcher
-        self._fetcher = RenditionPoseFetcher.instance()
-        self._fetcher.pose_ready.connect(self._on_pose_ready)
+        from utils.toon_renders import ToonRenders
+        self._renders = ToonRenders.instance()
+        self._renders.render_landed.connect(self._on_render_landed)
+        self._renders.set_promoted.connect(self._on_set_promoted)
+        self._tier: str | None = None
         self.setMouseTracking(True)
 
     def mousePressEvent(self, event):
@@ -195,14 +197,16 @@ class ToonPortraitWidget(QWidget):
         self.update()
 
     def set_dna(self, dna):
-        """Load portrait from Rendition via the shared fetcher. Pass None
-        to revert to the fallback circle."""
+        """Show the toon's portrait from the per-toon render cache: tell the
+        cache this DNA was seen (it fetches whatever is missing) and read
+        whatever is on disk now. Pass None to revert to the fallback circle."""
         if not dna:
             # Always clear when explicitly told to (even if dna was
             # already None) so callers can use set_dna(None) to reset
-            # a stale pixmap left behind from a prior fetch.
+            # a stale pixmap left behind from a prior read.
             self._dna = None
             self._pixmap = None
+            self._tier = None
             self._loading = False
             self._dim_cache = None
             self.update()
@@ -212,10 +216,20 @@ class ToonPortraitWidget(QWidget):
         self._dna = dna
         # Pick pose from the customizations manager if available.
         self._pose = self._resolve_pose_from_manager()
-        self._loading = True
         self._dim_cache = None
-        self.update()
-        self._fetcher.request(dna, self._pose)
+        self._discover()
+        self._refresh_from_cache()
+
+    def _discover(self) -> None:
+        """Tell the cache about this toon's DNA once the (game, name, dna)
+        key is complete. The facade memoises per toon, so repeats are free.
+        A cache failure is contained: it must never break the tab."""
+        if not self._dna or self._game not in ("cc", "ttr") or not self._toon_name:
+            return
+        try:
+            self._renders.discovered(self._game, self._toon_name, self._dna)
+        except Exception as exc:                     # noqa: BLE001
+            print(f"[ToonRenders] portrait discovery failed: {exc}")
 
     def _resolve_pose_from_manager(self) -> str:
         from utils.toon_customization_resolve import resolve_pose
@@ -225,31 +239,52 @@ class ToonPortraitWidget(QWidget):
         return resolve_pose(entry, "portrait")
 
     def set_pose(self, pose: str) -> None:
-        """Switch the rendered pose. Triggers a refetch through the
-        shared fetcher. Called by _tab.py after a customization Save."""
+        """Switch the rendered pose: re-read it from the cache. Called by
+        _tab.py after a customization Save."""
         if pose == self._pose:
             return
         self._pose = pose
-        if self._dna:
-            self._pixmap = None
-            self._loading = True
-            self._dim_cache = None
-            self.update()
-            self._fetcher.request(self._dna, pose)
+        self._dim_cache = None
+        self._refresh_from_cache()
 
-    def _on_pose_ready(self, dna: str, pose: str, pixmap) -> None:
-        """Receives QPixmap or None from the shared fetcher on the GUI
-        thread. Filter by the widget's CURRENT (dna, pose) - stale
-        results from prior fetches must be ignored."""
-        if dna != self._dna or pose != self._pose:
+    def portrait_tier(self) -> str | None:
+        """`"current"`, `"previous"` (older outfit shown while a newer one
+        downloads), or None when nothing is drawn."""
+        return self._tier
+
+    def _refresh_from_cache(self) -> None:
+        """Sync read. `_loading` means 'nothing on disk yet' -- the prefetcher
+        has been told what we want and will land it. A cache failure is
+        contained: the badge falls back to its slot circle."""
+        self._pixmap, self._tier = None, None
+        self._dim_cache = None   # content changes -> rebuild dim
+        if not self._dna or self._game not in ("cc", "ttr") or not self._toon_name:
+            self._loading = False
+            self.update()
             return
-        self._loading = False
-        if pixmap is not None and not pixmap.isNull():
-            self._pixmap = pixmap
+        try:
+            hit = self._renders.pixmap_for(self._game, self._toon_name, self._pose)
+        except Exception as exc:                     # noqa: BLE001
+            print(f"[ToonRenders] portrait read failed: {exc}")
+            self._loading = False
+            self.update()
+            return
+        if hit is None:
+            self._loading = True
         else:
-            self._pixmap = None
-        self._dim_cache = None   # fetched pixmap changes content -> rebuild dim
+            self._pixmap, self._tier = hit
+            self._loading = False
         self.update()
+
+    def _on_render_landed(self, game: str, name: str, pose: str) -> None:
+        # The facade is process-wide, so this fires for every badge. Only a
+        # landing of THIS badge's live pose for THIS toon is worth a repaint.
+        if game == self._game and name == self._toon_name and pose == self._pose:
+            self._refresh_from_cache()
+
+    def _on_set_promoted(self, game: str, name: str) -> None:
+        if game == self._game and name == self._toon_name:
+            self._refresh_from_cache()
 
     def set_cc_mode(self, skin_rgb, accent_rgb, gloves_rgb, emoji):
         """Enable CC paint mode for this badge.
@@ -290,17 +325,15 @@ class ToonPortraitWidget(QWidget):
 
     def set_game(self, game: str | None) -> None:
         """Set the game tag ('cc', 'ttr', or None). Triggers a repaint
-        and re-resolves the pose against the manager if a DNA + name
-        are already known (same race fix as `set_toon_name`)."""
+        and, if a DNA is already known, re-resolves the pose against the
+        manager and reads the cache (same race fix as `set_toon_name`)."""
         if self._game == game:
             return
         self._game = game
         self._dim_cache = None
         self.update()
-        if self._dna and self._toon_name and game in ("cc", "ttr"):
-            new_pose = self._resolve_pose_from_manager()
-            if new_pose != self._pose:
-                self.set_pose(new_pose)
+        if self._dna:
+            self._key_changed()
 
     @property
     def game(self) -> str | None:
@@ -328,20 +361,26 @@ class ToonPortraitWidget(QWidget):
         """Set the toon name used as the override key. Triggers a repaint.
 
         If a DNA is already known, re-resolve the pose against the
-        customizations manager - on initial load `set_dna` runs before
-        `set_toon_name` (see `_apply_merged_toon_data`), so the first
-        fetch always asks for the default "portrait". Once the name
-        lands here we re-check the manager and refetch the saved pose
-        if it differs."""
+        customizations manager and read the cache - on initial load
+        `set_dna` runs before `set_toon_name` (see `_apply_merged_toon_data`),
+        and the cache is keyed by (game, name), so the first read has no
+        key. Once the name lands here we re-check the manager and read the
+        saved pose."""
         if self._toon_name == name:
             return
         self._toon_name = name
         self._dim_cache = None
         self.update()
-        if self._dna and name:
-            new_pose = self._resolve_pose_from_manager()
-            if new_pose != self._pose:
-                self.set_pose(new_pose)
+        if self._dna:
+            self._key_changed()
+
+    def _key_changed(self) -> None:
+        """The cache key is (game, name): when either lands after the DNA,
+        re-resolve the pose, discover, and read - even if the pose is the
+        same, the toon whose renders we read just changed."""
+        self._pose = self._resolve_pose_from_manager()
+        self._discover()
+        self._refresh_from_cache()
 
     def set_cc_auto_species(self, species_name: str | None) -> None:
         """Set the auto-detected CC species name (e.g. 'DOG'). Triggers a repaint."""
@@ -4300,9 +4339,9 @@ class MultitoonTab(QWidget):
         self._toon_fetch_timer.stop()
         self._glow_timer.stop()
         self._bar_timer.stop()
-        # Rendition fetches now go through the shared RenditionPoseFetcher
-        # singleton; per-badge cancel() is no longer needed (stale results
-        # are filtered by (dna, pose) match on the GUI thread).
+        # Portraits are read from the per-toon render cache (ToonRenders);
+        # per-badge cancel() is no longer needed (each badge repaints only
+        # on its own (game, name, pose) landing, on the GUI thread).
         self.input_service.shutdown()
         if self.click_sync_service is not None:
             self.click_sync_service.shutdown()

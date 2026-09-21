@@ -34,19 +34,22 @@ def test_state_change_clears_cache(qapp):
     assert pw._dim_cache is None
 
 
-def test_pose_ready_clears_cache(qapp):
-    # The async fetch callback populates _pixmap; it MUST invalidate the dim
+def test_render_landed_clears_cache(qapp, render_cache):
+    # A landing re-reads _pixmap from the cache; it MUST invalidate the dim
     # cache or a dimmed portrait stays stuck on its loading spinner.
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
     pw = ToonPortraitWidget(1)
     pw.resize(64, 64)
-    pw._dna = "x"
-    pw._pose = "portrait"
+    pw.set_game("ttr"); pw.set_toon_name("X"); pw.set_dna("x")
     pw._pixmap = _solid(64, 64, QColor(255, 0, 0))
     pw.set_dimmed(True)
     pw.grab()
     assert pw._dim_cache is not None
-    pw._on_pose_ready("x", "portrait", _solid(64, 64, QColor(0, 255, 0)))
+    complete_set(store, "ttr", "X", "x", "#00ff00")
+    pw._on_render_landed("ttr", "X", pw._pose)
     assert pw._dim_cache is None
+    assert pw._pixmap.toImage().pixelColor(0, 0) == QColor(0, 255, 0)
 
 
 def test_set_game_clears_cache(qapp):

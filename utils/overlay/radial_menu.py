@@ -595,10 +595,14 @@ class RadialMenuWidget(QWidget):
             self._hover_poll = QTimer(self)
             self._hover_poll.setInterval(50)
             self._hover_poll.timeout.connect(self._poll_hover)
-        from utils.rendition_poses import RenditionPoseFetcher
-        # Live-refresh: fill in a pending portrait when its pose lands. Qt
-        # auto-disconnects this bound-method slot when the widget is destroyed.
-        RenditionPoseFetcher.instance().pose_ready.connect(self._on_pose_ready)
+        from utils.toon_renders import ToonRenders
+        # Live-refresh: fill in a pending portrait when a render for its toon
+        # lands or its set is promoted. Both are bound-method slots so Qt
+        # auto-disconnects them when the widget is destroyed (a lambda would
+        # outlive the ring and fire into a deleted widget).
+        tr = ToonRenders.instance()
+        tr.render_landed.connect(self._on_render_landed)
+        tr.set_promoted.connect(self._on_set_promoted)
 
     @property
     def state(self) -> str:
@@ -733,7 +737,7 @@ class RadialMenuWidget(QWidget):
             busy = True
         if self._advance_press():
             busy = True
-        # Scope to the accounts ring: _loading is only cleared by _on_pose_ready
+        # Scope to the accounts ring: _loading is only cleared by _on_render_landed
         # while that sub-ring is showing, so gating here too keeps a leftover
         # pending id (e.g. user clicked Back before a pose arrived) from pinning
         # the clock at 60fps off-ring. Re-entering Accounts repopulates _loading.
@@ -1177,28 +1181,26 @@ class RadialMenuWidget(QWidget):
         self.state_changed.emit()   # spoke geometry swapped -> input reshape
         self.start_reveal()
 
-    def _on_pose_ready(self, dna, pose, pixmap):
-        """A Rendition pose arrived. Re-render any still-pending account whose
-        DNA matches (the disk cache is now warm) and repaint. No-op unless the
+    def _on_set_promoted(self, game, name):
+        self._on_render_landed(game, name, None)
+
+    def _on_render_landed(self, game, name, pose):
+        """A render for `name` landed (or its set promoted): re-render any
+        still-pending ring account for that toon. Nothing to do unless the
         accounts sub-ring is showing.
 
-        ``pixmap is None`` is the fetcher's failure signal. Treat it as a
-        definitive miss: stop the spinner (drop the id from ``_loading``) and do
-        NOT re-render. Re-rendering would call ``set_dna`` again, which re-fires
-        the fetch as a side effect -- so refreshing on failure would loop into a
-        retry storm against the Rendition server and a never-resolving spinner.
-        A later ring-open re-attempts the fetch via set_accounts / pre-warm."""
-        if self._state != "accounts" or not dna:
+        Re-rendering goes back through the cache (set_dna -> discovered /
+        want), which dedupes fetch work, so a landing that still leaves our
+        pose missing cannot loop into a retry storm; the account simply
+        stays pending until its own pose lands. A cache failure inside the
+        render is contained by the widget, so this never raises."""
+        if self._state != "accounts":
             return
         from utils.overlay.radial_portrait import render_account_portrait
         d = max(1, int(round(self._sat_r * 2)))
         changed = False
         for a in self._accounts:
-            if a.dna != dna or a.account_id not in self._loading:
-                continue
-            if pixmap is None:
-                self._loading.discard(a.account_id)
-                changed = True
+            if a.game != game or a.toon_name != name or a.account_id not in self._loading:
                 continue
             render = render_account_portrait(
                 a.game, a.toon_name, a.dna, self._customizations, d)
