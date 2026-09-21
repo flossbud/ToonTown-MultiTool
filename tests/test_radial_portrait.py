@@ -55,7 +55,23 @@ def test_render_account_portrait_is_complete_from_disk(render_cache, qapp):
     r = render_account_portrait("ttr", "Hiro", "dna1", None, 64)
     assert r.status == "complete"
     r2 = render_account_portrait("ttr", "Nobody", "dnaX", None, 64)
-    assert r2.status == "pending"
+    assert r2.status == "no_pose"
+
+
+def test_nothing_on_disk_is_no_pose_until_a_set_lands(render_cache, qapp):
+    """The cache path never reports "pending": a miss is "no_pose" (the
+    ring's fallback, no spinner - a permanently failing download would
+    otherwise spin the ring forever), and once a set is on disk a
+    re-render is "complete"."""
+    from utils.overlay.radial_portrait import render_account_portrait
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
+    store.note_dna("ttr", "Hiro", "dna1")           # discovered, nothing landed
+    r = render_account_portrait("ttr", "Hiro", "dna1", None, 64)
+    assert r.status == "no_pose"
+    complete_set(store, "ttr", "Hiro", "dna1")
+    r = render_account_portrait("ttr", "Hiro", "dna1", None, 64)
+    assert r.status == "complete"
 
 
 def test_render_account_portrait_grabs_the_cached_pose(render_cache):
@@ -73,7 +89,8 @@ def test_render_account_portrait_grabs_the_cached_pose(render_cache):
 
 def test_render_account_portrait_survives_a_cache_failure(render_cache, monkeypatch):
     """A cache failure must never break the overlay: the render still
-    returns a full-size disc, reported as pending."""
+    returns a full-size disc, reported as "no_pose" (never "pending": the
+    ring must not spin on a cache it cannot read)."""
     from utils.overlay.radial_portrait import render_account_portrait
     facade, store, pf = render_cache
 
@@ -83,7 +100,7 @@ def test_render_account_portrait_survives_a_cache_failure(render_cache, monkeypa
     monkeypatch.setattr(facade, "pixmap_for", _boom)
     monkeypatch.setattr(facade, "discovered", _boom)
     r = render_account_portrait("ttr", "Hiro", "dna1", None, 64)
-    assert r.status == "pending"
+    assert r.status == "no_pose"
     assert not r.pixmap.isNull() and r.pixmap.width() == 64
 
 

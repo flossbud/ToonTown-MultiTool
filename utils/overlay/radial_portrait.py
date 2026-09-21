@@ -22,7 +22,7 @@ from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QColor, QBrush, QLine
 @dataclass(frozen=True)
 class PortraitRender:
     pixmap: "QPixmap"   # always non-null, diameter x diameter
-    status: str         # "complete" | "pending" | "no_pose"
+    status: str         # "complete" | "no_pose"  (never "pending": see render_account_portrait)
 
 
 def _circular(src: QPixmap, diameter: int) -> QPixmap:
@@ -84,12 +84,14 @@ def render_account_portrait(game, toon_name, dna, customizations, diameter):
     """Return a ``PortraitRender`` for ``(game, toon_name)``.
 
     ``status`` is "complete" when the toon body is present (the per-toon
-    render cache had any tier on disk), "pending" when the cache has nothing
-    yet (background-only; the ring fills it in on ``render_landed`` /
-    ``set_promoted``), or "no_pose" when there is nothing to show (no toon
-    name, or empty DNA). The pixmap is always ``diameter`` x ``diameter`` and
-    non-null. The grabbed widget suppresses its own fallback glyph so the
-    ring owns the loading cue.
+    render cache had any tier on disk) or "no_pose" when there is nothing to
+    show: no toon name, empty DNA, or nothing on disk yet (background-only).
+    The cache path never reports "pending": a spinner would have nothing to
+    clear it - a permanently failing download would spin forever - so a miss
+    paints the ring's fallback, and the ring re-renders it into "complete"
+    on the cache's ``render_landed`` / ``set_promoted``. The pixmap is always
+    ``diameter`` x ``diameter`` and non-null. The grabbed widget suppresses
+    its own fallback glyph so the ring owns the disc.
     """
     if not toon_name:
         return PortraitRender(_placeholder(diameter), "no_pose")
@@ -109,7 +111,7 @@ def render_account_portrait(game, toon_name, dna, customizations, diameter):
         # set_dna reads the cache synchronously (and contains any cache
         # failure), so the widget is ready to grab right away.
         w.set_dna(dna)
-        status = "complete" if w._pixmap is not None else "pending"
+        status = "complete" if w._pixmap is not None else "no_pose"
 
     # Grab at the widget's maximum supported size; _circular scales to diameter.
     grab_size = min(diameter, _WIDGET_MAX)

@@ -19,7 +19,10 @@ def _acct(aid, dna, name="Toon", game="ttr"):
 
 
 def _patch_render(monkeypatch, warmed):
-    """render_account_portrait fake: 'complete' once a dna is in `warmed`."""
+    """render_account_portrait fake: 'complete' once a dna is in `warmed`,
+    else 'pending'. The real cache path never reports 'pending' (see
+    test_nothing_on_disk_leaves_no_account_loading); the fake keeps it so
+    the ring's spinner protocol stays observable through `_loading`."""
     from utils.overlay import radial_portrait
     from utils.overlay.radial_portrait import PortraitRender
 
@@ -147,17 +150,44 @@ def test_destroyed_menu_never_hears_the_cache(qapp, monkeypatch, render_cache):
     assert calls == []
 
 
-def test_render_landed_for_a_pending_toon_does_not_grow_the_fetch_queue(qapp, render_cache):
-    # Re-rendering a still-pending account goes back through set_dna ->
-    # discovered/want. The prefetcher dedupes, so repeated landings for a
-    # toon whose wanted pose is still missing must not pile up fetch work
-    # (the legacy path looped into a retry storm here).
+def test_nothing_on_disk_leaves_no_account_loading(qapp, render_cache):
+    # The REAL render path. A toon with nothing on disk is "no_pose", not
+    # "pending": the ring shows its fallback with no spinner and no 60 fps
+    # clock (a permanently failing download would otherwise spin forever).
+    # The cache's render_landed still fills the disc in when a set lands,
+    # so the re-render cannot be gated on a pending set that never exists.
+    from utils.overlay.radial_menu import RadialMenuWidget
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
+    facade.discovered("ttr", "Toon", "dna-a")    # the capture hook's job
+    menu = RadialMenuWidget(emblem_diameter=120)
+    menu.set_accounts([_acct("a1", "dna-a")])
+    assert menu._loading == set()
+    before = menu._portraits["a1"]
+    c = before.toImage().pixelColor(before.width() // 2, before.height() // 2)
+    assert not (c.red() > 200 and c.green() < 60 and c.blue() < 60), c.getRgb()
+    complete_set(store, "ttr", "Toon", "dna-a", "#ff0000")
+    pf.render_landed.emit("ttr", "Toon", "portrait")
+    assert menu._loading == set()
+    after = menu._portraits["a1"]
+    c = after.toImage().pixelColor(after.width() // 2, after.height() // 2)
+    assert c.red() > 200 and c.green() < 60 and c.blue() < 60, c.getRgb()
+    menu.deleteLater()
+    qapp.processEvents()
+
+
+def test_render_landed_for_an_incomplete_toon_does_not_grow_the_fetch_queue(qapp, render_cache):
+    # Re-rendering an account whose set is still incomplete goes back
+    # through set_dna -> pixmap_for -> want. The prefetcher dedupes, so
+    # repeated landings for a toon whose wanted pose is still missing must
+    # not pile up fetch work (the legacy path looped into a retry storm here).
     from utils.overlay.radial_menu import RadialMenuWidget
     from tests._render_fixtures import real_png
     facade, store, pf = render_cache
+    facade.discovered("ttr", "Toon", "dna-a")    # the capture hook's job
     menu = RadialMenuWidget(emblem_diameter=120)
     menu.set_accounts([_acct("a1", "dna-a")])
-    assert menu._loading == {"a1"}
+    assert menu._loading == set()
     n = pf.pending_count
     assert n > 0
     # A pose we do not show lands; ours ("portrait") is still missing.
@@ -165,7 +195,7 @@ def test_render_landed_for_a_pending_toon_does_not_grow_the_fetch_queue(qapp, re
     assert store.mark_landed("ttr", "Toon", "dna-a", "waving")
     menu._on_render_landed("ttr", "Toon", "waving")
     menu._on_render_landed("ttr", "Toon", "waving")
-    assert menu._loading == {"a1"}
+    assert menu._loading == set()
     assert pf.pending_count == n               # nothing was added
 
 

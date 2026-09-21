@@ -596,7 +596,7 @@ class RadialMenuWidget(QWidget):
             self._hover_poll.setInterval(50)
             self._hover_poll.timeout.connect(self._poll_hover)
         from utils.toon_renders import ToonRenders
-        # Live-refresh: fill in a pending portrait when a render for its toon
+        # Live-refresh: re-render a toon's portrait when one of its renders
         # lands or its set is promoted. Both are bound-method slots so Qt
         # auto-disconnects them when the widget is destroyed (a lambda would
         # outlive the ring and fire into a deleted widget).
@@ -1185,22 +1185,26 @@ class RadialMenuWidget(QWidget):
         self._on_render_landed(game, name, None)
 
     def _on_render_landed(self, game, name, pose):
-        """A render for `name` landed (or its set promoted): re-render any
-        still-pending ring account for that toon. Nothing to do unless the
-        accounts sub-ring is showing.
+        """A render for `name` landed (or its set promoted): re-render every
+        ring account showing that toon. Nothing to do unless the accounts
+        sub-ring is showing.
 
-        Re-rendering goes back through the cache (set_dna -> discovered /
-        want), which dedupes fetch work, so a landing that still leaves our
-        pose missing cannot loop into a retry storm; the account simply
-        stays pending until its own pose lands. A cache failure inside the
-        render is contained by the widget, so this never raises."""
+        Not gated on ``_loading``: the cache path never reports "pending"
+        (nothing on disk is "no_pose" - the fallback disc, no spinner), so
+        the only way a bare disc ever fills in, or a "previous" look
+        advances to the promoted one, is this re-render. Re-rendering goes
+        back through the cache (set_dna -> pixmap_for -> want), which dedupes
+        fetch work, so a landing that still leaves our pose missing cannot
+        loop into a retry storm; the account simply keeps its fallback until
+        its own pose lands. A cache failure inside the render is contained
+        by the widget, so this never raises."""
         if self._state != "accounts":
             return
         from utils.overlay.radial_portrait import render_account_portrait
         d = max(1, int(round(self._sat_r * 2)))
         changed = False
         for a in self._accounts:
-            if a.game != game or a.toon_name != name or a.account_id not in self._loading:
+            if a.game != game or a.toon_name != name:
                 continue
             render = render_account_portrait(
                 a.game, a.toon_name, a.dna, self._customizations, d)

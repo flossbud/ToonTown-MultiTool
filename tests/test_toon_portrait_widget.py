@@ -163,11 +163,12 @@ def test_set_game_after_set_dna_picks_up_saved_pose(render_cache, monkeypatch, t
 
 
 @pytest.mark.parametrize("last", ["set_toon_name", "set_game"])
-def test_key_landing_after_set_dna_reads_the_cache_and_discovers(render_cache, last):
+def test_key_landing_after_set_dna_reads_the_cache(render_cache, last):
     """The tab calls set_dna() BEFORE set_toon_name() (`_apply_merged_toon_data`)
     and set_game() arrives on its own schedule. The cache is keyed by
-    (game, name), so the read AND the discovery must happen when the last
-    part of the key lands - even when the pose does not change."""
+    (game, name), so the read must happen when the last part of the key
+    lands - even when the pose does not change. The read is all that
+    happens: discovery belongs to the capture hook, never to a badge."""
     from tabs.multitoon._tab import ToonPortraitWidget
     from tests._render_fixtures import complete_set
     facade, store, pf = render_cache
@@ -192,8 +193,8 @@ def test_key_landing_after_set_dna_reads_the_cache_and_discovers(render_cache, l
 
     assert store.candidate_dna("ttr", "Blue") is None
     v = build("Blue", "dnaX")
-    assert store.candidate_dna("ttr", "Blue") == "dnaX"    # discovered once keyed
-    assert v._pixmap is None and v._loading is True
+    assert store.candidate_dna("ttr", "Blue") is None      # a badge never discovers
+    assert v._pixmap is None and v._loading is False       # nothing on disk: slot circle
 
 
 def test_toon_portrait_widget_draws_circle_outline_when_set(qt_app, monkeypatch, tmp_path):
