@@ -251,6 +251,17 @@ class HeroStage(QFrame):
                 (self.height() - scaled.height()) // 2
             p.drawPixmap(0, y, scaled)
 
+        if self._game == "cc":
+            # The Clash skyline is natively blue-teal. A top-to-bottom warm
+            # layer goes on before the legibility scrim so the largest element
+            # on screen still reads orange (handoff §4.1b).
+            warm = QLinearGradient(0, 0, 0, self.height())
+            top, bottom = gp.CC_WARM_SCRIM
+            warm.setColorAt(0.0, top)
+            warm.setColorAt(1.0, bottom)
+            p.setBrush(warm)
+            p.drawRoundedRect(r, HERO_RADIUS, HERO_RADIUS)
+
         grad = QLinearGradient(0, 0, self.width(), 0)
         for pos, colour in gp.hero_scrim(self._game, self._is_dark):
             grad.setColorAt(pos, colour)

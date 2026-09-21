@@ -122,6 +122,57 @@ def test_themed_app_fixture_restores_global_state(qapp):
     assert theme_manager._APPLIED_THEME == before_marker
 
 
+# Probes across the Clash art, clear of the copy column and the crew slots:
+# top, middle and bottom of the stage at three widths.
+_CC_ART_PROBES = [(x, y) for x in (450, 600, 780) for y in (40, 120, 220)]
+
+
+def test_clash_hero_reads_warm_not_blue_teal(themed_app):
+    """Handoff §4.1b: the Clash skyline is natively blue-teal, and the
+    horizontal scrim alone leaves it so. The warm overlay must be painted,
+    so every sampled art pixel reads red-dominant; the TTR stage, which has
+    no warm layer, must still read blue — the overlay is a Clash treatment,
+    not a global tint."""
+    _qapp, theme = themed_app
+    hero = HeroStage()
+    hero.set_game("cc")
+    img = _render(hero, 818, 232)
+    for x, y in _CC_ART_PROBES:
+        probe = img.pixelColor(x, y)
+        assert (probe.red() - probe.blue() >= 10
+                and probe.red() > probe.green()), (
+            f"{theme}: cc hero at ({x},{y}) painted {probe.name()}, not warm")
+    hero.set_game("ttr")
+    img = _render(hero, 818, 232)
+    for x, y in _CC_ART_PROBES:
+        probe = img.pixelColor(x, y)
+        assert probe.blue() > probe.red(), (
+            f"{theme}: ttr hero at ({x},{y}) painted {probe.name()}, warmed")
+    hero.close()
+
+
+def test_disabled_play_renders_translucent_under_the_real_stylesheet(
+        themed_app):
+    """The alpha-loss defect painted a solid white Play with an invisible
+    label. Under the real stylesheet the disabled button must let the hero
+    show through, so its face is nowhere near opaque white."""
+    _qapp, theme = themed_app
+    hero = HeroStage()
+    hero.set_game("ttr")
+    hero.set_party([])
+    assert hero.play_enabled() is False
+    img = _render(hero, 818, 232)
+    button = hero.play_button
+    origin = button.mapTo(hero, button.rect().topLeft())
+    # Inside the border, left of the label: face colour only.
+    probe = img.pixelColor(origin.x() + 8, origin.y() + button.height() // 2)
+    white = QColor("#ffffff")
+    assert _distance(probe, white) > 300, (
+        f"{theme}: disabled Play face painted {probe.name()}")
+    assert probe != Qt.magenta
+    hero.close()
+
+
 def test_disabled_play_keeps_its_translucency(qapp):
     """`.name()` drops alpha; all disabled Play colours must carry ARGB."""
     hero = HeroStage()
