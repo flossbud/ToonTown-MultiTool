@@ -3,6 +3,7 @@ safe, repaint-on-flip), clear_all_credentials (tears down off-page slots),
 and shutdown (cleans transient resources without killing running games)."""
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
 from unittest.mock import MagicMock
@@ -33,6 +34,25 @@ def _tab(qapp, n):
     tab = LaunchTab(cred_manager=cred, settings_manager=sm)
     tab._build_ui()
     return tab
+
+
+@pytest.mark.parametrize("grandstand_mounted", [False, True])
+def test_render_current_view_routes_to_the_mounted_launcher(
+        qapp, grandstand_mounted):
+    tab = _tab(qapp, 1)
+    tab._render_section = MagicMock()
+    tab._render_grandstand = MagicMock()
+    if grandstand_mounted:
+        tab.grandstand = object()
+
+    tab._render_current_view("ttr")
+
+    if grandstand_mounted:
+        tab._render_grandstand.assert_called_once_with("ttr")
+        tab._render_section.assert_not_called()
+    else:
+        tab._render_section.assert_called_once_with("ttr")
+        tab._render_grandstand.assert_not_called()
 
 
 def test_update_dot_state_offpage_updates_slot_only(qapp):

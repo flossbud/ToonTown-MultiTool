@@ -186,42 +186,30 @@ def test_load_timeout_constant_exists(qapp):
 
 
 # ---------------------------------------------------------------------------
-# Fix 1: fetch failures must call set_failed, not set_pixmap(None)
+# The section reads the toon render cache: a landing fills a tile from disk,
+# a landing for another toon is ignored, and nothing on disk leaves the tile
+# in its own pending state (the tile's timeout is the failure path).
 # ---------------------------------------------------------------------------
 
-def test_on_pose_ready_none_calls_set_failed(qapp):
-    """_on_pose_ready(dna, pose, None) must call tile.set_failed(), not
-    reset the tile to loading state. The X mark should appear immediately
-    instead of waiting for the 8s timeout to expire."""
+def test_render_landed_fills_own_tile_and_ignores_other_toons(render_cache, qapp):
+    from tests._render_fixtures import complete_set
     from utils.widgets.toon_customization_sections import _PoseSection
-    from PySide6.QtGui import QPixmap
 
-    section = _PoseSection("dnatest-fix1", "portrait")
+    facade, store, pf = render_cache
+    section = _PoseSection("ttr", "Hiro", "dnatest-fix1", "portrait")
     qapp.processEvents()
+    assert all(t.is_loading() for t in section._tiles), "nothing on disk: tiles pend"
 
-    # Use the first tile for the failure case.
-    tile0 = section._tiles[0]
-    pose0 = tile0.pose
+    complete_set(store, "ttr", "Hiro", "dnatest-fix1")
+    by_pose = {t.pose: t for t in section._tiles}
 
-    # Simulate a fetch failure signal (None pixmap).
-    section._on_pose_ready("dnatest-fix1", pose0, None)
-    assert tile0.is_failed(), (
-        "tile must enter failed state immediately on a None pixmap, not reload"
-    )
-    assert not tile0.is_loading(), "tile must not be reloading after a fetch failure"
+    # A landing for a different toon must be ignored.
+    facade.render_landed.emit("ttr", "Other", "portrait")
+    assert by_pose["portrait"].is_loading(), "tile must remain loading when the toon does not match"
 
-    # Use the second tile for the success case.
-    tile1 = section._tiles[1]
-    pose1 = tile1.pose
-    pm = QPixmap(80, 80)
-    pm.fill()
-    section._on_pose_ready("dnatest-fix1", pose1, pm)
-    assert tile1.has_pixmap(), "tile must have a pixmap after a successful fetch"
-    assert not tile1.is_loading()
-    assert not tile1.is_failed()
-
-    # A signal for a different dna must be ignored.
-    tile2 = section._tiles[2]
-    pose2 = tile2.pose
-    section._on_pose_ready("other-dna", pose2, None)
-    assert tile2.is_loading(), "tile must remain loading when dna does not match"
+    # A landing of this toon's pose fills exactly that tile from disk.
+    facade.render_landed.emit("ttr", "Hiro", "portrait")
+    assert by_pose["portrait"].has_pixmap(), "tile must have a pixmap after its pose lands"
+    assert not by_pose["portrait"].is_loading()
+    assert not by_pose["portrait"].is_failed()
+    assert by_pose["waving"].is_loading(), "another pose's tile must not be touched"

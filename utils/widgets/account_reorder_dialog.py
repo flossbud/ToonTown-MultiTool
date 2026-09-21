@@ -14,9 +14,6 @@ class of window-manager trick is high risk for a low-stakes utility dialog.
 """
 from __future__ import annotations
 
-import os
-import sys
-
 from PySide6.QtCore import QPoint, QPointF, QPropertyAnimation, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
@@ -27,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 import utils.motion as motion
+from utils.asset_paths import asset_path as _asset_path
 from utils.color_math import alpha as css_alpha
 from utils.color_math import darken_rgb, lighten_rgb, with_alpha
 from utils.theme_manager import V2_ACCENTS, get_theme_colors, get_v2_tokens
@@ -48,17 +46,6 @@ MINI_SIL_FRACTION = 0.76
 MINI_RING_W = 2.5
 
 _logo_cache: dict[str, QPixmap] = {}
-
-
-def _asset_path(name: str) -> str:
-    """Resolve a bundled asset relative to repo root / PyInstaller _MEIPASS.
-    Same idiom as tabs/settings_tab.py._asset_path, ported here (utils/widgets
-    is one directory deeper than tabs/, hence the extra dirname())."""
-    base = getattr(
-        sys, "_MEIPASS",
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    )
-    return os.path.join(base, "assets", name)
 
 
 def _game_logo_pixmap(game: str) -> QPixmap:

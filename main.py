@@ -2386,6 +2386,19 @@ if __name__ == "__main__":
     window = MultiToonTool()
     _wire_app_lifecycle(app, window)
     from PySide6.QtCore import QLibraryInfo as _QLI
+    # Render cache, part 1: import the legacy flat cache once, BEFORE the
+    # window shows. Synchronous and local (a copy of at most 13 files per
+    # remembered toon: ~40 ms for ten toons, 9 MB), so the first frame of the
+    # roster already has every render the old launcher ever fetched -- no
+    # silhouette flash, and the capture hook cannot re-download what the
+    # import was about to copy.
+    try:
+        from utils.build_flavor import config_dir as _cfg
+        from utils.toon_renders import ToonRenders as _ToonRenders
+        _ToonRenders.instance().import_once(
+            window.settings_manager, os.path.join(_cfg(), "rendition_cache"))
+    except Exception as exc:                              # noqa: BLE001
+        print(f"[ToonRenders] startup import failed: {exc}")
     # Show the window and/or honor "Start in Float UI mode". Float-first on
     # plain-show window modes: entering the overlay BEFORE the first show
     # means the main window is never mapped at all on a float launch, so it
@@ -2398,6 +2411,16 @@ if __name__ == "__main__":
         "use_system_title_bar": bool(window.settings_manager.get("use_system_title_bar", False)),
         "qt_version": _QLI.version().toString() if hasattr(_QLI, "version") else "",
     })
+    # Render cache, part 2: fill gaps for every remembered toon. 2 s after
+    # first show so it never competes with startup paint; background,
+    # fire-and-forget.
+    def _warm_render_cache():
+        try:
+            from utils.toon_renders import ToonRenders
+            ToonRenders.instance().sweep_remembered(window.settings_manager)
+        except Exception as exc:                          # noqa: BLE001
+            print(f"[ToonRenders] startup sweep failed: {exc}")
+    QTimer.singleShot(2000, _warm_render_cache)
     QTimer.singleShot(0, window._maybe_notify_float_startup_recovered)
     _lock_cc_prefs_silently()
     # macOS first-run permission onboarding. Fired POST-show (so --self-check,

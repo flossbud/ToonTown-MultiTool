@@ -86,9 +86,56 @@ _URL = (
     f"{_REQUEST_SIZE}x{_REQUEST_SIZE}.png"
 )
 
+# ── Download primitive for the per-toon render cache ─────────────────────
+# Pure function, no cache logic, no Qt. The legacy RenditionPoseFetcher below
+# is untouched: the old launcher still reads the flat cache through it until
+# cut-over. New code goes through utils.render_prefetcher instead.
+
+BREAKER_KINDS = frozenset({"timeout", "server", "other"})
+
+
+class DownloadError(Exception):
+    """A classified fetch failure. `kind` is one of timeout / server / client /
+    other; only `client` (a 4xx: bad DNA or pose) is NOT a breaker event."""
+
+    def __init__(self, kind: str, status: Optional[int] = None,
+                 detail: str = "") -> None:
+        super().__init__(f"{kind}{f' {status}' if status else ''}: {detail}")
+        self.kind = kind
+        self.status = status
+
+
+def _default_opener(req, timeout, context):
+    import urllib.request
+    return urllib.request.urlopen(req, timeout=timeout, context=context)
+
+
+def download_pose(dna: str, pose: str, timeout: float = 10.0, opener=None) -> bytes:
+    """Fetch one render. Returns PNG bytes or raises DownloadError."""
+    import socket
+    import urllib.error
+    import urllib.request
+    url = _URL.format(dna=dna, pose=pose)
+    req = urllib.request.Request(url, headers={"User-Agent": "ToonTown MultiTool"})
+    try:
+        with (opener or _default_opener)(req, timeout, _ssl_context()) as resp:
+            data = resp.read()
+    except urllib.error.HTTPError as exc:
+        kind = "client" if 400 <= exc.code < 500 else "server"
+        raise DownloadError(kind, exc.code, str(exc)) from exc
+    except (socket.timeout, TimeoutError) as exc:
+        raise DownloadError("timeout", None, str(exc)) from exc
+    except (urllib.error.URLError, OSError) as exc:
+        raise DownloadError("other", None, str(exc)) from exc
+    if not data:
+        raise DownloadError("server", None, "empty body")
+    return bytes(data)
+
 
 class RenditionPoseFetcher(QObject):
-    """Singleton: shared disk cache + bounded thread pool across all callers."""
+    """Singleton: shared disk cache + bounded thread pool across all callers.
+    LEGACY — kept byte-for-byte for the old launcher's tiles until cut-over;
+    new code uses utils.render_prefetcher."""
 
     # Public signal: GUI-thread payload, ready-to-use QPixmap (or None on
     # failure). Internal _bytes_ready private signal stays inside this class.

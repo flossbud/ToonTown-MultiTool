@@ -1,7 +1,8 @@
-"""Tests for ToonPortraitWidget's delegation to RenditionPoseFetcher.
+"""Tests for ToonPortraitWidget's reads from the per-toon render cache.
 
-The widget no longer fetches Rendition pixmaps inline - it asks the
-shared RenditionPoseFetcher and consumes the public pose_ready signal."""
+The widget no longer fetches Rendition pixmaps at all - it asks the shared
+ToonRenders facade for its (game, toon, pose) synchronously and repaints on
+the cache's `render_landed` / `set_promoted` signals."""
 
 from __future__ import annotations
 
@@ -20,18 +21,33 @@ def qt_app():
     return QApplication.instance() or QApplication(sys.argv)
 
 
-def test_set_dna_requests_portrait_pose_when_no_override(qt_app, monkeypatch, tmp_path):
-    """Default behavior: set_dna asks the fetcher for the 'portrait' pose."""
-    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    requested = []
-    from utils.rendition_poses import RenditionPoseFetcher
-    RenditionPoseFetcher._instance = None  # reset singleton
-    monkeypatch.setattr(
-        RenditionPoseFetcher,
-        "request",
-        lambda self, dna, pose: requested.append((dna, pose)),
-    )
+PORTRAIT = "#ff0000"
+GRIN = "#00ff00"
+WAVING = "#0000ff"
 
+
+def _land(store, game, name, dna):
+    """Land every pose for `dna` - portrait / portrait-grin / waving each in
+    its own colour so the pose the widget drew is visible - and promote it."""
+    from tests._render_fixtures import real_png
+    colours = {"portrait": PORTRAIT, "portrait-grin": GRIN, "waving": WAVING}
+    store.note_dna(game, name, dna)
+    for pose in store.poses:
+        real_png(store.path_for(game, name, dna, pose), colours.get(pose, "#123456"))
+        assert store.mark_landed(game, name, dna, pose)
+    assert store.promote_if_complete(game, name)
+
+
+def _drawn(w) -> str:
+    assert w._pixmap is not None, "nothing drawn"
+    return w._pixmap.toImage().pixelColor(0, 0).name()
+
+
+def test_set_dna_reads_portrait_pose_when_no_override(render_cache, monkeypatch, tmp_path):
+    """Default behavior: set_dna reads the toon's 'portrait' pose from the cache."""
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    facade, store, pf = render_cache
+    _land(store, "ttr", "Flossbud", "dna-foo")
     from tabs.multitoon._tab import ToonPortraitWidget
     from utils.toon_customizations_manager import ToonCustomizationsManager
     w = ToonPortraitWidget(1)
@@ -39,22 +55,16 @@ def test_set_dna_requests_portrait_pose_when_no_override(qt_app, monkeypatch, tm
     w.set_customizations_manager(ToonCustomizationsManager())
     w.set_game("ttr")
     w.set_toon_name("Flossbud")
-
-    requested.clear()
+    assert w._pixmap is None
     w.set_dna("dna-foo")
-    assert ("dna-foo", "portrait") in requested
+    assert w._pose == "portrait"
+    assert _drawn(w) == PORTRAIT and w._loading is False
 
 
-def test_set_dna_uses_pose_override_from_manager(qt_app, monkeypatch, tmp_path):
+def test_set_dna_uses_pose_override_from_manager(render_cache, monkeypatch, tmp_path):
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    requested = []
-    from utils.rendition_poses import RenditionPoseFetcher
-    RenditionPoseFetcher._instance = None
-    monkeypatch.setattr(
-        RenditionPoseFetcher,
-        "request",
-        lambda self, dna, pose: requested.append((dna, pose)),
-    )
+    facade, store, pf = render_cache
+    _land(store, "ttr", "Flossbud", "dna-foo")
     from utils.toon_customizations_manager import ToonCustomizationsManager
     from tabs.multitoon._tab import ToonPortraitWidget
     mgr = ToonCustomizationsManager()
@@ -64,22 +74,16 @@ def test_set_dna_uses_pose_override_from_manager(qt_app, monkeypatch, tmp_path):
     w.set_customizations_manager(mgr)
     w.set_game("ttr")
     w.set_toon_name("Flossbud")
-    requested.clear()
     w.set_dna("dna-foo")
 
-    assert ("dna-foo", "portrait-grin") in requested
+    assert w._pose == "portrait-grin"
+    assert _drawn(w) == GRIN
 
 
-def test_set_pose_triggers_refetch(qt_app, monkeypatch, tmp_path):
+def test_set_pose_rereads_the_cache(render_cache, monkeypatch, tmp_path):
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    requested = []
-    from utils.rendition_poses import RenditionPoseFetcher
-    RenditionPoseFetcher._instance = None
-    monkeypatch.setattr(
-        RenditionPoseFetcher,
-        "request",
-        lambda self, dna, pose: requested.append((dna, pose)),
-    )
+    facade, store, pf = render_cache
+    _land(store, "ttr", "Flossbud", "dna-foo")
     from utils.toon_customizations_manager import ToonCustomizationsManager
     from tabs.multitoon._tab import ToonPortraitWidget
 
@@ -88,42 +92,33 @@ def test_set_pose_triggers_refetch(qt_app, monkeypatch, tmp_path):
     w.set_game("ttr")
     w.set_toon_name("Flossbud")
     w.set_dna("dna-foo")
-    requested.clear()
+    assert _drawn(w) == PORTRAIT
     w.set_pose("waving")
-    assert ("dna-foo", "waving") in requested
+    assert _drawn(w) == WAVING and w._loading is False
 
 
 def test_set_dna_none_clears_pixmap(qt_app, monkeypatch, tmp_path):
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    from utils.rendition_poses import RenditionPoseFetcher
-    RenditionPoseFetcher._instance = None
-    monkeypatch.setattr(
-        RenditionPoseFetcher, "request", lambda *a, **k: None,
-    )
     from tabs.multitoon._tab import ToonPortraitWidget
     from PySide6.QtGui import QPixmap
     w = ToonPortraitWidget(1)
     pm = QPixmap(10, 10); pm.fill()
     w._pixmap = pm
+    w._tier = "current"
     w.set_dna(None)
     assert w._pixmap is None
+    assert w.portrait_tier() is None
 
 
-def test_set_toon_name_after_set_dna_picks_up_saved_pose(qt_app, monkeypatch, tmp_path):
+def test_set_toon_name_after_set_dna_picks_up_saved_pose(render_cache, monkeypatch, tmp_path):
     """Regression: on app restart, the data ingestion path calls
     `set_dna()` before `set_toon_name()`. The first call resolves the
-    pose against an empty toon name and asks for "portrait". When the
-    name finally arrives, the widget must re-check the manager and
-    refetch the saved pose if it differs."""
+    pose against an empty toon name (default "portrait") and has no cache
+    key to read. When the name finally arrives, the widget must re-check
+    the manager and read the saved pose from the cache."""
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    requested = []
-    from utils.rendition_poses import RenditionPoseFetcher
-    RenditionPoseFetcher._instance = None
-    monkeypatch.setattr(
-        RenditionPoseFetcher,
-        "request",
-        lambda self, dna, pose: requested.append((dna, pose)),
-    )
+    facade, store, pf = render_cache
+    _land(store, "ttr", "Flossbud", "dna-foo")
     from utils.toon_customizations_manager import ToonCustomizationsManager
     from tabs.multitoon._tab import ToonPortraitWidget
     mgr = ToonCustomizationsManager()
@@ -135,28 +130,21 @@ def test_set_toon_name_after_set_dna_picks_up_saved_pose(qt_app, monkeypatch, tm
     # Simulate the real-world order: set_dna FIRST (with no name yet),
     # then set_toon_name catches up.
     w.set_dna("dna-foo")
-    # First fetch is for the default "portrait" (no name to look up).
-    assert ("dna-foo", "portrait") in requested
-    requested.clear()
+    assert w._pose == "portrait"
+    assert w._pixmap is None and w._loading is False   # no key -> nothing to read
 
     w.set_toon_name("Flossbud")
-    # Now that the name is set, the widget must refetch the saved pose.
-    assert ("dna-foo", "portrait-grin") in requested
+    # Now that the name is set, the widget must read the saved pose.
     assert w._pose == "portrait-grin"
+    assert _drawn(w) == GRIN
 
 
-def test_set_game_after_set_dna_picks_up_saved_pose(qt_app, monkeypatch, tmp_path):
+def test_set_game_after_set_dna_picks_up_saved_pose(render_cache, monkeypatch, tmp_path):
     """Sister test: if set_game runs after set_dna + set_toon_name,
     the widget re-resolves the pose under the new game namespace."""
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    requested = []
-    from utils.rendition_poses import RenditionPoseFetcher
-    RenditionPoseFetcher._instance = None
-    monkeypatch.setattr(
-        RenditionPoseFetcher,
-        "request",
-        lambda self, dna, pose: requested.append((dna, pose)),
-    )
+    facade, store, pf = render_cache
+    _land(store, "ttr", "Flossbud", "dna-foo")
     from utils.toon_customizations_manager import ToonCustomizationsManager
     from tabs.multitoon._tab import ToonPortraitWidget
     mgr = ToonCustomizationsManager()
@@ -165,13 +153,48 @@ def test_set_game_after_set_dna_picks_up_saved_pose(qt_app, monkeypatch, tmp_pat
     w = ToonPortraitWidget(1)
     w.set_customizations_manager(mgr)
     w.set_toon_name("Flossbud")
-    w.set_dna("dna-foo")  # game not yet set → default portrait
-    assert ("dna-foo", "portrait") in requested
-    requested.clear()
+    w.set_dna("dna-foo")  # game not yet set -> default portrait, nothing to read
+    assert w._pose == "portrait"
+    assert w._pixmap is None and w._loading is False
 
     w.set_game("ttr")
-    assert ("dna-foo", "waving") in requested
     assert w._pose == "waving"
+    assert _drawn(w) == WAVING
+
+
+@pytest.mark.parametrize("last", ["set_toon_name", "set_game"])
+def test_key_landing_after_set_dna_reads_the_cache(render_cache, last):
+    """The tab calls set_dna() BEFORE set_toon_name() (`_apply_merged_toon_data`)
+    and set_game() arrives on its own schedule. The cache is keyed by
+    (game, name), so the read must happen when the last part of the key
+    lands - even when the pose does not change. The read is all that
+    happens: discovery belongs to the capture hook, never to a badge."""
+    from tabs.multitoon._tab import ToonPortraitWidget
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1")
+
+    def build(name, dna):
+        w = ToonPortraitWidget(1)
+        if last == "set_toon_name":
+            w.set_game("ttr")
+        else:
+            w.set_toon_name(name)
+        w.set_dna(dna)
+        assert w._pixmap is None and w._loading is False   # key incomplete: nothing to read
+        if last == "set_toon_name":
+            w.set_toon_name(name)
+        else:
+            w.set_game("ttr")
+        return w
+
+    w = build("Hiro", "dna1")
+    assert w._pixmap is not None and w.portrait_tier() == "current"
+
+    assert store.candidate_dna("ttr", "Blue") is None
+    v = build("Blue", "dnaX")
+    assert store.candidate_dna("ttr", "Blue") is None      # a badge never discovers
+    assert v._pixmap is None and v._loading is False       # nothing on disk: slot circle
 
 
 def test_toon_portrait_widget_draws_circle_outline_when_set(qt_app, monkeypatch, tmp_path):
@@ -224,9 +247,6 @@ def test_toon_portrait_invokes_silhouette_builders_when_set(qt_app, monkeypatch,
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QPixmap
-    from utils.rendition_poses import RenditionPoseFetcher
-    RenditionPoseFetcher._instance = None
-    monkeypatch.setattr(RenditionPoseFetcher, "request", lambda *a, **k: None)
     import utils.portrait_effects as eff
     calls = []
     monkeypatch.setattr(
@@ -263,9 +283,6 @@ def test_toon_portrait_silhouette_cache_hits_on_unchanged_repaint(qt_app, monkey
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QPixmap
-    from utils.rendition_poses import RenditionPoseFetcher
-    RenditionPoseFetcher._instance = None
-    monkeypatch.setattr(RenditionPoseFetcher, "request", lambda *a, **k: None)
     import utils.portrait_effects as eff
     calls = []
     monkeypatch.setattr(

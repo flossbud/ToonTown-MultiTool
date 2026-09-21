@@ -413,7 +413,9 @@ class _Panel(QFrame):
             resolve_pose, resolve_portrait_transform,
         )
         current_pose = resolve_pose(self._draft, "portrait")
-        pose_section = _PoseSection(self._dna, current_pose, saved_store=saved_store)
+        pose_section = _PoseSection(
+            self._game, self._toon_name, self._dna, current_pose, saved_store=saved_store,
+        )
         pose_section.pose_changed.connect(self._on_pose_changed)
         pose_section.transform_changed.connect(self._on_transform_changed)
         pose_section.silhouette_outline_changed.connect(self._on_silhouette_outline)

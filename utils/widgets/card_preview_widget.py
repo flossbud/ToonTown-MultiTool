@@ -72,6 +72,7 @@ class CardPreviewWidget(QWidget):
         self._skin: Optional[QColor] = skin_color
         self._auto_stem: Optional[str] = auto_stem
         self._pose_pixmap: Optional[QPixmap] = None
+        self._pose_tier: Optional[str] = None
         self._silhouette_cache: dict[tuple, tuple] = {}
         # key: (id(pose_pm), pose_size_tuple, outline_color or None, outline_width,
         #       shadow_color or None, shadow_blur)
@@ -80,16 +81,19 @@ class CardPreviewWidget(QWidget):
         self.setMinimumSize(_PREVIEW_W, _PREVIEW_H)
         self.setMaximumSize(_PREVIEW_W, _PREVIEW_H)
 
-        # Subscribe to the fetcher for this widget's lifetime.
-        # CC toons have no pose artwork; skip the fetch entirely for CC.
-        if self._dna and self._game != "cc":
-            from utils.rendition_poses import RenditionPoseFetcher
-            self._fetcher = RenditionPoseFetcher.instance()
-            self._fetcher.pose_ready.connect(self._on_pose_ready)
-            # Kick off the initial fetch for the current draft pose.
-            self._request_current_pose()
-        else:
-            self._fetcher = None
+        # Renders come from the per-toon cache: a sync read of the draft's
+        # pose, then repaints on `render_landed` (own toon + live pose) and
+        # `set_promoted` (own toon). The preview never writes to the cache;
+        # discovery belongs to the capture hook and the startup sweep.
+        # CC toons have no pose artwork. Connections are bound methods of
+        # this widget so the process-wide facade drops them when it dies.
+        self._renders = None
+        if self._dna and self._game != "cc" and self._toon_name:
+            from utils.toon_renders import ToonRenders
+            self._renders = ToonRenders.instance()
+            self._renders.render_landed.connect(self._on_render_landed)
+            self._renders.set_promoted.connect(self._on_set_promoted)
+            self._refresh_pose_pixmap()
 
     def draft(self) -> dict:
         return dict(self._draft)
@@ -107,18 +111,35 @@ class CardPreviewWidget(QWidget):
         from utils.toon_customization_resolve import resolve_pose
         return resolve_pose(self._draft, "portrait")
 
-    def _request_current_pose(self) -> None:
-        if not self._dna or self._fetcher is None:
-            return
-        self._fetcher.request(self._dna, self._current_pose())
+    def _read_pose(self) -> Optional[tuple[QPixmap, str]]:
+        """One contained sync read of the live pose: (pixmap, tier) or None.
+        A cache failure reads as a miss."""
+        if self._renders is None:
+            return None
+        try:
+            return self._renders.pixmap_for(self._game, self._toon_name, self._current_pose())
+        except Exception as exc:                 # noqa: BLE001
+            print(f"[ToonRenders] preview read failed: {exc}")
+            return None
+
+    def _show_pose(self, hit: Optional[tuple[QPixmap, str]]) -> None:
+        """Apply a read: the pixmap, and the facade's tooltip when the tier
+        says the last complete look is standing in for a pending outfit."""
+        from utils.toon_renders import PREVIOUS_LOOK_TOOLTIP
+        self._pose_pixmap, self._pose_tier = hit if hit else (None, None)
+        self.setToolTip(PREVIOUS_LOOK_TOOLTIP if self._pose_tier == "previous" else "")
+
+    def _refresh_pose_pixmap(self) -> None:
+        """Sync read of the live pose, clear-or-replace. A miss is not
+        "loading": nothing on disk paints the portrait disc without a pose,
+        and the cache's signals repaint the preview when art arrives."""
+        self._show_pose(self._read_pose())
 
     def set_draft(self, draft: dict) -> None:
         prev_pose = self._current_pose()
         self._draft = dict(draft)
-        new_pose = self._current_pose()
-        if new_pose != prev_pose and self._dna and self._fetcher is not None:
-            self._pose_pixmap = None  # show spinner while refetching
-            self._fetcher.request(self._dna, new_pose)
+        if self._current_pose() != prev_pose:
+            self._refresh_pose_pixmap()
         self.update()
 
     def _get_silhouette_bundle(
@@ -170,12 +191,25 @@ class CardPreviewWidget(QWidget):
         self._silhouette_cache[key] = (outline_pm, shadow_pm)
         return (outline_pm, shadow_pm, soff_x, soff_y)
 
-    def _on_pose_ready(self, dna: str, pose: str, pixmap) -> None:
-        if dna != self._dna:
+    def _on_render_landed(self, game: str, name: str, pose: str) -> None:
+        # The facade is process-wide, so this fires for every toon and pose.
+        # Only a landing of THIS toon's LIVE pose (the draft can change it
+        # after construction) is worth a repaint.
+        if game != self._game or name != self._toon_name or pose != self._current_pose():
             return
-        if pose != self._current_pose():
+        # A landing never clears: it only ever adds a file, so a miss means
+        # the file belongs to an outfit the store cannot serve yet and what
+        # is showing is still exactly what the store would serve.
+        hit = self._read_pose()
+        if hit is None:
             return
-        self._pose_pixmap = pixmap
+        self._show_pose(hit)
+        self.update()
+
+    def _on_set_promoted(self, game: str, name: str) -> None:
+        if game != self._game or name != self._toon_name:
+            return
+        self._refresh_pose_pixmap()
         self.update()
 
     def paintEvent(self, event):

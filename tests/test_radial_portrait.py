@@ -30,31 +30,6 @@ def test_portrait_pixmap_is_requested_size():
     assert r.pixmap.width() == 96 and r.pixmap.height() == 96
 
 
-def test_pose_pulled_synchronously_from_disk_cache(monkeypatch):
-    # The toon image must come from the SYNC disk cache (set_dna's fetch is async,
-    # so without this the grab captures only the background). Verify the cache is
-    # consulted with the toon's (dna, resolved pose) and the result is applied.
-    _app()
-    from PySide6.QtGui import QPixmap
-    from utils.rendition_poses import RenditionPoseFetcher
-    from utils.overlay import radial_portrait
-
-    calls = []
-    swatch = QPixmap(64, 64)
-    swatch.fill()  # opaque, non-null
-
-    def fake_cached(self, dna, pose):
-        calls.append((dna, pose))
-        return swatch
-
-    monkeypatch.setattr(RenditionPoseFetcher, "cached_pixmap", fake_cached, raising=True)
-    r = radial_portrait.render_account_portrait(
-        game="ttr", toon_name="Sir Hopper", dna="dna-xyz",
-        customizations=None, diameter=80)
-    assert not r.pixmap.isNull() and r.pixmap.width() == 80
-    assert calls and calls[0][0] == "dna-xyz"   # cache consulted with the toon's DNA
-
-
 def test_status_no_pose_when_no_toon():
     _app()
     from utils.overlay.radial_portrait import render_account_portrait
@@ -72,32 +47,61 @@ def test_status_no_pose_when_empty_dna():
     assert r.status == "no_pose"
 
 
-def test_status_pending_on_cache_miss(monkeypatch):
-    _app()
-    from utils.rendition_poses import RenditionPoseFetcher
+def test_render_account_portrait_is_complete_from_disk(render_cache, qapp):
     from utils.overlay.radial_portrait import render_account_portrait
-    monkeypatch.setattr(RenditionPoseFetcher, "cached_pixmap",
-                        lambda self, dna, pose: None, raising=True)
-    # Stub the async fetch so set_dna's request side-effect does not hit the
-    # real Rendition server (offline-flaky + leaks a pool task otherwise).
-    monkeypatch.setattr(RenditionPoseFetcher, "request",
-                        lambda self, dna, pose: None, raising=True)
-    r = render_account_portrait(game="ttr", toon_name="Sir Hopper",
-                                dna="dna-xyz", customizations=None, diameter=80)
-    assert r.status == "pending"
-
-
-def test_status_complete_on_cache_hit(monkeypatch):
-    _app()
-    from PySide6.QtGui import QPixmap
-    from utils.rendition_poses import RenditionPoseFetcher
-    from utils.overlay.radial_portrait import render_account_portrait
-    swatch = QPixmap(64, 64); swatch.fill()
-    monkeypatch.setattr(RenditionPoseFetcher, "cached_pixmap",
-                        lambda self, dna, pose: swatch, raising=True)
-    r = render_account_portrait(game="ttr", toon_name="Sir Hopper",
-                                dna="dna-xyz", customizations=None, diameter=80)
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1")
+    r = render_account_portrait("ttr", "Hiro", "dna1", None, 64)
     assert r.status == "complete"
+    r2 = render_account_portrait("ttr", "Nobody", "dnaX", None, 64)
+    assert r2.status == "no_pose"
+
+
+def test_nothing_on_disk_is_no_pose_until_a_set_lands(render_cache, qapp):
+    """The cache path never reports "pending": a miss is "no_pose" (the
+    ring's fallback, no spinner - a permanently failing download would
+    otherwise spin the ring forever), and once a set is on disk a
+    re-render is "complete"."""
+    from utils.overlay.radial_portrait import render_account_portrait
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
+    store.note_dna("ttr", "Hiro", "dna1")           # discovered, nothing landed
+    r = render_account_portrait("ttr", "Hiro", "dna1", None, 64)
+    assert r.status == "no_pose"
+    complete_set(store, "ttr", "Hiro", "dna1")
+    r = render_account_portrait("ttr", "Hiro", "dna1", None, 64)
+    assert r.status == "complete"
+
+
+def test_render_account_portrait_grabs_the_cached_pose(render_cache):
+    """The grab must show the toon's cached render, not just the widget's
+    background: the disc centre carries the pose's colour."""
+    from utils.overlay.radial_portrait import render_account_portrait
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1", "#ff0000")
+    r = render_account_portrait("ttr", "Hiro", "dna1", None, 80)
+    assert not r.pixmap.isNull() and r.pixmap.width() == 80
+    c = r.pixmap.toImage().pixelColor(40, 40)
+    assert c.red() > 200 and c.green() < 60 and c.blue() < 60, c.getRgb()
+
+
+def test_render_account_portrait_survives_a_cache_failure(render_cache, monkeypatch):
+    """A cache failure must never break the overlay: the render still
+    returns a full-size disc, reported as "no_pose" (never "pending": the
+    ring must not spin on a cache it cannot read)."""
+    from utils.overlay.radial_portrait import render_account_portrait
+    facade, store, pf = render_cache
+
+    def _boom(*a, **k):
+        raise RuntimeError("cache exploded")
+
+    monkeypatch.setattr(facade, "pixmap_for", _boom)
+    monkeypatch.setattr(facade, "discovered", _boom)
+    r = render_account_portrait("ttr", "Hiro", "dna1", None, 64)
+    assert r.status == "no_pose"
+    assert not r.pixmap.isNull() and r.pixmap.width() == 64
 
 
 def test_circular_normalizes_dpr_backed_sources(qapp):

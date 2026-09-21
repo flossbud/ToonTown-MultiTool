@@ -82,7 +82,16 @@ def _lighten_hex(hex_color: str, amount: float = 0.25) -> str:
 
 class ToonPortraitWidget(QWidget):
     """Slot badge: shows a rendered toon portrait when available, otherwise
-    falls back to a colored circle with the slot number."""
+    falls back to a colored circle with the slot number.
+
+    A badge is a READER of the per-toon render cache (ToonRenders): it asks
+    `pixmap_for(game, name, pose)` and repaints on `render_landed` /
+    `set_promoted`. It never writes to the store. Discovery - telling the
+    cache "this toon wears this DNA" - has exactly one source: the capture
+    hook in `_capture_account_toon`, which owns the atomic (wid, name, dna)
+    triple (plus the startup sweep). A badge's setters land one field at a
+    time, so a discovery from here could pair one toon's outfit with
+    another toon's name."""
 
     clicked = Signal()
     edit_icon_requested = Signal()
@@ -121,9 +130,11 @@ class ToonPortraitWidget(QWidget):
         self.setMinimumSize(38, 38)
         self.setMaximumSize(64, 64)
         self.setCursor(Qt.PointingHandCursor)
-        from utils.rendition_poses import RenditionPoseFetcher
-        self._fetcher = RenditionPoseFetcher.instance()
-        self._fetcher.pose_ready.connect(self._on_pose_ready)
+        from utils.toon_renders import ToonRenders
+        self._renders = ToonRenders.instance()
+        self._renders.render_landed.connect(self._on_render_landed)
+        self._renders.set_promoted.connect(self._on_set_promoted)
+        self._tier: str | None = None
         self.setMouseTracking(True)
 
     def mousePressEvent(self, event):
@@ -195,27 +206,33 @@ class ToonPortraitWidget(QWidget):
         self.update()
 
     def set_dna(self, dna):
-        """Load portrait from Rendition via the shared fetcher. Pass None
-        to revert to the fallback circle."""
+        """Show the toon's portrait from the per-toon render cache: read
+        whatever is on disk now for (game, name, pose). Pass None to revert
+        to the fallback circle. Prefer `set_toon` when the name changes too."""
         if not dna:
             # Always clear when explicitly told to (even if dna was
             # already None) so callers can use set_dna(None) to reset
-            # a stale pixmap left behind from a prior fetch.
+            # a stale pixmap left behind from a prior read.
             self._dna = None
-            self._pixmap = None
-            self._loading = False
-            self._dim_cache = None
-            self.update()
+            self._refresh_from_cache()   # no DNA -> clears pixmap, tier, tooltip
             return
         if dna == self._dna:
             return
         self._dna = dna
-        # Pick pose from the customizations manager if available.
-        self._pose = self._resolve_pose_from_manager()
-        self._loading = True
-        self._dim_cache = None
-        self.update()
-        self._fetcher.request(dna, self._pose)
+        self._key_changed()
+
+    def set_toon(self, name: str | None, dna: str | None) -> None:
+        """Atomic (name, dna) update: assign both halves of the cache key,
+        then ONE pose re-resolve + read. The tab uses this wherever it has
+        both, so a badge never reads the cache with a half-updated key (the
+        old name under the new DNA, or the new name under the old DNA).
+        `dna` None/empty clears the portrait, as `set_dna(None)` does."""
+        dna = dna or None
+        if name == self._toon_name and dna == self._dna:
+            return
+        self._toon_name = name
+        self._dna = dna
+        self._key_changed()
 
     def _resolve_pose_from_manager(self) -> str:
         from utils.toon_customization_resolve import resolve_pose
@@ -225,31 +242,66 @@ class ToonPortraitWidget(QWidget):
         return resolve_pose(entry, "portrait")
 
     def set_pose(self, pose: str) -> None:
-        """Switch the rendered pose. Triggers a refetch through the
-        shared fetcher. Called by _tab.py after a customization Save."""
+        """Switch the rendered pose: re-read it from the cache. Called by
+        _tab.py after a customization Save."""
         if pose == self._pose:
             return
         self._pose = pose
-        if self._dna:
-            self._pixmap = None
-            self._loading = True
-            self._dim_cache = None
-            self.update()
-            self._fetcher.request(self._dna, pose)
+        self._dim_cache = None
+        self._refresh_from_cache()
 
-    def _on_pose_ready(self, dna: str, pose: str, pixmap) -> None:
-        """Receives QPixmap or None from the shared fetcher on the GUI
-        thread. Filter by the widget's CURRENT (dna, pose) - stale
-        results from prior fetches must be ignored."""
-        if dna != self._dna or pose != self._pose:
-            return
+    def portrait_tier(self) -> str | None:
+        """`"current"`, `"previous"` (older outfit shown while a newer one
+        downloads), or None when nothing is drawn."""
+        return self._tier
+
+    def _read_from_cache(self) -> "tuple[QPixmap, str] | None":
+        """One contained sync read of (game, name, pose): (pixmap, tier) or
+        None. A cache failure reads as a miss."""
+        if not (self._dna and self._game in ("cc", "ttr") and self._toon_name):
+            return None
+        try:
+            return self._renders.pixmap_for(self._game, self._toon_name, self._pose)
+        except Exception as exc:                 # noqa: BLE001
+            print(f"[ToonRenders] portrait read failed: {exc}")
+            return None
+
+    def _show(self, hit: "tuple[QPixmap, str] | None") -> None:
+        """Apply a read. `_loading` is never set from here - nothing in the
+        cache world would ever clear it, so a permanently failing download
+        would leave the ellipsis up forever. Tier "previous" (the last
+        complete look shown while a newer outfit downloads) carries the
+        facade's tooltip."""
+        from utils.toon_renders import PREVIOUS_LOOK_TOOLTIP
+        self._pixmap, self._tier = hit if hit is not None else (None, None)
         self._loading = False
-        if pixmap is not None and not pixmap.isNull():
-            self._pixmap = pixmap
-        else:
-            self._pixmap = None
-        self._dim_cache = None   # fetched pixmap changes content -> rebuild dim
+        self._dim_cache = None   # content changes -> rebuild dim
+        self.setToolTip(PREVIOUS_LOOK_TOOLTIP if self._tier == "previous" else "")
         self.update()
+
+    def _refresh_from_cache(self) -> None:
+        """Sync read of (game, name, pose), clear-or-replace: the key-change,
+        pose-change and promotion path. A miss is NOT "loading": nothing on
+        disk paints the slot circle (the legacy post-failure fallback) and
+        the cache's `render_landed` / `set_promoted` repaint the badge when
+        art arrives. A cache failure is contained: the badge falls back to
+        its slot circle."""
+        self._show(self._read_from_cache())
+
+    def _on_render_landed(self, game: str, name: str, pose: str) -> None:
+        # The facade is process-wide, so this fires for every badge. Only a
+        # landing of THIS badge's live pose for THIS toon is worth a repaint.
+        # A landing never clears: it only ever adds a file, so a miss means
+        # the file belongs to an outfit the store cannot serve yet and what
+        # is showing is still exactly what the store would serve.
+        if game == self._game and name == self._toon_name and pose == self._pose:
+            hit = self._read_from_cache()
+            if hit is not None:
+                self._show(hit)
+
+    def _on_set_promoted(self, game: str, name: str) -> None:
+        if game == self._game and name == self._toon_name:
+            self._refresh_from_cache()
 
     def set_cc_mode(self, skin_rgb, accent_rgb, gloves_rgb, emoji):
         """Enable CC paint mode for this badge.
@@ -290,17 +342,15 @@ class ToonPortraitWidget(QWidget):
 
     def set_game(self, game: str | None) -> None:
         """Set the game tag ('cc', 'ttr', or None). Triggers a repaint
-        and re-resolves the pose against the manager if a DNA + name
-        are already known (same race fix as `set_toon_name`)."""
+        and, if a DNA is already known, re-resolves the pose against the
+        manager and reads the cache (same race fix as `set_toon_name`)."""
         if self._game == game:
             return
         self._game = game
         self._dim_cache = None
         self.update()
-        if self._dna and self._toon_name and game in ("cc", "ttr"):
-            new_pose = self._resolve_pose_from_manager()
-            if new_pose != self._pose:
-                self.set_pose(new_pose)
+        if self._dna:
+            self._key_changed()
 
     @property
     def game(self) -> str | None:
@@ -328,20 +378,26 @@ class ToonPortraitWidget(QWidget):
         """Set the toon name used as the override key. Triggers a repaint.
 
         If a DNA is already known, re-resolve the pose against the
-        customizations manager - on initial load `set_dna` runs before
-        `set_toon_name` (see `_apply_merged_toon_data`), so the first
-        fetch always asks for the default "portrait". Once the name
-        lands here we re-check the manager and refetch the saved pose
-        if it differs."""
+        customizations manager and read the cache: the cache is keyed by
+        (game, name), so a `set_dna` that ran before the name had no key to
+        read. Once the name lands here we re-check the manager and read the
+        saved pose. Callers that hold both name and DNA use `set_toon`."""
         if self._toon_name == name:
             return
         self._toon_name = name
         self._dim_cache = None
         self.update()
-        if self._dna and name:
-            new_pose = self._resolve_pose_from_manager()
-            if new_pose != self._pose:
-                self.set_pose(new_pose)
+        if self._dna:
+            self._key_changed()
+
+    def _key_changed(self) -> None:
+        """Some part of (game, name, dna) changed: re-resolve the pose against
+        the manager and read the cache - even if the pose is the same, the
+        toon whose renders we read just changed. Never discovers (see the
+        class docstring)."""
+        self._pose = self._resolve_pose_from_manager()
+        self._dim_cache = None
+        self._refresh_from_cache()
 
     def set_cc_auto_species(self, species_name: str | None) -> None:
         """Set the auto-detected CC species name (e.g. 'DOG'). Triggers a repaint."""
@@ -1532,6 +1588,8 @@ class MultitoonTab(QWidget):
         # Per-window dedup of the last captured (toon_name, dna) so an unchanged
         # toon skips the synchronous pid_for_window X round-trip + sink call.
         self._last_captured_toon: dict[str, tuple[str, str]] = {}
+        # wid -> (toon, dna) already handed to the render cache; skips the PID lookup on unchanged polls
+        self._render_seen: dict[str, tuple[str, str]] = {}
 
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(5000)
@@ -3445,7 +3503,7 @@ class MultitoonTab(QWidget):
                         self.toon_tokens[new_idx] = old_tokens[old_idx]
                         
                         if new_idx < len(self.slot_badges):
-                            self.slot_badges[new_idx].set_dna(old_styles[old_idx])
+                            self.slot_badges[new_idx].set_toon(old_names[old_idx], old_styles[old_idx])
 
                 for i in range(4):
                     self.toon_buttons[i].setChecked(self.enabled_toons[i])
@@ -3510,6 +3568,20 @@ class MultitoonTab(QWidget):
 
     def _capture_account_toon(self, wid, toon_name: str, dna: str, *,
                               laff=None, max_laff=None, species=None, accent=None) -> None:
+        # Render cache first: a toon's name + DNA is all it needs, and it must
+        # not depend on whether this instance launched the window.
+        if toon_name and dna:
+            try:
+                render_key = str(wid)
+                if self._render_seen.get(render_key) != (toon_name, dna):
+                    from utils.game_registry import GameRegistry
+                    from utils.toon_renders import ToonRenders
+                    game = GameRegistry.instance().get_game_for_window(render_key)
+                    if game in ("ttr", "cc"):
+                        ToonRenders.instance().discovered(game, toon_name, dna)
+                        self._render_seen[render_key] = (toon_name, dna)
+            except Exception as exc:                     # noqa: BLE001
+                print(f"[ToonRenders] discovery hook failed: {exc}")
         if not self._toon_capture_sink or not toon_name:
             return
         from utils.toon_capture_bridge import toon_changed
@@ -3555,9 +3627,11 @@ class MultitoonTab(QWidget):
                         self.toon_tokens[global_idx] = tokens[source_idx] if source_idx < len(tokens) else None
                         
                         if global_idx < len(self.slot_badges):
-                            self.slot_badges[global_idx].set_dna(styles[source_idx] if styles and source_idx < len(styles) else None)
-                            self.slot_badges[global_idx].set_toon_name(
-                                names[source_idx] if source_idx < len(names) else None
+                            # One atomic (name, dna) update: the badge must never
+                            # read the cache under a half-updated key.
+                            self.slot_badges[global_idx].set_toon(
+                                names[source_idx] if source_idx < len(names) else None,
+                                styles[source_idx] if styles and source_idx < len(styles) else None,
                             )
                         # CC -> TTR transition: a previous CC paint may have hidden the chat
                         # button. TTR slot supports chat; visibility is then masked by the
@@ -4284,9 +4358,9 @@ class MultitoonTab(QWidget):
         self._toon_fetch_timer.stop()
         self._glow_timer.stop()
         self._bar_timer.stop()
-        # Rendition fetches now go through the shared RenditionPoseFetcher
-        # singleton; per-badge cancel() is no longer needed (stale results
-        # are filtered by (dna, pose) match on the GUI thread).
+        # Portraits are read from the per-toon render cache (ToonRenders);
+        # per-badge cancel() is no longer needed (each badge repaints only
+        # on its own (game, name, pose) landing, on the GUI thread).
         self.input_service.shutdown()
         if self.click_sync_service is not None:
             self.click_sync_service.shutdown()

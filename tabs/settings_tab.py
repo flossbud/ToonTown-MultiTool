@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
+from utils.asset_paths import asset_path
 from utils.icon_factory import (
     make_download_icon, make_sliders_icon,
 )
@@ -603,12 +604,7 @@ class SettingsTab(QWidget):
     # ── Game path helpers ─────────────────────────────────────────────────
 
     def _asset_path(self, name: str) -> str:
-        """Resolve a bundled asset relative to repo root / PyInstaller _MEIPASS."""
-        base = getattr(
-            sys, "_MEIPASS",
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        )
-        return os.path.join(base, "assets", name)
+        return asset_path(name)
 
     def _exe_name(self, game: str) -> str:
         if game == "ttr":
@@ -1728,4 +1724,3 @@ class SettingsTab(QWidget):
         toggle = getattr(self, "_hotkey_more_toggle", None)
         if toggle is not None:
             toggle.apply_theme(is_dark)
-

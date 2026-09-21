@@ -1,0 +1,427 @@
+"""Per-toon render store: layout, promotion at 13/13, lookup order, invalidate."""
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
+
+import json
+
+import pytest
+
+from utils.toon_render_store import PNG_SIGNATURE, ToonRenderStore
+
+POSES = ("portrait", "head", "waving")          # a 3-pose contract keeps tests short
+DNA1 = "74000101aa"
+DNA2 = "74000101bb"
+
+
+def _png(path: str, tag: bytes = b"x") -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(PNG_SIGNATURE + tag)
+
+
+@pytest.fixture
+def store(tmp_path):
+    return ToonRenderStore(str(tmp_path), poses=POSES)
+
+
+def _land_all(store, game, name, dna):
+    for pose in POSES:
+        _png(store.path_for(game, name, dna, pose))
+        assert store.mark_landed(game, name, dna, pose) is True
+
+
+def test_layout_is_one_folder_per_toon_with_a_dna_subfolder(store, tmp_path):
+    p = store.path_for("ttr", "Blue Cat", DNA1, "head")
+    assert p == os.path.join(str(tmp_path), "toons", "ttr", "blue-cat", DNA1, "head.png")
+    assert os.path.isdir(os.path.dirname(p))
+
+
+def test_slug_collisions_get_a_suffix_and_the_manifest_keeps_the_real_name(store):
+    a = store.toon_dir("ttr", "Blue Cat")
+    b = store.toon_dir("ttr", "blue cat")
+    assert a != b
+    with open(os.path.join(b, "manifest.json")) as f:
+        assert json.load(f)["name"] == "blue cat"
+
+
+def test_a_new_dna_is_a_candidate_not_current(store):
+    assert store.note_dna("ttr", "Hiro", DNA1) == "candidate"
+    assert store.current_dna("ttr", "Hiro") is None
+    assert store.candidate_dna("ttr", "Hiro") == DNA1
+    assert store.lookup("ttr", "Hiro", "head") is None
+
+
+def test_missing_poses_is_the_whole_set_for_a_new_dna(store):
+    store.note_dna("ttr", "Hiro", DNA1)
+    assert store.missing_poses("ttr", "Hiro", DNA1) == list(POSES)
+
+
+def test_promotion_needs_every_pose(store):
+    store.note_dna("ttr", "Hiro", DNA1)
+    _png(store.path_for("ttr", "Hiro", DNA1, "portrait"))
+    store.mark_landed("ttr", "Hiro", DNA1, "portrait")
+    assert store.promote_if_complete("ttr", "Hiro") is False
+    assert store.current_dna("ttr", "Hiro") is None
+    assert store.lookup("ttr", "Hiro", "head") is None         # not landed: nothing to show
+    _land_all(store, "ttr", "Hiro", DNA1)
+    assert store.promote_if_complete("ttr", "Hiro") is True
+    assert store.current_dna("ttr", "Hiro") == DNA1
+    assert store.candidate_dna("ttr", "Hiro") is None
+    path, tier = store.lookup("ttr", "Hiro", "head")
+    assert tier == "current" and path.endswith(os.path.join(DNA1, "head.png"))
+
+
+def test_a_candidate_serves_only_when_the_toon_has_nothing_else(store):
+    """The 13/13 rule stops a half-new outfit shadowing a complete old one; it
+    must not withhold art from a toon that has no complete set at all (the
+    2026-09-21 first run: a flat cache holding head + portrait for the live
+    outfit, and a cold origin -- the card showed a silhouette while head.png
+    sat on disk)."""
+    store.note_dna("ttr", "Hiro", DNA1)
+    _png(store.path_for("ttr", "Hiro", DNA1, "head"))
+    store.mark_landed("ttr", "Hiro", DNA1, "head")
+    path, tier = store.lookup("ttr", "Hiro", "head")
+    assert tier == "candidate" and path.endswith(os.path.join(DNA1, "head.png"))
+    assert store.lookup("ttr", "Hiro", "portrait") is None     # not landed: still nothing
+    _land_all(store, "ttr", "Hiro", DNA1)
+    assert store.promote_if_complete("ttr", "Hiro") is True
+    assert store.lookup("ttr", "Hiro", "head")[1] == "current"
+
+    # The shadow half: with a complete set, a newer outfit's landed pose is
+    # NOT served -- the old complete look is, until the new one is whole.
+    store.note_dna("ttr", "Hiro", DNA2)
+    _png(store.path_for("ttr", "Hiro", DNA2, "head"))
+    store.mark_landed("ttr", "Hiro", DNA2, "head")
+    path, tier = store.lookup("ttr", "Hiro", "head")
+    assert tier == "current" and DNA1 in path and DNA2 not in path
+    # ...even for a pose the complete set has lost: a gap is refilled by the
+    # sweep, whereas serving the candidate here would mix two outfits across
+    # the toon's surfaces. The gate is "no complete set at all", not "no file".
+    os.remove(store.path_for("ttr", "Hiro", DNA1, "head"))
+    assert store.lookup("ttr", "Hiro", "head") is None
+
+
+def test_a_candidate_never_serves_over_a_previous_set_either(store):
+    """After a refresh with a previous look on disk, current is gone but
+    previous remains: the re-landing poses stay hidden behind it."""
+    for dna in (DNA1, DNA2):
+        store.note_dna("ttr", "Hiro", dna)
+        _land_all(store, "ttr", "Hiro", dna)
+        store.promote_if_complete("ttr", "Hiro")
+    assert store.invalidate("ttr", "Hiro") == DNA2             # current gone, previous DNA1
+    _png(store.path_for("ttr", "Hiro", DNA2, "head"))
+    store.mark_landed("ttr", "Hiro", DNA2, "head")
+    path, tier = store.lookup("ttr", "Hiro", "head")
+    assert tier == "previous" and DNA1 in path
+
+
+def test_a_refresh_with_no_previous_look_shows_poses_as_they_re_land(store):
+    """Invalidate on a toon with only a current set leaves it with nothing
+    else, so the re-landed poses show as they arrive instead of the toon
+    going dark until 13/13."""
+    store.note_dna("ttr", "Hiro", DNA1)
+    _land_all(store, "ttr", "Hiro", DNA1)
+    store.promote_if_complete("ttr", "Hiro")
+    assert store.invalidate("ttr", "Hiro") == DNA1
+    assert store.lookup("ttr", "Hiro", "head") is None         # files are gone
+    _png(store.path_for("ttr", "Hiro", DNA1, "head"))
+    store.mark_landed("ttr", "Hiro", DNA1, "head")
+    assert store.lookup("ttr", "Hiro", "head")[1] == "candidate"
+    assert store.lookup("ttr", "Hiro", "portrait") is None
+
+
+def test_readers_create_nothing_on_disk(store, tmp_path):
+    """A card asking about a toon it has never seen must not leave a folder
+    and a blank manifest behind for every name it was ever shown."""
+    store.note_dna("ttr", "Hiro", DNA1)                       # one real toon, so the root exists
+    game_dir = os.path.join(store.toons_root(), "ttr")
+    before = sorted(os.listdir(game_dir))
+    assert store.lookup("ttr", "Nobody", "head") is None
+    assert store.current_dna("ttr", "Nobody") is None
+    assert store.candidate_dna("ttr", "Nobody") is None
+    assert store.missing_poses("ttr", "Nobody", DNA1) == list(POSES)
+    assert store.lookup("ttr", "", "head") is None            # the "" name a bare card could pass
+    assert sorted(os.listdir(game_dir)) == before
+    assert not os.path.exists(os.path.join(store.toons_root(), "cc"))
+    assert store.lookup("cc", "Hiro", "head") is None
+    assert not os.path.exists(os.path.join(store.toons_root(), "cc"))
+
+
+def test_a_reader_resolves_the_same_suffixed_folder_a_mutator_made(store):
+    """The read-only resolver walks the collision chain exactly as the
+    creating one does, so a reader never looks in the wrong toon's folder."""
+    store.note_dna("ttr", "Blue Cat", DNA1)
+    store.note_dna("ttr", "blue cat", DNA2)                    # slugs collide: gets -2
+    _png(store.path_for("ttr", "blue cat", DNA2, "head"))
+    store.mark_landed("ttr", "blue cat", DNA2, "head")
+    assert store.candidate_dna("ttr", "blue cat") == DNA2
+    assert store.candidate_dna("ttr", "Blue Cat") == DNA1
+    path, _ = store.lookup("ttr", "blue cat", "head")
+    assert os.path.join("blue-cat-2", DNA2) in path
+    assert store.lookup("ttr", "Blue Cat", "head") is None
+
+
+def test_a_file_without_a_png_signature_does_not_count(store):
+    store.note_dna("ttr", "Hiro", DNA1)
+    for pose in POSES:
+        _png(store.path_for("ttr", "Hiro", DNA1, pose))
+    bad = store.path_for("ttr", "Hiro", DNA1, "head")
+    with open(bad, "wb") as f:
+        f.write(b"not a png at all")
+    assert store.mark_landed("ttr", "Hiro", DNA1, "head") is False
+    for pose in POSES:
+        store.mark_landed("ttr", "Hiro", DNA1, pose)
+    assert store.promote_if_complete("ttr", "Hiro") is False
+    assert "head" in store.missing_poses("ttr", "Hiro", DNA1)
+
+
+def test_new_outfit_keeps_serving_the_old_set_until_the_new_one_is_whole(store):
+    store.note_dna("ttr", "Hiro", DNA1)
+    _land_all(store, "ttr", "Hiro", DNA1)
+    store.promote_if_complete("ttr", "Hiro")
+    assert store.note_dna("ttr", "Hiro", DNA2) == "candidate"
+    _png(store.path_for("ttr", "Hiro", DNA2, "head"))
+    store.mark_landed("ttr", "Hiro", DNA2, "head")
+    path, tier = store.lookup("ttr", "Hiro", "head")
+    assert tier == "current" and DNA1 in path          # still the old outfit
+    _land_all(store, "ttr", "Hiro", DNA2)
+    assert store.promote_if_complete("ttr", "Hiro") is True
+    path, tier = store.lookup("ttr", "Hiro", "head")
+    assert tier == "current" and DNA2 in path
+    assert os.path.isdir(os.path.join(store.toon_dir("ttr", "Hiro"), DNA1))   # kept as previous
+
+
+def test_a_third_outfit_deletes_the_oldest_set(store):
+    for dna in (DNA1, DNA2, "74000101cc"):
+        store.note_dna("ttr", "Hiro", dna)
+        _land_all(store, "ttr", "Hiro", dna)
+        assert store.promote_if_complete("ttr", "Hiro") is True
+    d = store.toon_dir("ttr", "Hiro")
+    assert not os.path.isdir(os.path.join(d, DNA1))
+    assert os.path.isdir(os.path.join(d, DNA2))
+    assert os.path.isdir(os.path.join(d, "74000101cc"))
+
+
+def test_lookup_falls_back_to_previous_when_current_lacks_the_pose(store):
+    store.note_dna("ttr", "Hiro", DNA1)
+    _land_all(store, "ttr", "Hiro", DNA1)
+    store.promote_if_complete("ttr", "Hiro")
+    store.note_dna("ttr", "Hiro", DNA2)
+    _land_all(store, "ttr", "Hiro", DNA2)
+    store.promote_if_complete("ttr", "Hiro")
+    os.remove(store.path_for("ttr", "Hiro", DNA2, "waving"))   # a lost file
+    path, tier = store.lookup("ttr", "Hiro", "waving")
+    assert tier == "previous" and DNA1 in path
+
+
+def test_switching_back_to_the_previous_outfit_restores_it_without_downloads(store):
+    store.note_dna("ttr", "Hiro", DNA1)
+    _land_all(store, "ttr", "Hiro", DNA1)
+    store.promote_if_complete("ttr", "Hiro")
+    store.note_dna("ttr", "Hiro", DNA2)
+    _land_all(store, "ttr", "Hiro", DNA2)
+    store.promote_if_complete("ttr", "Hiro")
+    assert store.note_dna("ttr", "Hiro", DNA1) == "current"     # swapped back, instantly
+    assert store.current_dna("ttr", "Hiro") == DNA1
+    assert store.missing_poses("ttr", "Hiro", DNA1) == []
+
+
+def test_failed_poses_are_not_missing(store):
+    store.note_dna("ttr", "Hiro", DNA1)
+    store.mark_failed("ttr", "Hiro", DNA1, "waving")
+    assert store.missing_poses("ttr", "Hiro", DNA1) == ["portrait", "head"]
+
+
+def test_a_server_refused_pose_does_not_strand_the_set(store):
+    """A 4xx means the origin will never render that pose for this DNA.
+    Waiting would leave the toon on its previous look forever, so the set
+    promotes without it and lookup falls through for that one pose."""
+    store.note_dna("ttr", "Hiro", DNA1)
+    _land_all(store, "ttr", "Hiro", DNA1)
+    store.promote_if_complete("ttr", "Hiro")
+    store.note_dna("ttr", "Hiro", DNA2)
+    store.mark_failed("ttr", "Hiro", DNA2, "waving")
+    for pose in ("portrait", "head"):
+        _png(store.path_for("ttr", "Hiro", DNA2, pose))
+        store.mark_landed("ttr", "Hiro", DNA2, pose)
+    assert store.missing_poses("ttr", "Hiro", DNA2) == []
+    assert store.promote_if_complete("ttr", "Hiro") is True
+    assert store.current_dna("ttr", "Hiro") == DNA2
+    path, tier = store.lookup("ttr", "Hiro", "waving")
+    assert tier == "previous" and DNA1 in path
+    path, tier = store.lookup("ttr", "Hiro", "head")
+    assert tier == "current" and DNA2 in path
+
+
+def test_an_all_refused_set_never_promotes(store):
+    store.note_dna("ttr", "Hiro", DNA1)
+    for pose in POSES:
+        store.mark_failed("ttr", "Hiro", DNA1, pose)
+    assert store.promote_if_complete("ttr", "Hiro") is False
+    assert store.current_dna("ttr", "Hiro") is None
+
+
+def test_an_outfit_refused_for_every_pose_is_dropped_not_kept_as_candidate(store, capsys):
+    """Nothing landed and every pose refused: that outfit can never complete.
+    Left as the candidate it would pin the toon on "previous" forever, block
+    the user's refresh, and never be retried. Drop it; current keeps serving."""
+    store.note_dna("ttr", "Hiro", DNA1)
+    _land_all(store, "ttr", "Hiro", DNA1)
+    assert store.promote_if_complete("ttr", "Hiro") is True
+    store.note_dna("ttr", "Hiro", DNA2)
+    store.path_for("ttr", "Hiro", DNA2, "head")            # the set's folder exists, empty
+    assert os.path.isdir(os.path.join(store.toon_dir("ttr", "Hiro"), DNA2))
+    for pose in POSES:
+        store.mark_failed("ttr", "Hiro", DNA2, pose)
+    assert store.promote_if_complete("ttr", "Hiro") is False
+    assert store.candidate_dna("ttr", "Hiro") is None
+    assert not os.path.isdir(os.path.join(store.toon_dir("ttr", "Hiro"), DNA2))
+    with open(os.path.join(store.toon_dir("ttr", "Hiro"), "manifest.json")) as f:
+        assert DNA2 not in json.load(f)["sets"]
+    assert store.current_dna("ttr", "Hiro") == DNA1
+    path, tier = store.lookup("ttr", "Hiro", "head")
+    assert tier == "current" and DNA1 in path
+    assert "refused for every pose" in capsys.readouterr().out
+
+
+def test_a_partly_refused_outfit_with_nothing_landed_stays_a_candidate(store):
+    """Only a refusal of EVERY pose is terminal; with a pose still outstanding
+    the outfit may yet complete."""
+    store.note_dna("ttr", "Hiro", DNA1)
+    for pose in POSES[:-1]:
+        store.mark_failed("ttr", "Hiro", DNA1, pose)
+    assert store.promote_if_complete("ttr", "Hiro") is False
+    assert store.candidate_dna("ttr", "Hiro") == DNA1
+    assert store.missing_poses("ttr", "Hiro", DNA1) == [POSES[-1]]
+
+
+def test_invalidate_defers_to_an_outfit_already_on_its_way(store):
+    """Refreshing while a newer outfit downloads must not send the toon dark:
+    current stays served, and the caller gets the candidate to re-prioritise."""
+    store.note_dna("ttr", "Hiro", DNA1)
+    _land_all(store, "ttr", "Hiro", DNA1)
+    store.promote_if_complete("ttr", "Hiro")
+    store.note_dna("ttr", "Hiro", DNA2)
+    assert store.invalidate("ttr", "Hiro") == DNA2
+    assert store.current_dna("ttr", "Hiro") == DNA1
+    assert store.candidate_dna("ttr", "Hiro") == DNA2
+    _land_all(store, "ttr", "Hiro", DNA2)
+    assert store.promote_if_complete("ttr", "Hiro") is True
+    assert store.lookup("ttr", "Hiro", "head")[1] == "current"
+
+
+def test_an_abandoned_candidate_is_deleted_when_superseded(store):
+    store.note_dna("ttr", "Hiro", DNA1)
+    _png(store.path_for("ttr", "Hiro", DNA1, "head"))
+    store.mark_landed("ttr", "Hiro", DNA1, "head")
+    store.note_dna("ttr", "Hiro", DNA2)          # tried on another outfit first
+    assert not os.path.isdir(os.path.join(store.toon_dir("ttr", "Hiro"), DNA1))
+    assert store.candidate_dna("ttr", "Hiro") == DNA2
+
+
+def test_swapping_back_to_previous_deletes_an_outfit_mid_download(store):
+    for dna in (DNA1, DNA2):
+        store.note_dna("ttr", "Hiro", dna)
+        _land_all(store, "ttr", "Hiro", dna)
+        store.promote_if_complete("ttr", "Hiro")
+    store.note_dna("ttr", "Hiro", "74000101cc")            # third outfit, partial
+    _png(store.path_for("ttr", "Hiro", "74000101cc", "head"))
+    assert store.note_dna("ttr", "Hiro", DNA1) == "current" # swap straight back
+    d = store.toon_dir("ttr", "Hiro")
+    assert not os.path.isdir(os.path.join(d, "74000101cc"))
+    assert os.path.isdir(os.path.join(d, DNA1)) and os.path.isdir(os.path.join(d, DNA2))
+
+
+def test_an_unreadable_file_logs_once_but_an_absent_one_does_not(store, capsys):
+    store.note_dna("ttr", "Hiro", DNA1)
+    assert store.lookup("ttr", "Hiro", "head") is None       # absent: silent
+    bad = store.path_for("ttr", "Hiro", DNA1, "head")
+    with open(bad, "wb") as f:
+        f.write(b"GIF89a")
+    store.mark_landed("ttr", "Hiro", DNA1, "head")
+    store.mark_landed("ttr", "Hiro", DNA1, "head")
+    out = capsys.readouterr().out
+    assert out.count("not a PNG") == 1
+
+
+def test_invalidate_drops_current_only_and_requeues_it(store):
+    store.note_dna("ttr", "Hiro", DNA1)
+    _land_all(store, "ttr", "Hiro", DNA1)
+    store.promote_if_complete("ttr", "Hiro")
+    store.note_dna("ttr", "Hiro", DNA2)
+    _land_all(store, "ttr", "Hiro", DNA2)
+    store.promote_if_complete("ttr", "Hiro")
+    assert store.invalidate("ttr", "Hiro") == DNA2
+    assert store.candidate_dna("ttr", "Hiro") == DNA2
+    assert store.missing_poses("ttr", "Hiro", DNA2) == list(POSES)
+    path, tier = store.lookup("ttr", "Hiro", "head")
+    assert tier == "previous" and DNA1 in path
+
+
+def test_invalidate_with_nothing_current_is_a_noop(store):
+    assert store.invalidate("ttr", "Nobody") is None
+
+
+def test_disk_faults_read_as_not_present(store, tmp_path):
+    store.note_dna("ttr", "Hiro", DNA1)
+    _land_all(store, "ttr", "Hiro", DNA1)
+    store.promote_if_complete("ttr", "Hiro")
+    os.remove(store.path_for("ttr", "Hiro", DNA1, "head"))
+    assert store.lookup("ttr", "Hiro", "head") is None
+    assert "head" in store.missing_poses("ttr", "Hiro", DNA1)
+
+
+def _flat(flat_dir, dna, pose):
+    p = os.path.join(flat_dir, f"{dna}__{pose}__512.png")
+    _png(p, tag=pose.encode())
+    return p
+
+
+def test_import_promotes_a_complete_flat_set(store, tmp_path):
+    flat = str(tmp_path / "flat")
+    for pose in POSES:
+        _flat(flat, DNA1, pose)
+    n = store.import_flat_cache(flat, [("ttr", "Hiro", DNA1)])
+    assert n == {("ttr", "Hiro"): 3}
+    assert store.current_dna("ttr", "Hiro") == DNA1
+    path, tier = store.lookup("ttr", "Hiro", "head")
+    assert tier == "current"
+    with open(path, "rb") as f:
+        assert f.read().endswith(b"head")          # the bytes were copied, not re-made
+    assert os.path.exists(os.path.join(flat, f"{DNA1}__head__512.png"))   # source untouched
+
+
+def test_import_leaves_a_partial_set_as_candidate_for_the_sweep(store, tmp_path):
+    flat = str(tmp_path / "flat")
+    _flat(flat, DNA1, "portrait")
+    assert store.import_flat_cache(flat, [("ttr", "Hiro", DNA1)]) == {("ttr", "Hiro"): 1}
+    assert store.current_dna("ttr", "Hiro") is None
+    assert store.candidate_dna("ttr", "Hiro") == DNA1
+    assert store.missing_poses("ttr", "Hiro", DNA1) == ["head", "waving"]
+    assert store.lookup("ttr", "Hiro", "portrait")[1] == "candidate"   # served meanwhile
+
+
+def test_import_is_idempotent_and_never_demotes(store, tmp_path):
+    flat = str(tmp_path / "flat")
+    for pose in POSES:
+        _flat(flat, DNA1, pose)
+    store.import_flat_cache(flat, [("ttr", "Hiro", DNA1)])
+    assert store.import_flat_cache(flat, [("ttr", "Hiro", DNA1)]) == {}
+    assert store.current_dna("ttr", "Hiro") == DNA1
+
+
+def test_import_skips_toons_with_no_dna_and_missing_dirs(store, tmp_path):
+    assert store.import_flat_cache(str(tmp_path / "nope"), [("ttr", "Hiro", DNA1)]) == {}
+    assert store.import_flat_cache(str(tmp_path), [("ttr", "Hiro", "")]) == {}
+
+
+def test_import_counts_per_toon_so_partial_sets_are_announced_too(store, tmp_path):
+    flat = str(tmp_path / "flat")
+    for pose in POSES:
+        _flat(flat, DNA1, pose)
+    _flat(flat, DNA2, "head")
+    got = store.import_flat_cache(flat, [("ttr", "Whole", DNA1), ("ttr", "Half", DNA2),
+                                         ("ttr", "None", "74000101cc")])
+    assert got == {("ttr", "Whole"): 3, ("ttr", "Half"): 1}

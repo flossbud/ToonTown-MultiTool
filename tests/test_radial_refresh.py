@@ -13,13 +13,16 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
-def _acct(aid, dna, name="Toon"):
+def _acct(aid, dna, name="Toon", game="ttr"):
     from utils.radial_menu_model import RingAccount
-    return RingAccount(aid, "ttr", aid.upper(), name, dna, True, False)
+    return RingAccount(aid, game, aid.upper(), name, dna, True)
 
 
 def _patch_render(monkeypatch, warmed):
-    """render_account_portrait fake: 'complete' once a dna is in `warmed`."""
+    """render_account_portrait fake: 'complete' once a dna is in `warmed`,
+    else 'pending'. The real cache path never reports 'pending' (see
+    test_nothing_on_disk_leaves_no_account_loading); the fake keeps it so
+    the ring's spinner protocol stays observable through `_loading`."""
     from utils.overlay import radial_portrait
     from utils.overlay.radial_portrait import PortraitRender
 
@@ -44,7 +47,7 @@ def test_set_accounts_marks_pending(qapp, monkeypatch):
     assert menu._loading == {"a1"}
 
 
-def test_pose_ready_refreshes_matching_dna(qapp, monkeypatch):
+def test_render_landed_refreshes_matching_toon(qapp, monkeypatch):
     from utils.overlay.radial_menu import RadialMenuWidget
     warmed = set()
     _patch_render(monkeypatch, warmed)
@@ -52,76 +55,152 @@ def test_pose_ready_refreshes_matching_dna(qapp, monkeypatch):
     menu.set_accounts([_acct("a1", "dna-a")])
     assert menu._loading == {"a1"}
     warmed.add("dna-a")
-    menu._on_pose_ready("dna-a", "portrait", QPixmap(8, 8))
+    menu._on_render_landed("ttr", "Toon", "portrait")
     assert "a1" not in menu._loading
 
 
-def test_pose_ready_ignores_non_matching_dna(qapp, monkeypatch):
+def test_render_landed_ignores_other_toons(qapp, monkeypatch):
+    # The cache is process-wide and keyed by (game, name): a landing for
+    # another toon, or for the same name under another game, is not ours.
     from utils.overlay.radial_menu import RadialMenuWidget
-    _patch_render(monkeypatch, warmed=set())
+    warmed = set()
+    _patch_render(monkeypatch, warmed)
     menu = RadialMenuWidget(emblem_diameter=120)
     menu.set_accounts([_acct("a1", "dna-a")])
-    menu._on_pose_ready("dna-OTHER", "portrait", None)
+    warmed.add("dna-a")         # a re-render WOULD complete - it must not run
+    menu._on_render_landed("ttr", "Other", "portrait")
+    menu._on_render_landed("cc", "Toon", "portrait")
     assert menu._loading == {"a1"}
 
 
-def test_pose_ready_noop_when_not_accounts_state(qapp, monkeypatch):
+def test_render_landed_noop_when_not_accounts_state(qapp, monkeypatch):
     from utils.overlay.radial_menu import RadialMenuWidget
-    _patch_render(monkeypatch, warmed=set())
+    warmed = set()
+    _patch_render(monkeypatch, warmed)
     menu = RadialMenuWidget(emblem_diameter=120)
     menu.set_accounts([_acct("a1", "dna-a")])
+    warmed.add("dna-a")         # a re-render WOULD complete - it must not run
     menu._state = "main"
-    menu._on_pose_ready("dna-a", "portrait", None)   # must not crash / not refresh
+    menu._on_render_landed("ttr", "Toon", "portrait")   # must not crash / not refresh
     assert menu._loading == {"a1"}
 
 
-def test_pose_ready_signal_fans_out_to_shared_dna(qapp, monkeypatch):
-    # Exercises the REAL pose_ready connection wired in __init__ (the prior
-    # tests call _on_pose_ready directly, so a dropped/mis-typed connection
-    # would slip through) AND the intended shared-DNA fan-out: two accounts
-    # wearing the same costume both refresh from a single pose arrival.
+def test_render_landed_signal_fans_out_to_same_toon(qapp, monkeypatch, render_cache):
+    # Exercises the REAL render_landed connection wired in __init__ (the prior
+    # tests call _on_render_landed directly, so a dropped/mis-typed connection
+    # would slip through) AND the intended fan-out: two ring entries for the
+    # same toon both refresh from a single landing.
     from utils.overlay.radial_menu import RadialMenuWidget
-    from utils.rendition_poses import RenditionPoseFetcher
+    facade, store, pf = render_cache
     warmed = set()
     _patch_render(monkeypatch, warmed)
     menu = RadialMenuWidget(emblem_diameter=120)
     menu.set_accounts([_acct("a1", "dna-shared"), _acct("a2", "dna-shared")])
     assert menu._loading == {"a1", "a2"}
     warmed.add("dna-shared")
-    # Same-thread emit -> the __init__ connection runs _on_pose_ready synchronously.
-    RenditionPoseFetcher.instance().pose_ready.emit("dna-shared", "portrait", QPixmap(8, 8))
+    # Same-thread emit -> the __init__ connection runs _on_render_landed synchronously.
+    pf.render_landed.emit("ttr", "Toon", "portrait")
     assert menu._loading == set()
     menu.deleteLater()
     qapp.processEvents()
 
 
-def test_pose_ready_failure_clears_loading_without_refetch(qapp, monkeypatch):
-    # A failed fetch (pixmap=None) must stop the spinner (clear _loading) and
-    # must NOT re-render -- re-rendering calls set_dna, which re-fires the fetch
-    # as a side effect, looping into a retry storm. A later ring-open retries.
+def test_set_promoted_signal_refreshes_pending_accounts(qapp, monkeypatch, render_cache):
+    # A toon's set being promoted (all poses landed at once, or a startup
+    # import) must fill a pending portrait exactly like a single landing.
     from utils.overlay.radial_menu import RadialMenuWidget
+    facade, store, pf = render_cache
+    warmed = set()
+    _patch_render(monkeypatch, warmed)
+    menu = RadialMenuWidget(emblem_diameter=120)
+    menu.set_accounts([_acct("a1", "dna-a"), _acct("b1", "dna-b", name="Blue")])
+    assert menu._loading == {"a1", "b1"}
+    warmed.update({"dna-a", "dna-b"})
+    pf.set_promoted.emit("ttr", "Toon")
+    assert menu._loading == {"b1"}
+    menu.deleteLater()
+    qapp.processEvents()
+
+
+def test_destroyed_menu_never_hears_the_cache(qapp, monkeypatch, render_cache):
+    # Both connections are receiver-owned: once the menu is destroyed the
+    # process-wide facade's signals must not reach it at all. A lambda slot
+    # would outlive the ring, run the re-render and then raise inside the
+    # emit on `self.update()` of a deleted widget.
+    import shiboken6
+    from PySide6.QtCore import QCoreApplication, QEvent
     from utils.overlay import radial_portrait
-    from utils.overlay.radial_portrait import PortraitRender
-
-    calls = []
-
-    def fake(game, toon_name, dna, customizations, diameter):
-        calls.append(dna)
-        pm = QPixmap(diameter, diameter); pm.fill()
-        return PortraitRender(pm, "pending" if dna else "no_pose")
-
-    monkeypatch.setattr(radial_portrait, "render_account_portrait", fake, raising=True)
+    from utils.overlay.radial_menu import RadialMenuWidget
+    facade, store, pf = render_cache
+    warmed = set()
+    _patch_render(monkeypatch, warmed)
     menu = RadialMenuWidget(emblem_diameter=120)
     menu.set_accounts([_acct("a1", "dna-a")])
     assert menu._loading == {"a1"}
-    n = len(calls)                                   # renders so far (set_accounts)
-    menu._on_pose_ready("dna-a", "portrait", None)   # fetch-failure signal
-    assert menu._loading == set()                    # spinner stopped
-    assert len(calls) == n                           # NO re-render -> no refetch loop
+    warmed.add("dna-a")
+    calls = []
+    real = radial_portrait.render_account_portrait
+    monkeypatch.setattr(radial_portrait, "render_account_portrait",
+                        lambda *a: (calls.append(a), real(*a))[1], raising=True)
+    menu.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    assert not shiboken6.isValid(menu)
+    pf.render_landed.emit("ttr", "Toon", "portrait")
+    pf.set_promoted.emit("ttr", "Toon")
+    assert calls == []
+
+
+def test_nothing_on_disk_leaves_no_account_loading(qapp, render_cache):
+    # The REAL render path. A toon with nothing on disk is "no_pose", not
+    # "pending": the ring shows its fallback with no spinner and no 60 fps
+    # clock (a permanently failing download would otherwise spin forever).
+    # The cache's render_landed still fills the disc in when a set lands,
+    # so the re-render cannot be gated on a pending set that never exists.
+    from utils.overlay.radial_menu import RadialMenuWidget
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
+    facade.discovered("ttr", "Toon", "dna-a")    # the capture hook's job
+    menu = RadialMenuWidget(emblem_diameter=120)
+    menu.set_accounts([_acct("a1", "dna-a")])
+    assert menu._loading == set()
+    before = menu._portraits["a1"]
+    c = before.toImage().pixelColor(before.width() // 2, before.height() // 2)
+    assert not (c.red() > 200 and c.green() < 60 and c.blue() < 60), c.getRgb()
+    complete_set(store, "ttr", "Toon", "dna-a", "#ff0000")
+    pf.render_landed.emit("ttr", "Toon", "portrait")
+    assert menu._loading == set()
+    after = menu._portraits["a1"]
+    c = after.toImage().pixelColor(after.width() // 2, after.height() // 2)
+    assert c.red() > 200 and c.green() < 60 and c.blue() < 60, c.getRgb()
+    menu.deleteLater()
+    qapp.processEvents()
+
+
+def test_render_landed_for_an_incomplete_toon_does_not_grow_the_fetch_queue(qapp, render_cache):
+    # Re-rendering an account whose set is still incomplete goes back
+    # through set_dna -> pixmap_for -> want. The prefetcher dedupes, so
+    # repeated landings for a toon whose wanted pose is still missing must
+    # not pile up fetch work (the legacy path looped into a retry storm here).
+    from utils.overlay.radial_menu import RadialMenuWidget
+    from tests._render_fixtures import real_png
+    facade, store, pf = render_cache
+    facade.discovered("ttr", "Toon", "dna-a")    # the capture hook's job
+    menu = RadialMenuWidget(emblem_diameter=120)
+    menu.set_accounts([_acct("a1", "dna-a")])
+    assert menu._loading == set()
+    n = pf.pending_count
+    assert n > 0
+    # A pose we do not show lands; ours ("portrait") is still missing.
+    real_png(store.path_for("ttr", "Toon", "dna-a", "waving"))
+    assert store.mark_landed("ttr", "Toon", "dna-a", "waving")
+    menu._on_render_landed("ttr", "Toon", "waving")
+    menu._on_render_landed("ttr", "Toon", "waving")
+    assert menu._loading == set()
+    assert pf.pending_count == n               # nothing was added
 
 
 def test_kill_switch_still_refreshes(qapp, monkeypatch):
-    # Animation disabled -> no clock, but pose_ready must still swap the pixmap
+    # Animation disabled -> no clock, but a landing must still swap the pixmap
     # and clear the loading flag (live-refresh calls update() directly).
     from utils.overlay.radial_menu import RadialMenuWidget
     warmed = set()
@@ -131,5 +210,5 @@ def test_kill_switch_still_refreshes(qapp, monkeypatch):
     menu.set_accounts([_acct("a1", "dna-a")])
     assert menu._loading == {"a1"}
     warmed.add("dna-a")
-    menu._on_pose_ready("dna-a", "portrait", QPixmap(8, 8))
+    menu._on_render_landed("ttr", "Toon", "portrait")
     assert "a1" not in menu._loading

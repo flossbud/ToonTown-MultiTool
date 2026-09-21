@@ -20,8 +20,10 @@ from PySide6.QtCore import Qt, QObject, Signal, QThread, Slot, QTimer
 from PySide6.QtGui import QColor
 
 from utils.theme_manager import resolve_theme, get_theme_colors
+from utils.asset_paths import asset_path as _asset_path
 from utils.color_math import alpha
 from utils.credentials_manager import CredentialsManager, set_debug_log_callback
+from utils.credential_copy import KEYRING_WARNING_COPY, MACOS_VAULT_COPY
 from utils.open_url import open_url
 from services.ttr_login_service import (
     TTRLoginWorker, LoginState, find_engine_path, get_engine_executable_name,
@@ -60,10 +62,21 @@ from utils.widgets.account_editor import AccountEditor
 from utils.widgets.account_reorder_dialog import AccountReorderDialog
 from utils.widgets.confirm_dialog import ConfirmDialog
 from utils.widgets.error_modal import ErrorModal
+from utils.widgets.grandstand.party import LaunchParty
+from utils.widgets.grandstand.view import GrandstandView, grandstand_enabled
 from utils.launch_tab_demo_mode import get_demo_fixtures
 
 
 MAX_PER_GAME = 16  # hard ceiling per game (TTR / CC)
+# Delay between party launches. Concurrency is already safe — TTRPatcher holds
+# a module-level lock on the shared engine dir — but firing four logins in the
+# same tick would randomise arrival order at the server and make the star's
+# precedence meaningless (spec §6).
+PARTY_STAGGER_MS = 400
+
+# States that mean a launch is already under way for this account.
+_IN_FLIGHT_STATES = frozenset({"logging_in", "launching", "loading", "queued",
+                               "need_2fa"})
 LINUX_KEYRING_HELP_URL = "https://wiki.archlinux.org/title/Secret_Service"
 
 
@@ -78,16 +91,6 @@ class AccountSlot:
     launcher: object = None
     loading_timer: object = None   # QTimer or None; non-None == active pending
     dot_state: str = ""
-
-
-def _asset_path(name: str) -> str:
-    """Resolve a bundled asset relative to the repo root / PyInstaller _MEIPASS.
-    Mirrors tabs/credits_tab.py and main.py:_resolve_app_icon."""
-    base = getattr(
-        sys, "_MEIPASS",
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    )
-    return os.path.join(base, "assets", name)
 
 
 # ── CC multi-install launch gate ──────────────────────────────────────────
@@ -216,15 +219,11 @@ class KeyringWarningBanner(QFrame):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(8)
 
-        self.header_label = QLabel("⚠  Credential Storage Unavailable")
+        self.header_label = QLabel(KEYRING_WARNING_COPY.header)
         self.header_label.setWordWrap(True)
         layout.addWidget(self.header_label)
 
-        self.body_label = QLabel(
-            "No system wallet service was detected. Your account usernames are saved,\n"
-            "but passwords will not be remembered between sessions - you'll need to\n"
-            "re-enter them each time you launch TTMT."
-        )
+        self.body_label = QLabel(KEYRING_WARNING_COPY.body)
         self.body_label.setWordWrap(True)
         layout.addWidget(self.body_label)
 
@@ -324,31 +323,19 @@ class MacOSVaultLockedBanner(QFrame):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(8)
 
-        if self._mode == "corrupt":
-            header_text = "⚠  Couldn't open your saved accounts"
-            body_text = (
-                "Your saved accounts could not be unlocked, so they are not\n"
-                "available this session. Your data was left untouched. Restart\n"
-                "TTMT to try again; if it keeps happening, please share the\n"
-                "keyring-debug.log file when reporting."
-            )
-        else:
-            header_text = "🔒  Your accounts are locked"
-            body_text = (
-                "Unlock to load your saved accounts for this session."
-            )
+        copy = MACOS_VAULT_COPY[self._mode]
 
-        self.header_label = QLabel(header_text)
+        self.header_label = QLabel(copy.header)
         self.header_label.setWordWrap(True)
         layout.addWidget(self.header_label)
 
-        self.body_label = QLabel(body_text)
+        self.body_label = QLabel(copy.body)
         self.body_label.setWordWrap(True)
         layout.addWidget(self.body_label)
 
         self.unlock_button = None
-        if self._mode == "denied":
-            self.unlock_button = QPushButton("Unlock accounts")
+        if copy.action_text:
+            self.unlock_button = QPushButton(copy.action_text)
             self.unlock_button.setCursor(Qt.PointingHandCursor)
             self.unlock_button.clicked.connect(self._on_click)
             layout.addWidget(self.unlock_button, alignment=Qt.AlignLeft)
@@ -446,9 +433,17 @@ class LaunchTab(QWidget):
         self._visible_tiles: dict[str, dict[str, object]] = {"ttr": {}, "cc": {}}
         self._page: dict[str, int] = {"ttr": 0, "cc": 0}
         self._keyring_banner = None
+        self._grandstand_credential_kind = "ok"
+        # Demo fixtures (TTMT_DEMO_LAUNCH_TAB) when Grandstand renders them
+        # instead of the credential store; None on the real roster.
+        self._grandstand_demo = None
         self._probe_thread = None
         self._probe_worker = None
         self._pending_2fa: set = set()
+        self._party_timers: list = []
+        self._party_gate_ok: set[tuple[str, str]] = set()
+        self._party_pending: set[tuple[str, str]] = set()
+        self._shutting_down = False
 
         # Loading-state orchestration. _loading[game] is a launch-ordered list
         # of account_ids (the timer itself lives on each slot.loading_timer);
@@ -621,8 +616,23 @@ class LaunchTab(QWidget):
     def capture_toon(self, pid: int, toon_name: str, dna: str = "", *,
                      laff=None, max_laff=None, species=None, accent=None) -> None:
         """Record the in-world toon for whatever account owns ``pid`` (no-op if unknown)."""
-        self._toon_bridge.capture(pid, toon_name, dna, laff=laff, max_laff=max_laff,
-                                  species=species, accent=accent)
+        affected = self._toon_bridge.capture(
+            pid, toon_name, dna, laff=laff, max_laff=max_laff,
+            species=species, accent=accent)
+        if affected is None or not self._grandstand_mounted():
+            return
+        # Captures arrive on every laff tick of every running toon. Repaint
+        # only when one changed something the view draws: RosterEntry carries
+        # no laff, so a laff-only capture compares equal and the cards — and
+        # any hover or focus on them — are left alone.
+        game, account_id = affected
+        acct = next((a for a in self._ordered_accounts(game)
+                     if a.id == account_id), None)
+        if acct is None:
+            return
+        if self._grandstand_entry(game, acct) != \
+                self.grandstand.entry_for(game, account_id):
+            self._render_current_view(game)
 
     def set_overlay_active_provider(self, fn) -> None:
         """Install a ``() -> bool`` predicate reporting whether the transparent
@@ -756,14 +766,66 @@ class LaunchTab(QWidget):
         biometric gate was denied ("denied") or the vault could not be read
         ("corrupt"), and return True. Return False for every other state so the
         generic keyring banner logic runs unchanged. Never called off darwin."""
-        state = getattr(self.cred_manager, "macos_unlock_state", None)
-        if state not in ("denied", "corrupt"):
+        if not self._macos_vault_is_locked():
             return False
+        state = getattr(self.cred_manager, "macos_unlock_state", None)
         self._keyring_banner = MacOSVaultLockedBanner(
             state, self._on_unlock_accounts_clicked, parent=self
         )
         self._layout.addWidget(self._keyring_banner, alignment=Qt.AlignHCenter)
         return True
+
+    def _macos_vault_is_locked(self) -> bool:
+        """Darwin: the launch-time biometric gate was denied, or the vault
+        could not be read. Both mean no account can launch."""
+        state = getattr(self.cred_manager, "macos_unlock_state", None)
+        return state in ("denied", "corrupt")
+
+    def _push_credential_state(self) -> None:
+        """Translate the keyring/vault situation into a Grandstand credential
+        state. Blocking conditions take the hero; advisory ones take the strip.
+        The old banner widgets stay for the legacy path."""
+        gs = getattr(self, "grandstand", None)
+        if gs is None:
+            return
+        if sys.platform == "darwin" and self._macos_vault_is_locked():
+            state = getattr(self.cred_manager, "macos_unlock_state", None)
+            copy = MACOS_VAULT_COPY[state]
+            self._set_grandstand_credential_state(
+                "blocked",
+                copy.hero_reason(), copy.action_text,
+                self._on_unlock_accounts_clicked if copy.action_text else None)
+            return
+        if getattr(self.cred_manager, "keyring_probe_pending", False):
+            self._set_grandstand_credential_state(
+                "advisory", "Checking your keyring…")
+            return
+        if not getattr(self.cred_manager, "keyring_available", True):
+            self._set_grandstand_credential_state("advisory")
+            return
+        self._set_grandstand_credential_state("ok")
+
+    def _set_grandstand_credential_state(
+            self, kind: str, reason: str = "", action_text: str = "",
+            on_action=None) -> None:
+        """Keep the tab's dispatch state synchronized with its mounted view."""
+        gs = getattr(self, "grandstand", None)
+        if gs is None:
+            return
+        self._grandstand_credential_kind = kind
+        gs.set_credential_state(kind, reason, action_text, on_action)
+
+    def _grandstand_mounted(self) -> bool:
+        """Whether the flagged launcher is the mounted view. Guards that
+        exist only for Grandstand key off this, so the legacy path is
+        byte-for-byte unchanged with the flag unset."""
+        return getattr(self, "grandstand", None) is not None
+
+    def _grandstand_launch_is_blocked(self) -> bool:
+        """Block only the flagged launcher; the legacy path stays unchanged."""
+        return (self._grandstand_mounted()
+                and getattr(self, "_grandstand_credential_kind", "ok")
+                == "blocked")
 
     def _on_unlock_accounts_clicked(self):
         """Re-run the probe worker, which re-fires the single biometric gate.
@@ -842,9 +904,13 @@ class LaunchTab(QWidget):
         the button respects the user's chosen install method
         (Faugus/Bottles/Wine/Lutris/Steam-Proton/Native) instead of always
         picking the first discovered install."""
+        if self._grandstand_launch_is_blocked():
+            return
         import tabs.launch_tab as _m
         if game == "cc":
             if not _m._cc_launch_gate(self.settings_manager, parent=self.window()):
+                return
+            if self._grandstand_launch_is_blocked():
                 return
             runner = _m.run_official_cc_launcher
             runner_kwargs = {"settings_manager": self.settings_manager}
@@ -893,6 +959,9 @@ class LaunchTab(QWidget):
         self._customizations = manager
         for section in self._sections.values():
             section.set_customizations_manager(manager)
+        if self._grandstand_mounted():
+            for game in ("ttr", "cc"):
+                self._render_current_view(game)
 
     def _primary_toon_fields(self, account_id: str) -> dict:
         """Primary-toon display fields for a tile, resolved from the recent-toons
@@ -933,7 +1002,7 @@ class LaunchTab(QWidget):
 
     def _on_primary_picked(self, game: str, account_id: str, toon_name: str) -> None:
         self._recent_toons.set_primary(account_id, toon_name)
-        self._render_section(game)
+        self._render_current_view(game)
         self.refresh_theme()
 
     def _render_section(self, game: str) -> None:
@@ -966,6 +1035,14 @@ class LaunchTab(QWidget):
             if local < len(section.tiles):
                 self._visible_tiles[game][acct.id] = section.tiles[local]
 
+    def _render_current_view(self, game: str) -> None:
+        """Repaint whichever launcher is mounted. Account mutations (add, edit,
+        reorder, delete) must reach the view the user is actually looking at."""
+        if self._grandstand_mounted():
+            self._render_grandstand(game)
+        else:
+            self._render_section(game)
+
     def _reapply_visible_dots(self, game: str) -> None:
         """Re-apply each visible running account's last Multitoon dot_state.
         Must run AFTER refresh_theme(): AccountTile.apply_theme re-runs set_state
@@ -987,17 +1064,29 @@ class LaunchTab(QWidget):
         self._render_section(game)
         self.refresh_theme()  # re-applies Multitoon dot_state last (see refresh_theme)
 
+    @staticmethod
+    def _demo_accounts(demo, game: str) -> list[tuple[str, dict]]:
+        """(account_id, fixture) pairs for one game's demo fixtures, in fixture
+        order. Both launchers key their demo slots by these ids."""
+        return [(fixture.get("id", f"demo_{game}_{i}"), fixture)
+                for i, fixture in enumerate(demo.get(game, []))]
+
+    @staticmethod
+    def _demo_slot(account_id: str, fixture: dict) -> AccountSlot:
+        """A slot pinned to the fixture's state; no worker ever moves it."""
+        return AccountSlot(account_id=account_id,
+                           state=fixture.get("state", LoginState.IDLE),
+                           message=fixture.get("message", ""),
+                           raw_error=fixture.get("raw", ""))
+
     def _build_demo(self, demo):
         for game in ("ttr", "cc"):
             self._slots[game] = {}
             self._loading[game] = []
             accounts = demo.get(game, [])
             dicts = []
-            for i, acct in enumerate(accounts):
-                aid = acct.get("id", f"demo_{game}_{i}")
-                slot = AccountSlot(account_id=aid, state=acct.get("state", "idle"),
-                                   message=acct.get("message", ""),
-                                   raw_error=acct.get("raw", ""))
+            for aid, acct in self._demo_accounts(demo, game):
+                slot = self._demo_slot(aid, acct)
                 self._slots[game][aid] = slot
                 dicts.append({"label": acct.get("label", ""), "username": acct.get("username", ""),
                               "id": aid, "state": slot.state, "message": slot.message,
@@ -1028,6 +1117,11 @@ class LaunchTab(QWidget):
                 w.deleteLater()
         self._keyring_banner = None
 
+        demo = get_demo_fixtures()
+        if grandstand_enabled():
+            self._build_grandstand(demo)
+            return
+
         # Banner (pending / warning / darwin-locked) at top. On darwin a denied
         # or corrupt vault state takes precedence over the generic keyring
         # banners; otherwise the pending/warning logic is byte-identical.
@@ -1040,7 +1134,6 @@ class LaunchTab(QWidget):
             self._keyring_banner = KeyringWarningBanner(self.cred_manager, parent=self)
             self._layout.addWidget(self._keyring_banner, alignment=Qt.AlignHCenter)
 
-        demo = get_demo_fixtures()
         if demo is not None:
             self._build_demo(demo)
             self._rebuild_sections_container()
@@ -1053,12 +1146,118 @@ class LaunchTab(QWidget):
         self._render_section("cc")
         self._layout.addStretch()
 
+    def _build_grandstand(self, demo=None) -> None:
+        """Mount the Grandstand roster view (TTMT_GRANDSTAND=1). The old
+        section/tile path is left entirely untouched behind the flag until the
+        cut-over task removes it."""
+        self._party = LaunchParty(self.settings_manager)
+        self._grandstand_demo = demo
+        if demo is None:
+            self._reconcile_slots()
+            valid_ids = {
+                game: {a.id for a in self._ordered_accounts(game)}
+                for game in ("ttr", "cc")
+            }
+        else:
+            # Demo fixtures replace the credential store as the data source;
+            # the same fixture module drives both launchers.
+            valid_ids = {}
+            for game in ("ttr", "cc"):
+                self._slots[game] = {
+                    aid: self._demo_slot(aid, fixture)
+                    for aid, fixture in self._demo_accounts(demo, game)}
+                valid_ids[game] = set(self._slots[game])
+        for game in ("ttr", "cc"):
+            self._party.prune(game, valid_ids[game])
+
+        self.grandstand = GrandstandView(self._party, log=self.log, parent=self)
+        self._push_credential_state()
+        # star_changed needs no handler here: LaunchParty persists the star
+        # and the view restyles its own surfaces; a rerender would only
+        # rebuild every card and drop hover/focus.
+        self.grandstand.add_account_requested.connect(self._on_add_account)
+        self.grandstand.manage_requested.connect(self._on_reorder)
+        self.grandstand.game_changed.connect(self._render_grandstand)
+        self.grandstand.edit_requested.connect(self._on_grandstand_edit)
+        self.grandstand.official_launcher_requested.connect(self._on_launcher_clicked)
+        self.grandstand.cancel_requested.connect(self._on_tile_cancel)
+        self.grandstand.quit_requested.connect(self._on_tile_quit)
+        self.grandstand.enter_2fa_requested.connect(self._on_tile_enter_2fa)
+        self.grandstand.retry_requested.connect(self._on_launch)
+        self.grandstand.launch_requested.connect(self._on_launch)
+        self.grandstand.party_launch_requested.connect(self._on_party_launch)
+        self._layout.addWidget(self.grandstand, 1)
+        # The legacy sections remain parented for external callers, but without
+        # a layout Qt shows them at (0, 0) over Grandstand when their parent is
+        # shown. Keep them explicitly hidden until the eventual cut-over.
+        self.ttr_section.hide()
+        self.cc_section.hide()
+        for game in ("ttr", "cc"):
+            self._render_grandstand(game)
+
+    def _grandstand_entry(self, game: str, acct):
+        """One account's RosterEntry from the stores that own the truth."""
+        from utils.widgets.grandstand.model import roster_entry
+        slot = self._slots[game].get(acct.id)
+        st, msg, raw = self._effective_state(game, slot) if slot else ("idle", "", "")
+        rec = self._recent_toons.get(acct.id)
+        primary = self._recent_toons.primary_name(acct.id)
+        cust = {}
+        if self._customizations is not None and rec is not None:
+            cust = self._customizations.get(game, rec.toon_name) or {}
+        return roster_entry(
+            account_id=acct.id, game=game, label=acct.label or "",
+            username=acct.username or "", rec=rec, entry=cust,
+            state=st, message=msg, raw_error=raw,
+            is_primary=(rec is not None and rec.toon_name == primary))
+
+    def _render_grandstand(self, game: str) -> None:
+        """Build RosterEntry values for one game and hand them to the view."""
+        from utils.widgets.grandstand.model import roster_entry
+        entries = []
+        if self._grandstand_demo is not None:
+            # Fixture slots are pinned, so their state is read directly rather
+            # than through _effective_state (no launcher or timer to consult).
+            # A reconcile drops them (their ids are not in the credential
+            # store), so a missing slot is rebuilt from its fixture.
+            for aid, fixture in self._demo_accounts(self._grandstand_demo, game):
+                slot = self._slots[game].get(aid) or self._demo_slot(aid, fixture)
+                entries.append(roster_entry(
+                    account_id=aid, game=game,
+                    label=fixture.get("label", ""),
+                    username=fixture.get("username", ""), rec=None, entry={},
+                    state=slot.state, message=slot.message,
+                    raw_error=slot.raw_error, is_primary=False))
+            self.grandstand.set_accounts(game, entries)
+            self.grandstand.set_main_toon_names(game, {})
+            return
+        for acct in self._ordered_accounts(game):
+            entries.append(self._grandstand_entry(game, acct))
+        self.grandstand.set_accounts(game, entries)
+        names = {}
+        for acct in self._ordered_accounts(game):
+            rec = self._recent_toons.get(acct.id)
+            if rec is not None:
+                names[acct.id] = rec.toon_name
+        self.grandstand.set_main_toon_names(game, names)
+
+    def _on_grandstand_edit(self, game: str, account_id: str, surface: str) -> None:
+        """Pencil and gear both open today's account editor. `surface` is
+        carried through unused so sub-projects B and C only have to change this
+        method, not the widget that emits it."""
+        self._on_tile_edit(game, account_id)
+
     # ── Layout mode ────────────────────────────────────────────────────────
 
     def set_layout_mode(self, mode: str) -> None:
         """Switch between compact (stacked) and full (side-by-side) layouts.
         Cheap to call repeatedly: if mode matches the current state, no-op.
         """
+        # Grandstand is compact-only (spec Q5): one fluid layout at every size.
+        # The legacy body below rebuilds the section container, which would
+        # mount the old launcher alongside the new view on any resize.
+        if self._grandstand_mounted():
+            return
         if mode not in ("compact", "full"):
             return
         if mode == self._layout_mode and self._sections_container is not None:
@@ -1183,7 +1382,7 @@ class LaunchTab(QWidget):
                 self._page[game] = i // PAGE_SIZE
                 break
         self._reconcile_slots()
-        self._render_section(game)
+        self._render_current_view(game)
         self.refresh_theme()
 
     def _newest_account_id(self, game: str) -> str | None:
@@ -1210,7 +1409,7 @@ class LaunchTab(QWidget):
             if target is not None:
                 self._navigate_to_account(game, target)
             else:
-                self._render_section(game)
+                self._render_current_view(game)
                 self.refresh_theme()
 
         editor.account_saved.connect(_save)
@@ -1238,7 +1437,7 @@ class LaunchTab(QWidget):
             self.log(f"[Launch] Reorder of {game.upper()} accounts was rejected.", level="warn")
             return
         self._reconcile_slots()
-        self._render_section(game)
+        self._render_current_view(game)
         self.refresh_theme()
 
     def _on_tile_edit(self, game: str, account_id: str):
@@ -1265,7 +1464,7 @@ class LaunchTab(QWidget):
                 global_idx, label=label, username=username, password=pw,
             )
             self._reconcile_slots()
-            self._render_section(game)
+            self._render_current_view(game)
             self.refresh_theme()
             game_label = "TTR" if game == "ttr" else "CC"
             self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)} updated.")
@@ -1350,7 +1549,10 @@ class LaunchTab(QWidget):
                     daemon=True,
                 ).start()
         self._reconcile_slots()
-        self._render_section(game)
+        party = getattr(self, "_party", None)
+        if party is not None:
+            party.prune(game, {a.id for a in self._ordered_accounts(game)})
+        self._render_current_view(game)
         self.refresh_theme()
 
     def _on_tile_quit(self, game: str, account_id: str):
@@ -1419,11 +1621,137 @@ class LaunchTab(QWidget):
 
     # ── Launch flow ────────────────────────────────────────────────────────
 
+    def _is_in_flight(self, game: str, account_id: str) -> bool:
+        slot = self._slots[game].get(account_id)
+        if slot is None:
+            return False
+        state, _, _ = self._effective_state(game, slot)
+        return str(state) in _IN_FLIGHT_STATES
+
+    def _party_dispatch_targets(self, game: str, account_ids: list) -> list:
+        """The subset of a party that Play should actually start. Membership is
+        about who is on the stage; a toon already playing belongs there but
+        must not be relaunched (spec §6)."""
+        return [aid for aid in account_ids
+                if not self.is_account_running(game, aid)
+                and not self._is_in_flight(game, aid)
+                and (game, aid) not in self._party_pending]
+
+    def _cc_gate_ok(self, game: str, account_id: str) -> bool:
+        """The Clash install gate, asked once per user intent. A party is ONE
+        intent: `_on_party_launch` answers for the batch and pre-authorizes each
+        account it dispatches. Authorization is keyed to the exact dispatch and
+        consumed on use, so it cannot leak to an unrelated solo launch that runs
+        inside a nested modal loop.
+        """
+        key = (game, account_id)
+        if key in self._party_gate_ok:
+            self._party_gate_ok.discard(key)
+            return True
+        return _cc_launch_gate(self.settings_manager, parent=self.window())
+
+    def _on_party_launch(self, game: str, account_ids: list) -> None:
+        """Play. Dispatches through the same per-account entry point a single
+        card uses, staggered so the starred account's login lands first."""
+        if self._shutting_down or self._grandstand_launch_is_blocked():
+            return
+        targets = self._party_dispatch_targets(game, list(account_ids))
+        if not targets:
+            return
+        # The Clash install gate is a property of the batch, not the account.
+        if game == "cc" and not _cc_launch_gate(
+                self.settings_manager, parent=self.window()):
+            return
+        if self._shutting_down or self._grandstand_launch_is_blocked():
+            return
+        # The gate ran a nested event loop; anything could have started while
+        # it was open. Re-check before committing to the accounts we picked.
+        targets = self._party_dispatch_targets(game, targets)
+        if not targets:
+            return
+        if game == "cc":
+            self._party_gate_ok.update((game, aid) for aid in targets)
+        # Reserve staggered accounts before starting the first one. A second
+        # Play (or a card click) must not pull an account forward or schedule
+        # it twice while it is waiting for its turn.
+        delayed = targets[1:]
+        self._party_pending.update((game, aid) for aid in delayed)
+        try:
+            self._launch_party_account(game, targets[0])
+        except Exception:
+            self._release_party_reservations(game, delayed)
+            raise
+        if self._shutting_down or self._grandstand_launch_is_blocked():
+            self._release_party_reservations(game, delayed)
+            return
+
+        unarmed = list(delayed)
+        try:
+            for index, account_id in enumerate(delayed, start=1):
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                last = index == len(targets) - 1
+                timer.timeout.connect(
+                    lambda t=timer, g=game, a=account_id, fin=last:
+                        self._party_timeout(t, g, a, fin))
+                timer.start(PARTY_STAGGER_MS * index)
+                self._party_timers.append(timer)
+                unarmed.remove(account_id)
+        except Exception:
+            self._release_party_reservations(game, unarmed)
+            raise
+
+    def _release_party_reservations(self, game: str,
+                                    account_ids: list) -> None:
+        for account_id in account_ids:
+            self._party_pending.discard((game, account_id))
+            self._party_gate_ok.discard((game, account_id))
+
+    def _launch_party_account(self, game: str, account_id: str) -> None:
+        """Enter the normal launch path with this batch's gate authorization.
+
+        Authorization was keyed to this exact dispatch by `_on_party_launch`.
+        Discard it afterward in case `_on_launch` returned before reaching the
+        Clash gate, so no stale grant can survive to a later launch.
+        """
+        try:
+            self._on_launch(game, account_id)
+        finally:
+            self._party_gate_ok.discard((game, account_id))
+
+    def _party_timeout(self, timer: QTimer, game: str, account_id: str,
+                       last: bool) -> None:
+        try:
+            self._party_step(game, account_id, last)
+        finally:
+            if timer in self._party_timers:
+                self._party_timers.remove(timer)
+            timer.deleteLater()
+
+    def _party_step(self, game: str, account_id: str, last: bool) -> None:
+        self._party_pending.discard((game, account_id))
+        try:
+            if self._shutting_down or self._grandstand_launch_is_blocked():
+                return
+            # State may have changed while this account waited (for example a
+            # card launch or another party). Never relaunch a live/in-flight
+            # account when its original timer eventually fires.
+            if self._party_dispatch_targets(game, [account_id]):
+                self._launch_party_account(game, account_id)
+        finally:
+            self._party_gate_ok.discard((game, account_id))
+
     def _on_launch(self, game: str, account_id: str):
+        if self._grandstand_launch_is_blocked():
+            return
         from utils.credentials_manager import _dbg
         _dbg(f"[Credentials] _on_launch click: game={game} account={account_id} "
              f"probe_pending={getattr(self.cred_manager, 'keyring_probe_pending', False)} "
              f"available={getattr(self.cred_manager, 'keyring_available', True)}")
+        if (game, account_id) in self._party_pending:
+            _dbg(f"[Credentials] _on_launch: party launch pending for "
+                 f"{game}/{account_id}")
+            return
         slot = self._slots[game].get(account_id)
         if slot is None:
             _dbg(f"[Credentials] _on_launch: no slot for {game}/{account_id}")
@@ -1435,7 +1763,29 @@ class LaunchTab(QWidget):
 
         # CC: block launch when multi-install is ambiguous (no stored pick).
         if game == "cc":
-            if not _cc_launch_gate(self.settings_manager, parent=self.window()):
+            if not self._cc_gate_ok(game, account_id):
+                return
+            # The gate ran a nested event loop. Anything resolved above is
+            # stale: the roster may have been rebuilt (a shifted index would
+            # fetch another account's credentials), the tab may be shutting
+            # down, and a global hotkey may already have started this account.
+            if self._shutting_down or self._grandstand_launch_is_blocked():
+                return
+            slot = self._slots[game].get(account_id)
+            global_idx = self._global_index_of(account_id)
+            if slot is None or global_idx is None:
+                _dbg(f"[Credentials] _on_launch: {game}/{account_id} left the "
+                     "roster while the install gate was open")
+                return
+            # Grandstand never relaunches a live account (Task 13). The
+            # legacy launcher keeps its own behaviour below: a running
+            # account proceeds to the relaunch-terminates branch as it always
+            # has, so this bail is flagged-path only.
+            if self._grandstand_mounted() and (
+                    self.is_account_running(game, account_id)
+                    or self._is_in_flight(game, account_id)):
+                _dbg(f"[Credentials] _on_launch: {game}/{account_id} started "
+                     "while the install gate was open")
                 return
 
         # Check engine path
@@ -1720,9 +2070,18 @@ class LaunchTab(QWidget):
         open_btn = box.addButton("Open official launcher", QMessageBox.AcceptRole)
         box.addButton("Cancel", QMessageBox.RejectRole)
         box.exec()
-        if box.clickedButton() is open_btn:
-            if not run_official_cc_launcher(self.settings_manager):
-                self.log("[Launch] Could not start the official CC launcher.")
+        if box.clickedButton() is not open_btn:
+            return
+        if self._grandstand_mounted():
+            # The box ran a nested event loop. On the flagged path opening
+            # the launcher is the same action as the hero's button, so it
+            # takes the same guarded boundary — credential blocking cannot be
+            # skipped by arriving from here.
+            if not self._shutting_down:
+                self._on_launcher_clicked("cc")
+            return
+        if not run_official_cc_launcher(self.settings_manager):
+            self.log("[Launch] Could not start the official CC launcher.")
 
     def _on_login_failed(self, game, account_id, worker, msg):
         slot = self._slots[game].get(account_id)
@@ -1886,14 +2245,26 @@ class LaunchTab(QWidget):
 
         game_label = "TTR" if game == "ttr" else "CC"
         self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)} requires 2FA.")
+        slot = self._slots[game].get(account_id)
+        asker = slot.worker if slot is not None else None
         token, ok = QInputDialog.getText(
             self, "Two-Factor Authentication",
             f"{banner}\n\nEnter your authenticator code:",
             QLineEdit.Password,
         )
         self._pending_2fa.discard(key)
+        # The dialog ran a nested event loop. A relaunch meanwhile put a new
+        # worker on the slot; on the flagged path the answer belongs to the
+        # one that asked, so the newcomer gets neither the token nor a
+        # cancellation. The legacy launcher keeps delivering to whichever
+        # worker the slot holds, as it always has.
         slot = self._slots[game].get(account_id)
         worker = slot.worker if slot is not None else None
+        if self._grandstand_mounted() and worker is not asker:
+            self.log(f"[Launch] {game_label} account "
+                     f"{self._position_of(game, account_id)} 2FA prompt was "
+                     "superseded by a newer launch; answer discarded.")
+            return
         if ok and token.strip():
             if worker:
                 worker.submit_2fa(token.strip())
@@ -1907,6 +2278,7 @@ class LaunchTab(QWidget):
         if available:
             self.cred_manager.run_deferred_v1_migration()
         self._build_ui()
+        self._push_credential_state()
         self.refresh_theme()
         self._set_launch_buttons_enabled(True)
         from utils.credentials_manager import _dbg
@@ -1928,6 +2300,9 @@ class LaunchTab(QWidget):
         tile = self._visible_tiles[game].get(account_id)
         if tile is not None:
             tile.set_state(state, message or "", raw)
+        gs = getattr(self, "grandstand", None)
+        if gs is not None:
+            gs.set_account_state(game, account_id, str(state), message, raw or "")
         self._refresh_activity(game)
 
     def update_dot_state(self, index: int, state_str: str):
@@ -2001,6 +2376,10 @@ class LaunchTab(QWidget):
             if section is not None and hasattr(section, "apply_theme"):
                 section.apply_theme(c)
 
+        grandstand = getattr(self, "grandstand", None)
+        if grandstand is not None:
+            grandstand.apply_theme(is_dark)
+
         if self._keyring_banner is not None:
             if hasattr(self._keyring_banner, "apply_theme"):
                 self._keyring_banner.apply_theme(c)
@@ -2020,9 +2399,16 @@ class LaunchTab(QWidget):
             print(msg)
 
     def shutdown(self):
+        self._shutting_down = True
         # Tear down the tab's own transient resources. Deliberately does NOT
         # kill running game launchers: closing the TTMT UI leaves already-running
         # games alive (a multitoon launcher you can close while still playing).
+        for timer in self._party_timers:
+            timer.stop()
+            timer.deleteLater()
+        self._party_timers.clear()
+        self._party_gate_ok.clear()
+        self._party_pending.clear()
         for game in ("ttr", "cc"):
             for slot in self._slots[game].values():
                 if slot.loading_timer is not None:

@@ -1,4 +1,5 @@
-"""Tests for ToonPortraitWidget override pickup + widened pencil visibility."""
+"""Tests for ToonPortraitWidget override pickup, widened pencil visibility,
+and its reads from the per-toon render cache (ToonRenders)."""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
 from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QColor, QMouseEvent
 
 
 @pytest.fixture
@@ -140,39 +141,190 @@ def test_pencil_overlay_paints_for_ttr_on_hover(qt_app, monkeypatch, tmp_path):
     w.hide()
 
 
-def test_widget_subscribes_to_fetcher_singleton(qt_app, monkeypatch, tmp_path):
-    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    from utils.rendition_poses import RenditionPoseFetcher
-    RenditionPoseFetcher._instance = None
+def test_widget_subscribes_to_the_toon_cache(render_cache):
+    """The widget reads the process-wide ToonRenders and its `set_promoted`
+    wiring is live: a promotion for its toon lands the portrait."""
     from tabs.multitoon._tab import ToonPortraitWidget
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
     w = ToonPortraitWidget(1)
-    # The widget must hold a reference to the singleton.
-    assert w._fetcher is RenditionPoseFetcher.instance()
+    assert w._renders is facade
+    w.set_game("ttr"); w.set_toon_name("Hiro"); w.set_dna("dna1")
+    assert w._pixmap is None and w._loading is False   # nothing on disk: slot circle
+    complete_set(store, "ttr", "Hiro", "dna1")
+    pf.set_promoted.emit("ttr", "Hiro")
+    assert w._pixmap is not None and w._loading is False
+    assert w.portrait_tier() == "current"
 
 
-def test_widget_filters_stale_pose_ready_by_dna(qt_app, monkeypatch, tmp_path):
-    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    from PySide6.QtGui import QPixmap
-    from utils.rendition_poses import RenditionPoseFetcher
-    RenditionPoseFetcher._instance = None
-    monkeypatch.setattr(RenditionPoseFetcher, "request", lambda *a, **k: None)
+def test_widget_ignores_landings_for_other_toons(render_cache):
+    """The facade is process-wide: a landing or a promotion for ANOTHER
+    toon (or the same name under another game) must not repaint this
+    widget. The legacy stale-DNA filter, re-keyed on (game, name)."""
     from tabs.multitoon._tab import ToonPortraitWidget
-    from utils.toon_customizations_manager import ToonCustomizationsManager
-
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
     w = ToonPortraitWidget(1)
-    w.set_customizations_manager(ToonCustomizationsManager())
-    w.set_game("ttr")
-    w.set_toon_name("Flossbud")
-    w.set_dna("dna-current")  # widget now tracks dna-current
-    pm = QPixmap(10, 10); pm.fill()
-
-    # Simulate a stale signal from a prior DNA.
-    w._on_pose_ready("dna-stale", "portrait", pm)
-    assert w._pixmap is None, "stale pose_ready must be dropped"
-
-    # Matching signal applies.
-    w._on_pose_ready("dna-current", "portrait", pm)
+    w.set_game("ttr"); w.set_toon_name("Hiro"); w.set_dna("dna1")
+    complete_set(store, "ttr", "Hiro", "dna1")
+    pf.render_landed.emit("ttr", "Other", w._pose)
+    pf.set_promoted.emit("ttr", "Other")
+    pf.render_landed.emit("cc", "Hiro", w._pose)
+    pf.set_promoted.emit("cc", "Hiro")
+    assert w._pixmap is None and w._loading is False
+    pf.set_promoted.emit("ttr", "Hiro")
     assert w._pixmap is not None
+
+
+def test_the_badge_never_discovers_only_the_hook_does(render_cache, monkeypatch):
+    """Discovery has exactly one source: the capture hook in
+    `_capture_account_toon`, which owns the atomic (wid, name, dna) triple
+    (plus the startup sweep). A badge is a reader. Whatever order its
+    setters run in - the tab calls set_dna before set_toon_name, and a
+    window shift calls set_dna alone - it must never write to the store:
+    a `discovered()` under a stale name would hand one toon's outfit to
+    another and, once landed, paint the wrong body on that toon's card."""
+    import itertools
+    from tabs.multitoon._tab import ToonPortraitWidget
+    facade, store, pf = render_cache
+    seen: list[tuple] = []
+    monkeypatch.setattr(facade, "discovered", lambda *a, **k: seen.append(a))
+    steps = {
+        "set_game":      lambda w: w.set_game("ttr"),
+        "set_toon_name": lambda w: w.set_toon_name("Hiro"),
+        "set_dna":       lambda w: w.set_dna("dna1"),
+        "set_toon":      lambda w: w.set_toon("Blue", "dna2"),
+        "set_pose":      lambda w: w.set_pose("waving"),
+    }
+    for order in itertools.permutations(steps):
+        w = ToonPortraitWidget(1)
+        for step in order:
+            steps[step](w)
+        # ...and once more on a complete key, changing each part in turn.
+        w.set_dna("dna3"); w.set_toon_name("Hiro"); w.set_game("cc")
+        w.set_toon("Blue", "dna1"); w.set_pose("portrait")
+    assert seen == []
+    for game, name in itertools.product(("ttr", "cc"), ("Hiro", "Blue")):
+        assert store.candidate_dna(game, name) is None
+        assert store.current_dna(game, name) is None
+
+
+def test_set_toon_reads_the_new_toon_not_a_half_updated_key(render_cache, monkeypatch):
+    """`set_toon(name, dna)` assigns both halves of the key and reads ONCE:
+    never the old name under the new DNA, never the new name before its
+    DNA is in place."""
+    from tabs.multitoon._tab import ToonPortraitWidget
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1", "#ff0000")
+    complete_set(store, "ttr", "Blue", "dna2", "#00ff00")
+    w = ToonPortraitWidget(1)
+    w.set_game("ttr"); w.set_toon("Hiro", "dna1")
+    assert w._pixmap.toImage().pixelColor(0, 0).name() == "#ff0000"
+    reads: list[tuple] = []
+    real = facade.pixmap_for
+    monkeypatch.setattr(facade, "pixmap_for",
+                        lambda g, n, pose: (reads.append((g, n, pose)), real(g, n, pose))[1])
+    w.set_toon("Blue", "dna2")
+    assert reads == [("ttr", "Blue", w._pose)]
+    assert w._pixmap.toImage().pixelColor(0, 0).name() == "#00ff00"
+    assert w.toon_name == "Blue" and w._dna == "dna2"
+
+
+def test_set_toon_is_a_noop_for_an_unchanged_key(render_cache, monkeypatch):
+    """The tab calls set_toon on every poll tick; an unchanged (name, dna)
+    must not re-read the cache (nor invalidate the dim cache)."""
+    from tabs.multitoon._tab import ToonPortraitWidget
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1")
+    w = ToonPortraitWidget(1)
+    w.set_game("ttr"); w.set_toon("Hiro", "dna1")
+    reads: list[tuple] = []
+    monkeypatch.setattr(facade, "pixmap_for", lambda *a: reads.append(a))
+    w.set_toon("Hiro", "dna1")
+    assert reads == [] and w._pixmap is not None
+
+
+def test_nothing_on_disk_paints_the_slot_circle_not_the_ellipsis(render_cache):
+    """A miss is not "loading": nothing in the cache world ever clears a
+    `_loading = True` (a permanently failing download would leave the
+    ellipsis up forever), so the badge paints its slot circle - exactly
+    what a badge that was never given a toon paints - and the cache's
+    `render_landed` / `set_promoted` repaint it when art arrives."""
+    from tabs.multitoon._tab import ToonPortraitWidget
+    facade, store, pf = render_cache
+    w = ToonPortraitWidget(1); w.resize(64, 64)
+    w.set_game("ttr"); w.set_toon("Hiro", "dna1")          # nothing on disk
+    assert w._pixmap is None and w._loading is False
+    miss = w.grab().toImage()
+    ref = ToonPortraitWidget(1); ref.resize(64, 64)      # never given a toon
+    assert miss == ref.grab().toImage()                  # the slot circle
+    ref._loading = True                                  # the ellipsis branch
+    assert miss != ref.grab().toImage()
+
+
+def test_previous_look_sets_the_tooltip_and_current_clears_it(render_cache):
+    """Tier "previous" (the last complete look shown while a newer outfit
+    downloads) carries the facade's PREVIOUS_LOOK_TOOLTIP; any other state
+    clears it."""
+    from tabs.multitoon._tab import ToonPortraitWidget
+    from tests._render_fixtures import complete_set
+    from utils.toon_renders import PREVIOUS_LOOK_TOOLTIP
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1")
+    w = ToonPortraitWidget(1)
+    w.set_game("ttr"); w.set_toon("Hiro", "dna1")
+    assert w.portrait_tier() == "current" and w.toolTip() == ""
+    store.note_dna("ttr", "Hiro", "dna2")        # the hook discovered a new outfit
+    w.set_toon("Hiro", "dna2")                   # the tab's next tick: candidate pending
+    assert w.portrait_tier() == "previous"
+    assert w.toolTip() == PREVIOUS_LOOK_TOOLTIP
+    complete_set(store, "ttr", "Hiro", "dna2")
+    pf.set_promoted.emit("ttr", "Hiro")
+    assert w.portrait_tier() == "current" and w.toolTip() == ""
+    w.set_dna(None)
+    assert w.toolTip() == ""
+
+
+def test_portrait_widget_repaints_only_for_its_own_pose(render_cache, qapp):
+    from tabs.multitoon._tab import ToonPortraitWidget
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
+    store.note_dna("ttr", "Hiro", "dna1")
+    w = ToonPortraitWidget(slot=0)
+    w.set_game("ttr"); w.set_toon_name("Hiro"); w.set_dna("dna1")
+    assert w._pixmap is None and w._loading is False
+    complete_set(store, "ttr", "Hiro", "dna1")
+    pf.render_landed.emit("ttr", "Hiro", "waving")
+    assert w._pixmap is None
+    pf.render_landed.emit("ttr", "Hiro", w._pose)
+    assert w._pixmap is not None and w._loading is False
+
+
+def test_portrait_widget_survives_a_cache_failure(render_cache, monkeypatch):
+    """A cache failure must never break the Multitoon tab: a raising read is
+    contained, the badge falls back to its slot circle (no spinner left
+    running) and a later good read still lands. `discovered` raising too
+    doubles as a guard that the badge never calls it."""
+    from tabs.multitoon._tab import ToonPortraitWidget
+    from tests._render_fixtures import complete_set
+    facade, store, pf = render_cache
+
+    def _boom(*a, **k):
+        raise RuntimeError("cache exploded")
+
+    monkeypatch.setattr(facade, "pixmap_for", _boom)
+    monkeypatch.setattr(facade, "discovered", _boom)
+    w = ToonPortraitWidget(1)
+    w.set_game("ttr"); w.set_toon_name("Hiro")
+    w.set_dna("dna1")                        # must not raise
+    assert w._pixmap is None and w._loading is False and w.portrait_tier() is None
+    pf.render_landed.emit("ttr", "Hiro", w._pose)   # handler must not raise either
+    monkeypatch.undo()
+    complete_set(store, "ttr", "Hiro", "dna1")
+    pf.set_promoted.emit("ttr", "Hiro")
+    assert w._pixmap is not None and w.portrait_tier() == "current"
 
 
 def test_widget_current_portrait_transform(qt_app, monkeypatch, tmp_path):
@@ -180,9 +332,6 @@ def test_widget_current_portrait_transform(qt_app, monkeypatch, tmp_path):
     via a test hook so paint-time behavior can be inspected without a
     pixel-grab. Default = (1.0, 0.0, 0.0, 0.0)."""
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-    from utils.rendition_poses import RenditionPoseFetcher
-    RenditionPoseFetcher._instance = None
-    monkeypatch.setattr(RenditionPoseFetcher, "request", lambda *a, **k: None)
     from tabs.multitoon._tab import ToonPortraitWidget
     from utils.toon_customizations_manager import ToonCustomizationsManager
     mgr = ToonCustomizationsManager()
@@ -204,3 +353,33 @@ def test_widget_current_portrait_transform(qt_app, monkeypatch, tmp_path):
         }
     })
     assert w.current_portrait_transform() == (1.5, 0.2, -0.1, 45.0)
+
+
+def test_a_landing_that_is_not_yet_servable_keeps_the_picture(render_cache):
+    """A landing only ever adds a file. When that file belongs to an outfit
+    the store cannot serve yet, the portrait on screen is still the best the
+    badge has: it keeps it. Only a promotion replaces it. (The toon keeps a
+    complete set here -- with one lost file, so the read genuinely misses --
+    because a toon with no complete set at all IS served its candidate.)"""
+    from tabs.multitoon._tab import ToonPortraitWidget
+    from tests._render_fixtures import complete_set, real_png
+
+    def _pixel(pixmap):
+        return pixmap.toImage().pixelColor(0, 0)
+
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1", "#ff0000")
+    w = ToonPortraitWidget(1)
+    w.set_game("ttr"); w.set_toon("Hiro", "dna1")
+    assert _pixel(w._pixmap) == QColor("#ff0000") and w.portrait_tier() == "current"
+    os.remove(store.path_for("ttr", "Hiro", "dna1", w._pose))     # lost; nothing told the badge
+    store.note_dna("ttr", "Hiro", "dna2")          # ...and the toon changed outfit meanwhile
+    real_png(store.path_for("ttr", "Hiro", "dna2", w._pose), "#00ff00")
+    assert store.mark_landed("ttr", "Hiro", "dna2", w._pose)
+    assert facade.pixmap_for("ttr", "Hiro", w._pose) is None      # landed, not servable
+    pf.render_landed.emit("ttr", "Hiro", w._pose)
+    assert w._pixmap is not None, "a landing cleared the portrait"
+    assert _pixel(w._pixmap) == QColor("#ff0000")
+    complete_set(store, "ttr", "Hiro", "dna2", "#00ff00")
+    pf.set_promoted.emit("ttr", "Hiro")
+    assert _pixel(w._pixmap) == QColor("#00ff00") and w.portrait_tier() == "current"

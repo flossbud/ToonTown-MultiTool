@@ -22,7 +22,7 @@ from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QColor, QBrush, QLine
 @dataclass(frozen=True)
 class PortraitRender:
     pixmap: "QPixmap"   # always non-null, diameter x diameter
-    status: str         # "complete" | "pending" | "no_pose"
+    status: str         # "complete" | "no_pose"  (never "pending": see render_account_portrait)
 
 
 def _circular(src: QPixmap, diameter: int) -> QPixmap:
@@ -83,11 +83,15 @@ _WIDGET_MAX = 64
 def render_account_portrait(game, toon_name, dna, customizations, diameter):
     """Return a ``PortraitRender`` for ``(game, toon_name)``.
 
-    ``status`` is "complete" when the toon body is present, "pending" when a
-    pose fetch is in flight (background-only, fill in via pose_ready), or
-    "no_pose" when there is no pose to fetch (no toon name, or empty DNA).
-    The pixmap is always ``diameter`` x ``diameter`` and non-null. The grabbed
-    widget suppresses its own fallback glyph so the ring owns the loading cue.
+    ``status`` is "complete" when the toon body is present (the per-toon
+    render cache had any tier on disk) or "no_pose" when there is nothing to
+    show: no toon name, empty DNA, or nothing on disk yet (background-only).
+    The cache path never reports "pending": a spinner would have nothing to
+    clear it - a permanently failing download would spin forever - so a miss
+    paints the ring's fallback, and the ring re-renders it into "complete"
+    on the cache's ``render_landed`` / ``set_promoted``. The pixmap is always
+    ``diameter`` x ``diameter`` and non-null. The grabbed widget suppresses
+    its own fallback glyph so the ring owns the disc.
     """
     if not toon_name:
         return PortraitRender(_placeholder(diameter), "no_pose")
@@ -104,21 +108,10 @@ def render_account_portrait(game, toon_name, dna, customizations, diameter):
 
     status = "no_pose"
     if dna:
-        status = "pending"
+        # set_dna reads the cache synchronously (and contains any cache
+        # failure), so the widget is ready to grab right away.
         w.set_dna(dna)
-        # set_dna kicks off an ASYNC pose fetch, so grabbing right away would
-        # capture only the background. Pull the pose from the disk cache
-        # synchronously; on a hit the toon is complete, on a miss it stays
-        # pending and pose_ready will fill it in later.
-        try:
-            from utils.rendition_poses import RenditionPoseFetcher
-            cached = RenditionPoseFetcher.instance().cached_pixmap(dna, w._pose)
-            if cached is not None and not cached.isNull():
-                w._pixmap = cached
-                w._loading = False
-                status = "complete"
-        except Exception:
-            pass
+        status = "complete" if w._pixmap is not None else "no_pose"
 
     # Grab at the widget's maximum supported size; _circular scales to diameter.
     grab_size = min(diameter, _WIDGET_MAX)
@@ -132,20 +125,7 @@ def render_account_portrait(game, toon_name, dna, customizations, diameter):
 
 
 def prewarm_account_poses(accounts, customizations) -> None:
-    """Fire an async pose fetch for each ring account that has DNA, so the
-    disk cache is warm before the accounts ring is shown. Accounts with no
-    DNA (placeholders / Corporate Clash without a captured DNA) are skipped.
-    The pose is resolved exactly as the render path resolves it."""
-    from utils.rendition_poses import RenditionPoseFetcher
-    from utils.toon_customization_resolve import resolve_pose
-
-    fetcher = RenditionPoseFetcher.instance()
-    for a in accounts:
-        if not a.dna:
-            continue
-        entry = {}
-        if customizations is not None and a.toon_name:
-            entry = customizations.get(a.game, a.toon_name)
-        if not isinstance(entry, dict):
-            entry = {}
-        fetcher.request(a.dna, resolve_pose(entry, "portrait"))
+    """No-op since the per-toon render cache: every remembered toon's poses
+    are prefetched at discovery and by the startup sweep, so there is nothing
+    to warm here. Kept so callers need no change."""
+    return None
