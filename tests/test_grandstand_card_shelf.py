@@ -165,6 +165,15 @@ def test_reduced_motion_skips_the_shake(shelf, monkeypatch):
     assert shelf.shake("a") is False
 
 
+def test_the_head_carries_only_the_title_no_legend(shelf):
+    """The 'Card = this launch · Star = …' legend was removed on request; the
+    head is the title plus its links, nothing explanatory."""
+    from PySide6.QtWidgets import QLabel
+    from utils.widgets.grandstand.card_shelf import TITLE
+    assert [lbl.text() for lbl in shelf.head.findChildren(QLabel)] == [TITLE]
+    assert not hasattr(shelf, "subtitle")
+
+
 def test_head_row_is_the_fixed_height_the_handoff_gives_it(shelf):
     """Handoff §4.1c: head row `flex: 0 0 34px`. The shelf is the only band
     that stretches inside a 688px content area, so this height is load-bearing

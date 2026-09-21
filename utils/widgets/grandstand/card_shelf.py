@@ -26,7 +26,6 @@ FADE_W = 36
 HEAD_H = 34
 
 TITLE = "CHOOSE YOUR TOONS"
-SUBTITLE = "Card = this launch · Star = your persistent main · scroll for more"
 
 
 class _AddTile(QToolButton):
@@ -110,13 +109,8 @@ class CardShelf(QWidget):
         head = QHBoxLayout(self.head)
         head.setContentsMargins(0, 0, 0, 0)
         head.setSpacing(14)
-        titles = QVBoxLayout()
-        titles.setSpacing(4)
         self.title = QLabel(TITLE, self)
-        self.subtitle = QLabel(SUBTITLE, self)
-        titles.addWidget(self.title)
-        titles.addWidget(self.subtitle)
-        head.addLayout(titles, 1)
+        head.addWidget(self.title, 1, Qt.AlignTop)
 
         self.clear_selection_link = QPushButton("Clear selection", self)
         self.clear_main_link = QPushButton("Clear main", self)
@@ -321,9 +315,6 @@ class CardShelf(QWidget):
         self.title.setStyleSheet(
             f"color: {head['title'].name()}; font-size: 10px; font-weight: 800;"
             " letter-spacing: 0.8px; background: transparent;")
-        self.subtitle.setStyleSheet(
-            f"color: {head['sub'].name()}; font-size: 11px;"
-            " background: transparent;")
         # Handoff §4.1c: 6px thumb in --border-light, no arrows, no trough.
         scroll = gp.shelf_scroll(is_dark)
         self.scroll.setStyleSheet(
