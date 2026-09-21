@@ -3,13 +3,17 @@
 synchronous executor and a scripted downloader. No network."""
 import json
 import os
+import threading
+import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 
 from utils.rendition_poses import DownloadError
 from utils.render_prefetcher import (
@@ -293,3 +297,100 @@ def test_outfit_change_mid_download_purges_and_ignores_the_old_dna(qapp, tmp_pat
         assert "dnaA" not in json.load(f)["sets"]
     assert landed == []
     assert submitted[1][2] == "dnaB"                  # the pump moved on to B
+
+
+class _ThreadRecordingDownloader(_Downloader):
+    """Same scripting as `_Downloader`, plus a record of which OS thread ran
+    each call — so a test can prove downloads happen off the GUI thread."""
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.call_threads = []
+
+    def __call__(self, dna, pose):
+        self.call_threads.append(threading.get_ident())
+        return super().__call__(dna, pose)
+
+
+def test_results_from_a_pool_thread_are_delivered_on_the_gui_thread(qapp, tmp_path):
+    """Every other test drives the worker synchronously on the GUI thread via
+    `_Immediate`. With a real `ThreadPoolExecutor`, `_worker` actually runs on
+    a pool thread, and only the `_result` signal's `Qt.QueuedConnection`
+    (declared in `utils/render_prefetcher.py`) hands the outcome back to
+    `_on_result` — and therefore every public signal — on the GUI thread."""
+    store = ToonRenderStore(str(tmp_path), poses=POSES)
+    dl = _ThreadRecordingDownloader()
+    executor = ThreadPoolExecutor(max_workers=2)
+    pf = RenderPrefetcher(store, downloader=dl, executor=executor, max_in_flight=2)
+    landed_threads = []
+    promoted = []
+    # Qt.DirectConnection here on purpose: PySide's AutoConnection marshals a
+    # signal back to its *owning QObject's* thread (pf lives on the GUI
+    # thread) even for a plain-lambda receiver, which would silently hide a
+    # broken `_result` connection type. Direct makes this recorder run on
+    # whatever thread actually calls emit(), so it reports the real thread
+    # `_on_result`'s body (and this emit) executed on.
+    pf.render_landed.connect(
+        lambda g, n, p: landed_threads.append(threading.get_ident()), Qt.DirectConnection)
+    pf.set_promoted.connect(lambda g, n: promoted.append((g, n)))
+    try:
+        pf.discovered("ttr", "Pool Toon", "dna1")
+
+        deadline = time.monotonic() + 5.0
+        while len(promoted) < 1 and time.monotonic() < deadline:
+            QTest.qWait(20)
+        assert len(promoted) == 1, (
+            f"set_promoted never arrived within 5s; promoted={promoted!r}, "
+            f"calls={dl.calls!r}"
+        )
+
+        main_id = threading.main_thread().ident
+        assert dl.call_threads, "downloader was never invoked"
+        assert all(t != main_id for t in dl.call_threads), (
+            "a download ran on the GUI thread instead of a pool thread: "
+            f"{dl.call_threads!r} (main={main_id})"
+        )
+        assert landed_threads, "render_landed never fired"
+        assert all(t == main_id for t in landed_threads), (
+            "render_landed was delivered off the GUI thread: "
+            f"{landed_threads!r} (main={main_id})"
+        )
+        assert len(landed_threads) == len(POSES)
+        assert store.current_dna("ttr", "Pool Toon") == "dna1"
+    finally:
+        executor.shutdown(wait=True)
+
+
+def test_the_probe_timer_fires_the_probe_without_being_poked(qapp, tmp_path):
+    """Nobody calls `fire_probe_now()` in production — the single-shot probe
+    `QTimer`'s own `timeout` signal must drive it (wired in `__init__` as
+    `self._probe.timeout.connect(self.fire_probe_now)`)."""
+    store = ToonRenderStore(str(tmp_path), poses=POSES)
+    dl = _Downloader()
+    dl.outcomes[("dna1", "portrait")] = "server"        # the cold pose: 5xx
+    pf = RenderPrefetcher(store, downloader=dl, executor=_Immediate(),
+                           max_in_flight=1, backoff_s=(0.02,))
+    breaker = []
+    promoted = []
+    pf.breaker_changed.connect(breaker.append)
+    pf.set_promoted.connect(lambda g, n: promoted.append((g, n)))
+
+    pf.discovered("ttr", "Timer Toon", "dna1")
+    _drain(qapp, pf)
+    assert pf.breaker_open is True
+    calls_at_open = len(dl.calls)
+
+    dl.outcomes.pop(("dna1", "portrait"))               # origin recovers
+
+    # Deliberately never call fire_probe_now() — only the timer may.
+    deadline = time.monotonic() + 3.0
+    while pf.breaker_open and time.monotonic() < deadline:
+        QTest.qWait(20)
+    assert pf.breaker_open is False, (
+        "breaker never closed within 3s; the probe timer's timeout -> "
+        "fire_probe_now wiring looks broken"
+    )
+
+    assert len(dl.calls) > calls_at_open, "the timer never fired another probe"
+    assert breaker[-1] is False
+    _drain(qapp, pf)
+    assert store.current_dna("ttr", "Timer Toon") == "dna1"
