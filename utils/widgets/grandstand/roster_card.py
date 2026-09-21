@@ -328,16 +328,20 @@ class RosterCard(QFrame):
     # ── portrait ───────────────────────────────────────────────────────────
 
     def _wants_render(self) -> bool:
-        """Only a `render`-mode entry draws a Rendition. A Corporate Clash
-        account can carry a dna and still be `species` mode — `model.
-        portrait_mode` decides, and `model.lineup_entries` branches on the same
-        field, so the card and the hero agree by construction."""
+        """Only a `render`-mode entry with a toon name draws a Rendition. A
+        Corporate Clash account can carry a dna and still be `species` mode —
+        `model.portrait_mode` decides, and `model.lineup_entries` branches on
+        the same field, so the card and the hero agree by construction. No
+        name, no read: the cache is keyed by toon name, and asking it about
+        "" would be asking about nobody (mirrors card_preview_widget)."""
         e = self._entry
-        return e is not None and e.portrait_mode == PORTRAIT_RENDER and bool(e.dna)
+        return (e is not None and e.portrait_mode == PORTRAIT_RENDER
+                and bool(e.dna) and bool(e.toon_name))
 
     def portrait_tier(self) -> Optional[str]:
         """`"current"`, `"previous"` (older outfit shown while a newer one
-        downloads), or None when nothing is drawn."""
+        downloads), `"candidate"` (the toon has no complete set; what has
+        landed of its newest outfit), or None when nothing is drawn."""
         return self._tier
 
     def _read_portrait(self) -> Optional[tuple[QPixmap, str]]:
@@ -345,7 +349,7 @@ class RosterCard(QFrame):
         if not self._wants_render():
             return None
         e = self._entry
-        return self._renders.pixmap_for(e.game, e.toon_name or "", CARD_POSE)
+        return self._renders.pixmap_for(e.game, e.toon_name, CARD_POSE)
 
     def _show_portrait(self, hit: Optional[tuple[QPixmap, str]]) -> None:
         self._pixmap, self._tier = hit if hit is not None else (None, None)

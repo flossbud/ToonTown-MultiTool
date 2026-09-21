@@ -148,13 +148,15 @@ def _pixel(pixmap):
 def test_a_landing_that_is_not_yet_servable_keeps_the_picture(render_cache, qapp):
     """A landing only ever adds a file. When that file belongs to an outfit
     the store cannot serve yet, the picture on screen is still the best the
-    preview has: it keeps it. Only a promotion replaces it."""
+    preview has: it keeps it. Only a promotion replaces it. (The toon keeps a
+    complete set here -- with one lost file, so the read genuinely misses --
+    because a toon with no complete set at all IS served its candidate.)"""
     from tests._render_fixtures import complete_set, real_png
     facade, store, pf = render_cache
     complete_set(store, "ttr", "Hiro", "dna1", "#ff0000")
     w = _make_preview(game="ttr", toon_name="Hiro", dna="dna1")
     assert _pixel(w._pose_pixmap) == QColor("#ff0000")
-    facade.invalidate("ttr", "Hiro")               # dna1's files are gone; nothing told the preview
+    os.remove(store.path_for("ttr", "Hiro", "dna1", "portrait"))   # lost; nothing told the preview
     store.note_dna("ttr", "Hiro", "dna2")          # ...and the toon changed outfit meanwhile
     real_png(store.path_for("ttr", "Hiro", "dna2", "portrait"), "#00ff00")
     assert store.mark_landed("ttr", "Hiro", "dna2", "portrait")

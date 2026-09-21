@@ -102,13 +102,14 @@ class RenderPrefetcher(QObject):
     def _enqueue_missing(self, game: str, name: str, dna: str, priority: int) -> None:
         if not dna or not name:
             return
-        status = self._store.note_dna(game, name, dna)
+        self._store.note_dna(game, name, dna)
         # note_dna may have dropped a half-fetched candidate — on a new outfit
         # AND on a swap back to the previous one. Its queued poses would only
         # resurrect an orphan set, and ahead of the new outfit's work.
         self._purge_stale(game, name)
-        if status == "current":
-            return
+        # No early return on "current": a complete set costs 13 stats here,
+        # and a current set with a lost or corrupt file is refilled by the
+        # sweep rather than only by an on-screen want.
         for pose in self._store.missing_poses(game, name, dna):
             self._enqueue((game, name, dna, pose), priority)
 
@@ -206,8 +207,7 @@ class RenderPrefetcher(QObject):
                     if self._open:
                         self._close_breaker()
                     self.render_landed.emit(game, name, pose)
-                    if self._store.promote_if_complete(game, name):
-                        self.set_promoted.emit(game, name)
+                    self._promote(game, name)
                     self._pump()
                     return
                 err = DownloadError("server", None, "body was not a valid PNG")
@@ -218,8 +218,7 @@ class RenderPrefetcher(QObject):
                 # A refused pose counts towards completeness (the origin will
                 # never render it), so this may be the result that completes
                 # the set -- or the one that proves the whole outfit is dead.
-                if self._store.promote_if_complete(game, name):
-                    self.set_promoted.emit(game, name)
+                self._promote(game, name)
             self._consecutive = 0
             if self._open:
                 self.fire_probe_now()               # answered ⇒ probe the next item now
@@ -240,6 +239,17 @@ class RenderPrefetcher(QObject):
             self._ensure_probe()                    # a straggler: nothing else will re-arm
         else:
             self._pump()
+
+    def _promote(self, game: str, name: str) -> None:
+        """Try to promote; announce a change of served look. `promote_if_complete`
+        returns False both when nothing changed and when it abandoned a dead
+        (all-refused) candidate -- and the second case changes what consumers
+        should show (the "previous look" tooltip no longer applies), so it is
+        announced the same way as a promotion."""
+        had = self._store.candidate_dna(game, name)
+        promoted = self._store.promote_if_complete(game, name)
+        if promoted or (had and not self._store.candidate_dna(game, name)):
+            self.set_promoted.emit(game, name)
 
     def _enqueue_silently(self, key: _Key) -> None:
         if key not in self._queue:

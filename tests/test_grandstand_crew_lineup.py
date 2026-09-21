@@ -352,14 +352,16 @@ def test_paints_without_error_in_every_treatment(crew, qapp):
 def test_a_landing_that_is_not_yet_servable_keeps_the_picture(crew, render_cache):
     """A landing only ever adds a file. When that file belongs to an outfit
     the store cannot serve yet, the figure on stage is still the best the
-    lineup has: it keeps it. Only a promotion replaces it."""
+    lineup has: it keeps it. Only a promotion replaces it. (The toon keeps a
+    complete set here -- with one lost file, so the read genuinely misses --
+    because a toon with no complete set at all IS served its candidate.)"""
     from tests._render_fixtures import real_png
     facade, store, pf = render_cache
     complete_set(store, "ttr", "A", "7400", "#ff0000")
     crew.set_entries([_e("a")])                    # pose "portrait"
     slot = crew.slot_for("a")
     assert _pixel(slot.pixmap) == QColor("#ff0000")
-    facade.invalidate("ttr", "A")                  # 7400's files are gone; nothing told the lineup
+    os.remove(store.path_for("ttr", "A", "7400", "portrait"))     # lost; nothing told the lineup
     store.note_dna("ttr", "A", "dna2")             # ...and the toon changed outfit meanwhile
     real_png(store.path_for("ttr", "A", "dna2", "portrait"), "#00ff00")
     assert store.mark_landed("ttr", "A", "dna2", "portrait")

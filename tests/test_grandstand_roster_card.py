@@ -492,21 +492,24 @@ def test_a_destroyed_card_no_longer_receives_the_caches_signals(render_cache, qa
     facade.set_promoted.emit("ttr", "Flossbud")
 
 
+def _pixel(pixmap):
+    return pixmap.toImage().pixelColor(0, 0)
+
+
 def test_a_landing_that_is_not_yet_servable_keeps_the_picture(render_cache, qapp):
     """A landing only ever adds a file. When that file belongs to an outfit
     the store cannot serve yet, the head on screen is still the best the
-    card has: it keeps it. Only a promotion replaces it."""
+    card has: it keeps it. Only a promotion replaces it. (The toon keeps a
+    complete set here -- with one lost file, so the read genuinely misses --
+    because a toon with no complete set at all IS served its candidate.)"""
     from tests._render_fixtures import real_png
-
-    def _pixel(pixmap):
-        return pixmap.toImage().pixelColor(0, 0)
 
     facade, store, pf = render_cache
     complete_set(store, "ttr", "Flossbud", "7400", "#ff0000")
     c = RosterCard()
     c.set_entry(_entry())
     assert _pixel(c.portrait_pixmap()) == QColor("#ff0000")
-    facade.invalidate("ttr", "Flossbud")           # 7400's files are gone; nothing told the card
+    os.remove(store.path_for("ttr", "Flossbud", "7400", CARD_POSE))   # lost; nothing told the card
     store.note_dna("ttr", "Flossbud", "dna2")      # ...and the toon changed outfit meanwhile
     real_png(store.path_for("ttr", "Flossbud", "dna2", CARD_POSE), "#00ff00")
     assert store.mark_landed("ttr", "Flossbud", "dna2", CARD_POSE)
@@ -517,3 +520,45 @@ def test_a_landing_that_is_not_yet_servable_keeps_the_picture(render_cache, qapp
     complete_set(store, "ttr", "Flossbud", "dna2", "#00ff00")
     pf.set_promoted.emit("ttr", "Flossbud")
     assert _pixel(c.portrait_pixmap()) == QColor("#00ff00")
+
+
+def test_a_toon_with_nothing_else_paints_what_has_landed(render_cache, qapp):
+    """No complete set, one landed pose of the newest outfit: the card paints
+    it (tier "candidate", no tooltip -- there is no previous look), and the
+    head swaps to "current" on promotion without a set-entry."""
+    from tests._render_fixtures import real_png
+
+    facade, store, pf = render_cache
+    store.note_dna("ttr", "Flossbud", "7400")
+    real_png(store.path_for("ttr", "Flossbud", "7400", CARD_POSE), "#ff0000")
+    assert store.mark_landed("ttr", "Flossbud", "7400", CARD_POSE)
+    c = RosterCard()
+    c.set_entry(_entry())
+    assert c.portrait_pixmap() is not None
+    assert _pixel(c.portrait_pixmap()) == QColor("#ff0000")
+    assert c.portrait_tier() == "candidate"
+    assert c.toolTip() == ""
+    assert pf.pending_count == 0                    # a hit: the card wanted nothing
+    complete_set(store, "ttr", "Flossbud", "7400", "#ff0000")
+    pf.set_promoted.emit("ttr", "Flossbud")
+    assert c.portrait_tier() == "current"
+
+
+def test_a_card_with_no_toon_name_never_reads_the_facade(render_cache, qapp, monkeypatch):
+    """The cache is keyed by toon name; a nameless entry (dna known, name not
+    yet captured) must not ask it about "" -- that is a read for nobody
+    (mirrors card_preview_widget's guard)."""
+    facade, store, pf = render_cache
+    asked = []
+    monkeypatch.setattr(facade, "pixmap_for", lambda *a: asked.append(a))
+    c = RosterCard()
+    c.set_entry(RosterEntry(
+        account_id="a", game="ttr", label="Gag alt", username="flossbud",
+        toon_name="", species="cat", dna="7400", accent="#4a8fe7",
+        footer="Primary", portrait_mode="render", state="idle",
+        message="", raw_error=""))
+    assert asked == []
+    assert c.portrait_pixmap() is None
+    pf.render_landed.emit("ttr", "", CARD_POSE)
+    pf.set_promoted.emit("ttr", "")
+    assert asked == []

@@ -95,6 +95,25 @@ def test_discovery_of_the_current_dna_downloads_nothing(rig, qapp):
     assert dl.calls == []
 
 
+def test_sweep_refills_a_gap_in_a_current_set(rig, qapp):
+    """A current set with a lost or corrupt file is refilled by the sweep,
+    not only by an on-screen want: noting a current DNA must still walk
+    `missing_poses` (13 stats per toon per sweep) rather than return early."""
+    store, dl, pf, landed, promoted, breaker = rig
+    pf.discovered("ttr", "Hiro", "dna1")
+    _drain(qapp, pf)
+    assert store.current_dna("ttr", "Hiro") == "dna1"
+    os.remove(store.path_for("ttr", "Hiro", "dna1", "waving"))
+    dl.calls.clear()
+    pf.sweep([("ttr", "Hiro", "dna1")])
+    assert ("ttr", "Hiro", "dna1", "waving") in pf._queue or \
+           ("ttr", "Hiro", "dna1", "waving") in pf._in_flight
+    _drain(qapp, pf)
+    assert dl.calls == [("dna1", "waving")]                       # the gap, and only the gap
+    assert store.missing_poses("ttr", "Hiro", "dna1") == []
+    assert landed[-1] == ("ttr", "Hiro", "waving")
+
+
 def test_in_flight_cap_is_respected(qapp, tmp_path):
     """A blocking executor exposes the cap: only max_in_flight submitted."""
     store = ToonRenderStore(str(tmp_path), poses=POSES)
@@ -171,11 +190,43 @@ def test_an_outfit_refused_for_every_pose_is_dropped_and_nothing_promotes(rig, q
     pf.discovered("ttr", "Hiro", "dna1")
     _drain(qapp, pf)
     assert len(dl.calls) == len(POSES)                # each pose asked exactly once
-    assert landed == [] and promoted == []
+    assert landed == []
     assert store.candidate_dna("ttr", "Hiro") is None   # abandoned, not pending forever
     assert store.current_dna("ttr", "Hiro") is None
+    # Nothing was promoted, but the drop changed what consumers should show
+    # (no outfit is pending any more), and it is announced exactly once.
+    assert promoted == [("ttr", "Hiro")]
     assert pf.breaker_open is False and breaker == []
     assert pf.pending_count == 0 and pf.in_flight_count == 0
+
+
+def test_a_dropped_dead_candidate_is_announced_so_the_previous_look_tooltip_clears(qapp, tmp_path):
+    """`promote_if_complete` returns False both for "nothing changed" and for
+    "abandoned an all-refused candidate". Only the second changes the served
+    look (the facade's tier goes back from "previous" to "current"), and no
+    consumer would repaint for it without a signal."""
+    from tests._render_fixtures import complete_set
+    from utils.toon_renders import ToonRenders
+    store = ToonRenderStore(str(tmp_path), poses=POSES)
+    dl = _Downloader(default="client")
+    pf = RenderPrefetcher(store, downloader=dl, executor=_Immediate(), max_in_flight=1)
+    facade = ToonRenders(store, pf)
+    promoted = []
+    pf.set_promoted.connect(lambda g, n: promoted.append((g, n)))
+    complete_set(store, "ttr", "Hiro", "dna1", "#ff0000", poses=POSES)
+    pf.discovered("ttr", "Hiro", "dna2")
+    assert facade.pixmap_for("ttr", "Hiro", "head")[1] == "previous"    # pending: tooltip case
+    _drain(qapp, pf)
+    assert store.candidate_dna("ttr", "Hiro") is None
+    assert store.current_dna("ttr", "Hiro") == "dna1"
+    assert promoted == [("ttr", "Hiro")]
+    assert facade.pixmap_for("ttr", "Hiro", "head")[1] == "current"
+
+    # And a landing that leaves the candidate still pending is silent as before.
+    store.note_dna("ttr", "Hiro", "dna3")
+    pf._on_result("ttr", "Hiro", "dna3", "head", PNG, None)
+    assert store.candidate_dna("ttr", "Hiro") == "dna3"
+    assert promoted == [("ttr", "Hiro")]
 
 
 def test_breaker_opens_after_three_consecutive_failures_and_stops_downloading(rig, qapp):

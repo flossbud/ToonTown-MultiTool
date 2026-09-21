@@ -340,10 +340,12 @@ def test_refresh_button_invalidates_this_toon_in_the_cache(render_cache, qapp):
     assert all(t.is_loading() for t in sec.tiles())
 
 
-def test_pose_tiles_stay_pending_until_the_refreshed_set_promotes(render_cache, qapp):
-    """After a refresh with no previous look to fall back on, a re-landed pose
-    is a candidate file and is never shown; the tiles fill together when the
-    set promotes. Landings and promotions for other toons are ignored."""
+def test_pose_tiles_fill_as_the_refreshed_set_re_lands(render_cache, qapp):
+    """After a refresh with no previous look to fall back on, the toon has no
+    complete set at all, so each re-landed pose shows as it arrives (tier
+    "candidate") instead of every tile shimmering until 13/13. A landing
+    fills only its own tile; landings and promotions for other toons are
+    ignored; the promotion fills whatever is left."""
     from tests._render_fixtures import complete_set, real_png
     from utils.widgets.toon_customization_sections import _PoseSection
     facade, store, pf = render_cache
@@ -351,15 +353,22 @@ def test_pose_tiles_stay_pending_until_the_refreshed_set_promotes(render_cache, 
     sec = _PoseSection("ttr", "Hiro", "dna1", "portrait")
     sec._on_refresh_clicked()
     assert all(t.is_loading() for t in sec.tiles())
-    for pose in store.poses:                                   # the candidate re-lands
-        real_png(store.path_for("ttr", "Hiro", "dna1", pose))
-        assert store.mark_landed("ttr", "Hiro", "dna1", pose)
+    by_pose = {t.pose: t for t in sec.tiles()}
+    real_png(store.path_for("ttr", "Hiro", "dna1", "portrait"))    # one pose re-lands
+    assert store.mark_landed("ttr", "Hiro", "dna1", "portrait")
     facade.render_landed.emit("ttr", "Other", "portrait")
+    assert all(t.is_loading() for t in sec.tiles()), "another toon's landing filled a tile"
     facade.render_landed.emit("ttr", "Hiro", "portrait")
-    assert all(t.is_loading() for t in sec.tiles()), "a candidate file was shown"
+    assert by_pose["portrait"].has_pixmap(), "the re-landed pose was withheld"
+    assert all(t.is_loading() for t in sec.tiles() if t.pose != "portrait")
+    for pose in store.poses:                                   # the rest re-lands silently
+        if pose != "portrait":
+            real_png(store.path_for("ttr", "Hiro", "dna1", pose))
+            assert store.mark_landed("ttr", "Hiro", "dna1", pose)
     assert store.promote_if_complete("ttr", "Hiro")
     facade.set_promoted.emit("ttr", "Other")
-    assert all(t.is_loading() for t in sec.tiles()), "another toon's promotion filled the tiles"
+    assert all(t.is_loading() for t in sec.tiles() if t.pose != "portrait"), \
+        "another toon's promotion filled the tiles"
     facade.set_promoted.emit("ttr", "Hiro")
     assert all(t.has_pixmap() for t in sec.tiles())
 
@@ -418,7 +427,10 @@ def test_refresh_keeps_tiles_the_store_did_not_remove(render_cache, qapp):
 def test_a_landing_that_is_not_yet_servable_keeps_the_tiles(render_cache, qapp):
     """A landing only ever adds a file. When that file belongs to an outfit
     the store cannot serve yet, the tile keeps what it shows: the picture on
-    screen is still the best the section has. Only a promotion replaces it."""
+    screen is still the best the section has. Only a promotion replaces it.
+    (The toon keeps a
+    complete set here -- with one lost file, so the read genuinely misses --
+    because a toon with no complete set at all IS served its candidate.)"""
     from tests._render_fixtures import complete_set, real_png
     from utils.widgets.toon_customization_sections import _PoseSection
     facade, store, pf = render_cache
@@ -426,7 +438,7 @@ def test_a_landing_that_is_not_yet_servable_keeps_the_tiles(render_cache, qapp):
     sec = _PoseSection("ttr", "Hiro", "dna1", "portrait")
     by_pose = {t.pose: t for t in sec.tiles()}
     assert _pixel(by_pose["portrait"]._pixmap) == QColor("#ff0000")
-    facade.invalidate("ttr", "Hiro")               # dna1's files are gone; nothing told the section
+    os.remove(store.path_for("ttr", "Hiro", "dna1", "portrait"))  # lost; nothing told the section
     store.note_dna("ttr", "Hiro", "dna2")          # ...and the toon changed outfit meanwhile
     real_png(store.path_for("ttr", "Hiro", "dna2", "portrait"), "#00ff00")
     assert store.mark_landed("ttr", "Hiro", "dna2", "portrait")

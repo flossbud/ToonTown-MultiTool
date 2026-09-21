@@ -63,13 +63,104 @@ def test_promotion_needs_every_pose(store):
     _png(store.path_for("ttr", "Hiro", DNA1, "portrait"))
     store.mark_landed("ttr", "Hiro", DNA1, "portrait")
     assert store.promote_if_complete("ttr", "Hiro") is False
-    assert store.lookup("ttr", "Hiro", "portrait") is None     # candidate never serves
+    assert store.current_dna("ttr", "Hiro") is None
+    assert store.lookup("ttr", "Hiro", "head") is None         # not landed: nothing to show
     _land_all(store, "ttr", "Hiro", DNA1)
     assert store.promote_if_complete("ttr", "Hiro") is True
     assert store.current_dna("ttr", "Hiro") == DNA1
     assert store.candidate_dna("ttr", "Hiro") is None
     path, tier = store.lookup("ttr", "Hiro", "head")
     assert tier == "current" and path.endswith(os.path.join(DNA1, "head.png"))
+
+
+def test_a_candidate_serves_only_when_the_toon_has_nothing_else(store):
+    """The 13/13 rule stops a half-new outfit shadowing a complete old one; it
+    must not withhold art from a toon that has no complete set at all (the
+    2026-09-21 first run: a flat cache holding head + portrait for the live
+    outfit, and a cold origin -- the card showed a silhouette while head.png
+    sat on disk)."""
+    store.note_dna("ttr", "Hiro", DNA1)
+    _png(store.path_for("ttr", "Hiro", DNA1, "head"))
+    store.mark_landed("ttr", "Hiro", DNA1, "head")
+    path, tier = store.lookup("ttr", "Hiro", "head")
+    assert tier == "candidate" and path.endswith(os.path.join(DNA1, "head.png"))
+    assert store.lookup("ttr", "Hiro", "portrait") is None     # not landed: still nothing
+    _land_all(store, "ttr", "Hiro", DNA1)
+    assert store.promote_if_complete("ttr", "Hiro") is True
+    assert store.lookup("ttr", "Hiro", "head")[1] == "current"
+
+    # The shadow half: with a complete set, a newer outfit's landed pose is
+    # NOT served -- the old complete look is, until the new one is whole.
+    store.note_dna("ttr", "Hiro", DNA2)
+    _png(store.path_for("ttr", "Hiro", DNA2, "head"))
+    store.mark_landed("ttr", "Hiro", DNA2, "head")
+    path, tier = store.lookup("ttr", "Hiro", "head")
+    assert tier == "current" and DNA1 in path and DNA2 not in path
+    # ...even for a pose the complete set has lost: a gap is refilled by the
+    # sweep, whereas serving the candidate here would mix two outfits across
+    # the toon's surfaces. The gate is "no complete set at all", not "no file".
+    os.remove(store.path_for("ttr", "Hiro", DNA1, "head"))
+    assert store.lookup("ttr", "Hiro", "head") is None
+
+
+def test_a_candidate_never_serves_over_a_previous_set_either(store):
+    """After a refresh with a previous look on disk, current is gone but
+    previous remains: the re-landing poses stay hidden behind it."""
+    for dna in (DNA1, DNA2):
+        store.note_dna("ttr", "Hiro", dna)
+        _land_all(store, "ttr", "Hiro", dna)
+        store.promote_if_complete("ttr", "Hiro")
+    assert store.invalidate("ttr", "Hiro") == DNA2             # current gone, previous DNA1
+    _png(store.path_for("ttr", "Hiro", DNA2, "head"))
+    store.mark_landed("ttr", "Hiro", DNA2, "head")
+    path, tier = store.lookup("ttr", "Hiro", "head")
+    assert tier == "previous" and DNA1 in path
+
+
+def test_a_refresh_with_no_previous_look_shows_poses_as_they_re_land(store):
+    """Invalidate on a toon with only a current set leaves it with nothing
+    else, so the re-landed poses show as they arrive instead of the toon
+    going dark until 13/13."""
+    store.note_dna("ttr", "Hiro", DNA1)
+    _land_all(store, "ttr", "Hiro", DNA1)
+    store.promote_if_complete("ttr", "Hiro")
+    assert store.invalidate("ttr", "Hiro") == DNA1
+    assert store.lookup("ttr", "Hiro", "head") is None         # files are gone
+    _png(store.path_for("ttr", "Hiro", DNA1, "head"))
+    store.mark_landed("ttr", "Hiro", DNA1, "head")
+    assert store.lookup("ttr", "Hiro", "head")[1] == "candidate"
+    assert store.lookup("ttr", "Hiro", "portrait") is None
+
+
+def test_readers_create_nothing_on_disk(store, tmp_path):
+    """A card asking about a toon it has never seen must not leave a folder
+    and a blank manifest behind for every name it was ever shown."""
+    store.note_dna("ttr", "Hiro", DNA1)                       # one real toon, so the root exists
+    game_dir = os.path.join(store.toons_root(), "ttr")
+    before = sorted(os.listdir(game_dir))
+    assert store.lookup("ttr", "Nobody", "head") is None
+    assert store.current_dna("ttr", "Nobody") is None
+    assert store.candidate_dna("ttr", "Nobody") is None
+    assert store.missing_poses("ttr", "Nobody", DNA1) == list(POSES)
+    assert store.lookup("ttr", "", "head") is None            # the "" name a bare card could pass
+    assert sorted(os.listdir(game_dir)) == before
+    assert not os.path.exists(os.path.join(store.toons_root(), "cc"))
+    assert store.lookup("cc", "Hiro", "head") is None
+    assert not os.path.exists(os.path.join(store.toons_root(), "cc"))
+
+
+def test_a_reader_resolves_the_same_suffixed_folder_a_mutator_made(store):
+    """The read-only resolver walks the collision chain exactly as the
+    creating one does, so a reader never looks in the wrong toon's folder."""
+    store.note_dna("ttr", "Blue Cat", DNA1)
+    store.note_dna("ttr", "blue cat", DNA2)                    # slugs collide: gets -2
+    _png(store.path_for("ttr", "blue cat", DNA2, "head"))
+    store.mark_landed("ttr", "blue cat", DNA2, "head")
+    assert store.candidate_dna("ttr", "blue cat") == DNA2
+    assert store.candidate_dna("ttr", "Blue Cat") == DNA1
+    path, _ = store.lookup("ttr", "blue cat", "head")
+    assert os.path.join("blue-cat-2", DNA2) in path
+    assert store.lookup("ttr", "Blue Cat", "head") is None
 
 
 def test_a_file_without_a_png_signature_does_not_count(store):
@@ -293,7 +384,7 @@ def test_import_promotes_a_complete_flat_set(store, tmp_path):
     for pose in POSES:
         _flat(flat, DNA1, pose)
     n = store.import_flat_cache(flat, [("ttr", "Hiro", DNA1)])
-    assert n == 3
+    assert n == {("ttr", "Hiro"): 3}
     assert store.current_dna("ttr", "Hiro") == DNA1
     path, tier = store.lookup("ttr", "Hiro", "head")
     assert tier == "current"
@@ -305,10 +396,11 @@ def test_import_promotes_a_complete_flat_set(store, tmp_path):
 def test_import_leaves_a_partial_set_as_candidate_for_the_sweep(store, tmp_path):
     flat = str(tmp_path / "flat")
     _flat(flat, DNA1, "portrait")
-    assert store.import_flat_cache(flat, [("ttr", "Hiro", DNA1)]) == 1
+    assert store.import_flat_cache(flat, [("ttr", "Hiro", DNA1)]) == {("ttr", "Hiro"): 1}
     assert store.current_dna("ttr", "Hiro") is None
     assert store.candidate_dna("ttr", "Hiro") == DNA1
     assert store.missing_poses("ttr", "Hiro", DNA1) == ["head", "waving"]
+    assert store.lookup("ttr", "Hiro", "portrait")[1] == "candidate"   # served meanwhile
 
 
 def test_import_is_idempotent_and_never_demotes(store, tmp_path):
@@ -316,10 +408,20 @@ def test_import_is_idempotent_and_never_demotes(store, tmp_path):
     for pose in POSES:
         _flat(flat, DNA1, pose)
     store.import_flat_cache(flat, [("ttr", "Hiro", DNA1)])
-    assert store.import_flat_cache(flat, [("ttr", "Hiro", DNA1)]) == 0
+    assert store.import_flat_cache(flat, [("ttr", "Hiro", DNA1)]) == {}
     assert store.current_dna("ttr", "Hiro") == DNA1
 
 
 def test_import_skips_toons_with_no_dna_and_missing_dirs(store, tmp_path):
-    assert store.import_flat_cache(str(tmp_path / "nope"), [("ttr", "Hiro", DNA1)]) == 0
-    assert store.import_flat_cache(str(tmp_path), [("ttr", "Hiro", "")]) == 0
+    assert store.import_flat_cache(str(tmp_path / "nope"), [("ttr", "Hiro", DNA1)]) == {}
+    assert store.import_flat_cache(str(tmp_path), [("ttr", "Hiro", "")]) == {}
+
+
+def test_import_counts_per_toon_so_partial_sets_are_announced_too(store, tmp_path):
+    flat = str(tmp_path / "flat")
+    for pose in POSES:
+        _flat(flat, DNA1, pose)
+    _flat(flat, DNA2, "head")
+    got = store.import_flat_cache(flat, [("ttr", "Whole", DNA1), ("ttr", "Half", DNA2),
+                                         ("ttr", "None", "74000101cc")])
+    assert got == {("ttr", "Whole"): 3, ("ttr", "Half"): 1}

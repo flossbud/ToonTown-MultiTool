@@ -358,7 +358,9 @@ def test_widget_current_portrait_transform(qt_app, monkeypatch, tmp_path):
 def test_a_landing_that_is_not_yet_servable_keeps_the_picture(render_cache):
     """A landing only ever adds a file. When that file belongs to an outfit
     the store cannot serve yet, the portrait on screen is still the best the
-    badge has: it keeps it. Only a promotion replaces it."""
+    badge has: it keeps it. Only a promotion replaces it. (The toon keeps a
+    complete set here -- with one lost file, so the read genuinely misses --
+    because a toon with no complete set at all IS served its candidate.)"""
     from tabs.multitoon._tab import ToonPortraitWidget
     from tests._render_fixtures import complete_set, real_png
 
@@ -370,7 +372,7 @@ def test_a_landing_that_is_not_yet_servable_keeps_the_picture(render_cache):
     w = ToonPortraitWidget(1)
     w.set_game("ttr"); w.set_toon("Hiro", "dna1")
     assert _pixel(w._pixmap) == QColor("#ff0000") and w.portrait_tier() == "current"
-    facade.invalidate("ttr", "Hiro")               # dna1's files are gone; nothing told the badge
+    os.remove(store.path_for("ttr", "Hiro", "dna1", w._pose))     # lost; nothing told the badge
     store.note_dna("ttr", "Hiro", "dna2")          # ...and the toon changed outfit meanwhile
     real_png(store.path_for("ttr", "Hiro", "dna2", w._pose), "#00ff00")
     assert store.mark_landed("ttr", "Hiro", "dna2", w._pose)

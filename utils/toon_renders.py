@@ -20,9 +20,19 @@ PREVIOUS_LOOK_TOOLTIP = "Showing previous look — new render pending."
 _LRU_MAX = 64
 
 
+def _on_breaker_changed(is_open: bool) -> None:
+    print(f"[ToonRenders] breaker {'open' if is_open else 'closed'}")
+
+
 def make_default(cache_root: str) -> "ToonRenders":
+    """The production facade. Prints its startup stamp so a live validation
+    can begin by confirming which code path -- and which cache root -- is
+    running, and stamps every breaker transition the same way."""
     store = ToonRenderStore(cache_root)
-    return ToonRenders(store, RenderPrefetcher(store))
+    pf = RenderPrefetcher(store)
+    print(f"[ToonRenders] cache root {cache_root}")
+    pf.breaker_changed.connect(_on_breaker_changed)
+    return ToonRenders(store, pf)
 
 
 class ToonRenders(QObject):
@@ -73,6 +83,9 @@ class ToonRenders(QObject):
         path, tier = hit
         # The store's "current" is the slot served. To the user it is the
         # previous look whenever a newer outfit (the candidate) is pending.
+        # A served "candidate" (the toon has no complete set; this IS the
+        # newest outfit) passes through untouched: there is no previous look
+        # to tell the user about.
         if tier == "current" and self.store.candidate_dna(game, name):
             tier = "previous"
         pm = self._lru.get(path)
@@ -128,31 +141,36 @@ class ToonRenders(QObject):
     def import_once(self, settings_manager, flat_dir: str) -> int:
         """First run only: copy remembered toons' renders out of the legacy
         flat cache. A marker file makes it idempotent. The store promotes
-        silently, so every toon left with a current set is announced here as
-        `set_promoted` -- a card mounted before this warm would otherwise keep
-        its silhouette until something else rebuilt it."""
+        silently, so every toon the import copied at least one pose for is
+        announced here as `set_promoted` -- not only the promoted ones: a
+        partial set is served too (tier "candidate") and a card mounted
+        before this warm would otherwise keep its silhouette until something
+        else rebuilt it. Returns the number of renders copied."""
         marker = os.path.join(self.store.toons_root(), ".imported")
         if os.path.exists(marker):
+            print("[ToonRenders] import skipped (marker present)")
             return 0
         remembered = self._remembered(settings_manager)
-        n = self.store.import_flat_cache(flat_dir, remembered)
+        per_toon = self.store.import_flat_cache(flat_dir, remembered)
         try:
             os.makedirs(os.path.dirname(marker), exist_ok=True)
             with open(marker, "w") as f:
                 f.write("1\n")
         except OSError:
             pass
-        if n > 0:
-            announced: set[tuple[str, str]] = set()
-            for game, name, _dna in remembered:
-                if (game, name) in announced:
-                    continue
-                announced.add((game, name))
-                if self.store.current_dna(game, name):
-                    self.prefetcher.set_promoted.emit(game, name)
+        n = sum(per_toon.values())
+        print(f"[ToonRenders] imported {n} renders for {len(per_toon)} toons")
+        for game, name in per_toon:
+            self.prefetcher.set_promoted.emit(game, name)
         return n
 
     def sweep_remembered(self, settings_manager) -> int:
-        toons = self._remembered(settings_manager)
+        """Fill gaps for every remembered toon -- except one the capture hook
+        has already reported this session: its live DNA is fresher than the
+        settings file, and feeding the remembered one here would drop the
+        live candidate and, with `_seen` still set, block its rediscovery."""
+        toons = [t for t in self._remembered(settings_manager)
+                 if (t[0], t[1]) not in self._seen]
+        print(f"[ToonRenders] sweeping {len(toons)} remembered toons")
         self.sweep(toons)
         return len(toons)
