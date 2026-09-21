@@ -11,7 +11,7 @@ os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
 from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QColor, QMouseEvent
 
 
 @pytest.fixture
@@ -353,3 +353,31 @@ def test_widget_current_portrait_transform(qt_app, monkeypatch, tmp_path):
         }
     })
     assert w.current_portrait_transform() == (1.5, 0.2, -0.1, 45.0)
+
+
+def test_a_landing_that_is_not_yet_servable_keeps_the_picture(render_cache):
+    """A landing only ever adds a file. When that file belongs to an outfit
+    the store cannot serve yet, the portrait on screen is still the best the
+    badge has: it keeps it. Only a promotion replaces it."""
+    from tabs.multitoon._tab import ToonPortraitWidget
+    from tests._render_fixtures import complete_set, real_png
+
+    def _pixel(pixmap):
+        return pixmap.toImage().pixelColor(0, 0)
+
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1", "#ff0000")
+    w = ToonPortraitWidget(1)
+    w.set_game("ttr"); w.set_toon("Hiro", "dna1")
+    assert _pixel(w._pixmap) == QColor("#ff0000") and w.portrait_tier() == "current"
+    facade.invalidate("ttr", "Hiro")               # dna1's files are gone; nothing told the badge
+    store.note_dna("ttr", "Hiro", "dna2")          # ...and the toon changed outfit meanwhile
+    real_png(store.path_for("ttr", "Hiro", "dna2", w._pose), "#00ff00")
+    assert store.mark_landed("ttr", "Hiro", "dna2", w._pose)
+    assert facade.pixmap_for("ttr", "Hiro", w._pose) is None      # landed, not servable
+    pf.render_landed.emit("ttr", "Hiro", w._pose)
+    assert w._pixmap is not None, "a landing cleared the portrait"
+    assert _pixel(w._pixmap) == QColor("#ff0000")
+    complete_set(store, "ttr", "Hiro", "dna2", "#00ff00")
+    pf.set_promoted.emit("ttr", "Hiro")
+    assert _pixel(w._pixmap) == QColor("#00ff00") and w.portrait_tier() == "current"

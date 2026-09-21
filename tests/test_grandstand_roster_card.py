@@ -490,3 +490,30 @@ def test_a_destroyed_card_no_longer_receives_the_caches_signals(render_cache, qa
     assert pf.receivers(promoted_sig) == before[1]
     facade.render_landed.emit("ttr", "Flossbud", CARD_POSE)     # must not raise
     facade.set_promoted.emit("ttr", "Flossbud")
+
+
+def test_a_landing_that_is_not_yet_servable_keeps_the_picture(render_cache, qapp):
+    """A landing only ever adds a file. When that file belongs to an outfit
+    the store cannot serve yet, the head on screen is still the best the
+    card has: it keeps it. Only a promotion replaces it."""
+    from tests._render_fixtures import real_png
+
+    def _pixel(pixmap):
+        return pixmap.toImage().pixelColor(0, 0)
+
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Flossbud", "7400", "#ff0000")
+    c = RosterCard()
+    c.set_entry(_entry())
+    assert _pixel(c.portrait_pixmap()) == QColor("#ff0000")
+    facade.invalidate("ttr", "Flossbud")           # 7400's files are gone; nothing told the card
+    store.note_dna("ttr", "Flossbud", "dna2")      # ...and the toon changed outfit meanwhile
+    real_png(store.path_for("ttr", "Flossbud", "dna2", CARD_POSE), "#00ff00")
+    assert store.mark_landed("ttr", "Flossbud", "dna2", CARD_POSE)
+    assert facade.pixmap_for("ttr", "Flossbud", CARD_POSE) is None   # landed, not servable
+    pf.render_landed.emit("ttr", "Flossbud", CARD_POSE)
+    assert c.portrait_pixmap() is not None, "a landing cleared the head"
+    assert _pixel(c.portrait_pixmap()) == QColor("#ff0000")
+    complete_set(store, "ttr", "Flossbud", "dna2", "#00ff00")
+    pf.set_promoted.emit("ttr", "Flossbud")
+    assert _pixel(c.portrait_pixmap()) == QColor("#00ff00")

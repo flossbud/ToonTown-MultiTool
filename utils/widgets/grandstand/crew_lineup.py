@@ -193,22 +193,32 @@ class CrewLineup(QWidget):
 
     # ── art ────────────────────────────────────────────────────────────────
 
+    def _read_render(self, slot: Slot) -> Optional[QPixmap]:
+        """One sync read of a rendition slot's pose; None for a slot that
+        does not draw a rendition at all (cameo, placeholder, no toon)."""
+        if slot.treatment in ("cameo", "placeholder") or not slot.dna or not slot.toon_name:
+            return None
+        hit = self._renders.pixmap_for(slot.game, slot.toon_name, slot.pose)
+        return hit[0] if hit else None
+
     def _load_art(self, slot: Slot) -> None:
+        """Clear-or-replace: the set-entries and promotion path."""
         if slot.treatment == "cameo":
             slot.pixmap = load_race_pixmap(slot.icon_stem) if slot.icon_stem else None
             return
-        if slot.treatment == "placeholder" or not slot.dna or not slot.toon_name:
-            slot.pixmap = None
-            return
-        hit = self._renders.pixmap_for(slot.game, slot.toon_name, slot.pose)
-        slot.pixmap = hit[0] if hit else None
+        slot.pixmap = self._read_render(slot)
 
     def _on_render_landed(self, game: str, name: str, pose: str) -> None:
+        # A landing never clears: it only ever adds a file, so a miss means
+        # the file belongs to an outfit the store cannot serve yet and what
+        # the slot shows is still exactly what the store would serve.
         touched = False
         for slot in self._slots:
             if slot.game == game and slot.toon_name == name and slot.pose == pose:
-                self._load_art(slot)
-                touched = True
+                pm = self._read_render(slot)
+                if pm is not None:
+                    slot.pixmap = pm
+                    touched = True
         if touched:
             self.update()
 

@@ -255,35 +255,49 @@ class ToonPortraitWidget(QWidget):
         downloads), or None when nothing is drawn."""
         return self._tier
 
-    def _refresh_from_cache(self) -> None:
-        """Sync read of (game, name, pose). A miss is NOT "loading": nothing
-        on disk paints the slot circle (the legacy post-failure fallback) and
-        the cache's `render_landed` / `set_promoted` repaint the badge when
-        art arrives. `_loading` is never set from here - nothing in the cache
-        world would ever clear it, so a permanently failing download would
-        leave the ellipsis up forever. A cache failure is contained: the badge
-        falls back to its slot circle. Tier "previous" (the last complete look
-        shown while a newer outfit downloads) carries the facade's tooltip."""
+    def _read_from_cache(self) -> "tuple[QPixmap, str] | None":
+        """One contained sync read of (game, name, pose): (pixmap, tier) or
+        None. A cache failure reads as a miss."""
+        if not (self._dna and self._game in ("cc", "ttr") and self._toon_name):
+            return None
+        try:
+            return self._renders.pixmap_for(self._game, self._toon_name, self._pose)
+        except Exception as exc:                 # noqa: BLE001
+            print(f"[ToonRenders] portrait read failed: {exc}")
+            return None
+
+    def _show(self, hit: "tuple[QPixmap, str] | None") -> None:
+        """Apply a read. `_loading` is never set from here - nothing in the
+        cache world would ever clear it, so a permanently failing download
+        would leave the ellipsis up forever. Tier "previous" (the last
+        complete look shown while a newer outfit downloads) carries the
+        facade's tooltip."""
         from utils.toon_renders import PREVIOUS_LOOK_TOOLTIP
-        self._pixmap, self._tier = None, None
+        self._pixmap, self._tier = hit if hit is not None else (None, None)
         self._loading = False
         self._dim_cache = None   # content changes -> rebuild dim
-        if self._dna and self._game in ("cc", "ttr") and self._toon_name:
-            try:
-                hit = self._renders.pixmap_for(self._game, self._toon_name, self._pose)
-            except Exception as exc:                 # noqa: BLE001
-                print(f"[ToonRenders] portrait read failed: {exc}")
-                hit = None
-            if hit is not None:
-                self._pixmap, self._tier = hit
         self.setToolTip(PREVIOUS_LOOK_TOOLTIP if self._tier == "previous" else "")
         self.update()
+
+    def _refresh_from_cache(self) -> None:
+        """Sync read of (game, name, pose), clear-or-replace: the key-change,
+        pose-change and promotion path. A miss is NOT "loading": nothing on
+        disk paints the slot circle (the legacy post-failure fallback) and
+        the cache's `render_landed` / `set_promoted` repaint the badge when
+        art arrives. A cache failure is contained: the badge falls back to
+        its slot circle."""
+        self._show(self._read_from_cache())
 
     def _on_render_landed(self, game: str, name: str, pose: str) -> None:
         # The facade is process-wide, so this fires for every badge. Only a
         # landing of THIS badge's live pose for THIS toon is worth a repaint.
+        # A landing never clears: it only ever adds a file, so a miss means
+        # the file belongs to an outfit the store cannot serve yet and what
+        # is showing is still exactly what the store would serve.
         if game == self._game and name == self._toon_name and pose == self._pose:
-            self._refresh_from_cache()
+            hit = self._read_from_cache()
+            if hit is not None:
+                self._show(hit)
 
     def _on_set_promoted(self, game: str, name: str) -> None:
         if game == self._game and name == self._toon_name:

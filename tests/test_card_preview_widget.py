@@ -141,6 +141,54 @@ def test_preview_never_writes_to_the_cache(render_cache, qapp):
     assert pf.pending_count + pf.in_flight_count == 0
 
 
+def _pixel(pixmap):
+    return pixmap.toImage().pixelColor(0, 0)
+
+
+def test_a_landing_that_is_not_yet_servable_keeps_the_picture(render_cache, qapp):
+    """A landing only ever adds a file. When that file belongs to an outfit
+    the store cannot serve yet, the picture on screen is still the best the
+    preview has: it keeps it. Only a promotion replaces it."""
+    from tests._render_fixtures import complete_set, real_png
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1", "#ff0000")
+    w = _make_preview(game="ttr", toon_name="Hiro", dna="dna1")
+    assert _pixel(w._pose_pixmap) == QColor("#ff0000")
+    facade.invalidate("ttr", "Hiro")               # dna1's files are gone; nothing told the preview
+    store.note_dna("ttr", "Hiro", "dna2")          # ...and the toon changed outfit meanwhile
+    real_png(store.path_for("ttr", "Hiro", "dna2", "portrait"), "#00ff00")
+    assert store.mark_landed("ttr", "Hiro", "dna2", "portrait")
+    assert facade.pixmap_for("ttr", "Hiro", "portrait") is None   # landed, not servable
+    facade.render_landed.emit("ttr", "Hiro", "portrait")
+    assert w._pose_pixmap is not None, "a landing cleared the picture"
+    assert _pixel(w._pose_pixmap) == QColor("#ff0000")
+    complete_set(store, "ttr", "Hiro", "dna2", "#00ff00")
+    facade.set_promoted.emit("ttr", "Hiro")
+    assert _pixel(w._pose_pixmap) == QColor("#00ff00")
+
+
+def test_preview_shows_the_previous_look_tooltip_until_the_new_set_promotes(render_cache, qapp):
+    """Tier "previous" (the last complete look shown while a newer outfit
+    downloads) carries the facade's PREVIOUS_LOOK_TOOLTIP on every read that
+    hits; any other tier clears it."""
+    from tests._render_fixtures import complete_set, real_png
+    from utils.toon_renders import PREVIOUS_LOOK_TOOLTIP
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1")
+    w = _make_preview(game="ttr", toon_name="Hiro", dna="dna1")
+    assert w._pose_pixmap is not None and w.toolTip() == ""
+    store.note_dna("ttr", "Hiro", "dna2")                          # a newer outfit is pending
+    real_png(store.path_for("ttr", "Hiro", "dna2", "portrait"))
+    assert store.mark_landed("ttr", "Hiro", "dna2", "portrait")
+    facade.render_landed.emit("ttr", "Hiro", "portrait")           # a hit: dna1, tier "previous"
+    assert w.toolTip() == PREVIOUS_LOOK_TOOLTIP
+    w2 = _make_preview(game="ttr", toon_name="Hiro", dna="dna2")   # set-entry read sees it too
+    assert w2.toolTip() == PREVIOUS_LOOK_TOOLTIP
+    complete_set(store, "ttr", "Hiro", "dna2")
+    facade.set_promoted.emit("ttr", "Hiro")
+    assert w.toolTip() == "" and w2.toolTip() == ""
+
+
 def test_preview_current_portrait_transform(qapp):
     """Test hook: preview exposes the current transform that paintEvent
     will apply to the pose pixmap."""

@@ -364,25 +364,125 @@ def test_pose_tiles_stay_pending_until_the_refreshed_set_promotes(render_cache, 
     assert all(t.has_pixmap() for t in sec.tiles())
 
 
-def test_pose_tile_repaints_from_the_previous_look_as_its_pose_lands(render_cache, qapp):
-    """With a previous look on disk, each `render_landed` for THIS toon fills
-    that one tile (the facade serves the previous look while the refreshed
-    set is pending); the other tiles wait for their own landing."""
+def _pixel(pixmap):
+    return pixmap.toImage().pixelColor(0, 0)
+
+
+def test_refresh_repaints_every_tile_from_the_previous_look_at_once(render_cache, qapp):
+    """A refresh drops the current set; with a previous look on disk the
+    store serves that immediately, so every tile repaints from it instead of
+    shimmering. A re-landed pose of the refreshed set is a candidate file
+    (not servable): the tile keeps the previous look, and the framing view
+    stays on the selected tile's pixmap. Another toon's landing is ignored."""
+    from tests._render_fixtures import complete_set, real_png
+    from utils.widgets.toon_customization_sections import _PoseSection
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1", "#ff0000")
+    complete_set(store, "ttr", "Hiro", "dna2", "#0000ff")      # dna2 current, dna1 previous
+    sec = _PoseSection("ttr", "Hiro", "dna2", "portrait")
+    assert all(_pixel(t._pixmap) == QColor("#0000ff") for t in sec.tiles())
+    sec._on_refresh_clicked()
+    assert store.current_dna("ttr", "Hiro") is None             # dna2's files are gone
+    assert all(t.has_pixmap() for t in sec.tiles()), "a tile went dark although the store still serves"
+    assert all(_pixel(t._pixmap) == QColor("#ff0000") for t in sec.tiles())   # the previous look
+    by_pose = {t.pose: t for t in sec.tiles()}
+    assert sec._adjust_view._preview.pixmap() is by_pose["portrait"]._pixmap
+    real_png(store.path_for("ttr", "Hiro", "dna2", "portrait"), "#00ff00")    # dna2 re-lands one pose
+    assert store.mark_landed("ttr", "Hiro", "dna2", "portrait")
+    facade.render_landed.emit("ttr", "Other", "portrait")
+    facade.render_landed.emit("ttr", "Hiro", "portrait")
+    assert all(_pixel(t._pixmap) == QColor("#ff0000") for t in sec.tiles()), "a candidate file was shown"
+    assert sec._adjust_view._preview.pixmap() is by_pose["portrait"]._pixmap
+
+
+def test_refresh_keeps_tiles_the_store_did_not_remove(render_cache, qapp):
+    """A refresh while a newer outfit is already downloading touches nothing
+    in the store (that download IS the fresh art the user wants), so every
+    tile keeps the picture the store still serves. Blanking them would lose
+    the current look for nothing."""
     from tests._render_fixtures import complete_set
     from utils.widgets.toon_customization_sections import _PoseSection
     facade, store, pf = render_cache
-    complete_set(store, "ttr", "Hiro", "dna1")
-    complete_set(store, "ttr", "Hiro", "dna2")                 # dna2 current, dna1 previous
+    complete_set(store, "ttr", "Hiro", "dna1", "#ff0000")
+    store.note_dna("ttr", "Hiro", "dna2")                        # candidate pending, nothing landed
     sec = _PoseSection("ttr", "Hiro", "dna2", "portrait")
+    assert all(_pixel(t._pixmap) == QColor("#ff0000") for t in sec.tiles())
     sec._on_refresh_clicked()
-    assert all(t.is_loading() for t in sec.tiles())
-    facade.render_landed.emit("ttr", "Other", "portrait")
-    assert all(t.is_loading() for t in sec.tiles()), "another toon's landing filled a tile"
-    facade.render_landed.emit("ttr", "Hiro", "portrait")
+    assert store.current_dna("ttr", "Hiro") == "dna1"            # the store deferred to the candidate
+    assert store.candidate_dna("ttr", "Hiro") == "dna2"
+    assert all(t.has_pixmap() for t in sec.tiles()), "refresh blanked a tile the store never removed"
+    assert all(_pixel(t._pixmap) == QColor("#ff0000") for t in sec.tiles())
+    assert _pixel(sec._adjust_view._preview.pixmap()) == QColor("#ff0000")
+
+
+def test_a_landing_that_is_not_yet_servable_keeps_the_tiles(render_cache, qapp):
+    """A landing only ever adds a file. When that file belongs to an outfit
+    the store cannot serve yet, the tile keeps what it shows: the picture on
+    screen is still the best the section has. Only a promotion replaces it."""
+    from tests._render_fixtures import complete_set, real_png
+    from utils.widgets.toon_customization_sections import _PoseSection
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1", "#ff0000")
+    sec = _PoseSection("ttr", "Hiro", "dna1", "portrait")
     by_pose = {t.pose: t for t in sec.tiles()}
+    assert _pixel(by_pose["portrait"]._pixmap) == QColor("#ff0000")
+    facade.invalidate("ttr", "Hiro")               # dna1's files are gone; nothing told the section
+    store.note_dna("ttr", "Hiro", "dna2")          # ...and the toon changed outfit meanwhile
+    real_png(store.path_for("ttr", "Hiro", "dna2", "portrait"), "#00ff00")
+    assert store.mark_landed("ttr", "Hiro", "dna2", "portrait")
+    assert facade.pixmap_for("ttr", "Hiro", "portrait") is None   # landed, not servable
+    facade.render_landed.emit("ttr", "Hiro", "portrait")
+    assert by_pose["portrait"].has_pixmap(), "a landing cleared the tile"
+    assert _pixel(by_pose["portrait"]._pixmap) == QColor("#ff0000")
+    assert _pixel(sec._adjust_view._preview.pixmap()) == QColor("#ff0000")
+    complete_set(store, "ttr", "Hiro", "dna2", "#00ff00")
+    facade.set_promoted.emit("ttr", "Hiro")
+    assert all(_pixel(t._pixmap) == QColor("#00ff00") for t in sec.tiles())
+    assert sec._adjust_view._preview.pixmap() is by_pose["portrait"]._pixmap
+
+
+def test_a_landing_that_fills_the_selected_tile_fills_the_framing_view(render_cache, qapp):
+    """The current set has a hole for the selected pose (the facade deletes
+    a file its decoder rejects and re-fetches it). While it is missing the
+    tile pends and the framing view has nothing; when it lands, the tile
+    fills and the framing view shows that same pixmap."""
+    from tests._render_fixtures import complete_set, real_png
+    from utils.widgets.toon_customization_sections import _PoseSection
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Hiro", "dna1")
+    os.remove(store.path_for("ttr", "Hiro", "dna1", "portrait"))
+    sec = _PoseSection("ttr", "Hiro", "dna1", "portrait")
+    by_pose = {t.pose: t for t in sec.tiles()}
+    assert by_pose["portrait"].is_loading()
+    assert by_pose["waving"].has_pixmap()
+    assert sec._adjust_view._preview.pixmap() is None
+    real_png(store.path_for("ttr", "Hiro", "dna1", "portrait"))
+    assert store.mark_landed("ttr", "Hiro", "dna1", "portrait")
+    facade.render_landed.emit("ttr", "Hiro", "portrait")
     assert by_pose["portrait"].has_pixmap()
-    assert all(t.is_loading() for pose, t in by_pose.items() if pose != "portrait")
-    assert sec._adjust_view._preview.pixmap() is not None       # the selected pose follows
+    assert sec._adjust_view._preview.pixmap() is by_pose["portrait"]._pixmap
+
+
+def test_pose_section_with_an_empty_toon_name_never_touches_the_cache(render_cache, qapp, monkeypatch):
+    """An empty name is not a toon: a facade read keyed on it would create
+    `toons/<game>/toon/manifest.json`. The section mirrors the preview's
+    guard and never connects to or reads the facade without a name."""
+    from utils.widgets.toon_customization_sections import _PoseSection
+    facade, store, pf = render_cache
+    asked = []
+    monkeypatch.setattr(facade, "pixmap_for", lambda *a: asked.append(a))
+    sec = _PoseSection("ttr", "", "dna1", "portrait")
+    assert sec._renders is None
+    assert len(sec.tiles()) == 13 and all(t.is_loading() for t in sec.tiles())
+    sec._on_refresh_clicked()
+    sec._on_tile_retry_requested("portrait")
+    facade.render_landed.emit("ttr", "", "portrait")
+    facade.set_promoted.emit("ttr", "")
+    assert asked == []
+    manifests = [os.path.join(d, f) for d, _dirs, files in os.walk(store.toons_root())
+                 for f in files if f == "manifest.json"]
+    assert manifests == []
+    assert pf.pending_count + pf.in_flight_count == 0            # nothing queued either
 
 
 def test_reopening_the_overlay_leaves_no_facade_connections_behind(render_cache, qapp):

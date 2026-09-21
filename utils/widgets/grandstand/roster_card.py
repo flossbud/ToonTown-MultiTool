@@ -340,26 +340,34 @@ class RosterCard(QFrame):
         downloads), or None when nothing is drawn."""
         return self._tier
 
-    def _load_portrait(self) -> None:
-        self._pixmap, self._tier = None, None
-        self.setToolTip("")
+    def _read_portrait(self) -> Optional[tuple[QPixmap, str]]:
+        """One sync read of this entry's head: (pixmap, tier) or None."""
         if not self._wants_render():
-            return
+            return None
         e = self._entry
-        hit = self._renders.pixmap_for(e.game, e.toon_name or "", CARD_POSE)
-        if hit is None:
-            return
-        self._pixmap, self._tier = hit
-        if self._tier == "previous":
-            self.setToolTip(PREVIOUS_LOOK_TOOLTIP)
+        return self._renders.pixmap_for(e.game, e.toon_name or "", CARD_POSE)
+
+    def _show_portrait(self, hit: Optional[tuple[QPixmap, str]]) -> None:
+        self._pixmap, self._tier = hit if hit is not None else (None, None)
+        self.setToolTip(PREVIOUS_LOOK_TOOLTIP if self._tier == "previous" else "")
+
+    def _load_portrait(self) -> None:
+        """Clear-or-replace: the set-entry and promotion path."""
+        self._show_portrait(self._read_portrait())
 
     def _on_render_landed(self, game: str, name: str, pose: str) -> None:
         # The facade is process-wide, so this fires for every card. Only a
         # landing of THIS card's pose for THIS toon is worth a repaint.
+        # A landing never clears: it only ever adds a file, so a miss means
+        # the file belongs to an outfit the store cannot serve yet and what
+        # is showing is still exactly what the store would serve.
         e = self._entry
         if e is None or pose != CARD_POSE or game != e.game or name != (e.toon_name or ""):
             return
-        self._load_portrait()
+        hit = self._read_portrait()
+        if hit is None:
+            return
+        self._show_portrait(hit)
         self.update()
 
     def _on_set_promoted(self, game: str, name: str) -> None:

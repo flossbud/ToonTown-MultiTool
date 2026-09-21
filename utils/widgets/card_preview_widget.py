@@ -72,6 +72,7 @@ class CardPreviewWidget(QWidget):
         self._skin: Optional[QColor] = skin_color
         self._auto_stem: Optional[str] = auto_stem
         self._pose_pixmap: Optional[QPixmap] = None
+        self._pose_tier: Optional[str] = None
         self._silhouette_cache: dict[tuple, tuple] = {}
         # key: (id(pose_pm), pose_size_tuple, outline_color or None, outline_width,
         #       shadow_color or None, shadow_blur)
@@ -110,20 +111,29 @@ class CardPreviewWidget(QWidget):
         from utils.toon_customization_resolve import resolve_pose
         return resolve_pose(self._draft, "portrait")
 
-    def _refresh_pose_pixmap(self) -> None:
-        """Sync read of the live pose. A miss is not "loading": nothing on
-        disk paints the portrait disc without a pose, and the cache's
-        signals repaint the preview when art arrives. A cache failure is
-        contained the same way."""
+    def _read_pose(self) -> Optional[tuple[QPixmap, str]]:
+        """One contained sync read of the live pose: (pixmap, tier) or None.
+        A cache failure reads as a miss."""
         if self._renders is None:
-            self._pose_pixmap = None
-            return
+            return None
         try:
-            hit = self._renders.pixmap_for(self._game, self._toon_name, self._current_pose())
+            return self._renders.pixmap_for(self._game, self._toon_name, self._current_pose())
         except Exception as exc:                 # noqa: BLE001
             print(f"[ToonRenders] preview read failed: {exc}")
-            hit = None
-        self._pose_pixmap = hit[0] if hit else None
+            return None
+
+    def _show_pose(self, hit: Optional[tuple[QPixmap, str]]) -> None:
+        """Apply a read: the pixmap, and the facade's tooltip when the tier
+        says the last complete look is standing in for a pending outfit."""
+        from utils.toon_renders import PREVIOUS_LOOK_TOOLTIP
+        self._pose_pixmap, self._pose_tier = hit if hit else (None, None)
+        self.setToolTip(PREVIOUS_LOOK_TOOLTIP if self._pose_tier == "previous" else "")
+
+    def _refresh_pose_pixmap(self) -> None:
+        """Sync read of the live pose, clear-or-replace. A miss is not
+        "loading": nothing on disk paints the portrait disc without a pose,
+        and the cache's signals repaint the preview when art arrives."""
+        self._show_pose(self._read_pose())
 
     def set_draft(self, draft: dict) -> None:
         prev_pose = self._current_pose()
@@ -187,7 +197,13 @@ class CardPreviewWidget(QWidget):
         # after construction) is worth a repaint.
         if game != self._game or name != self._toon_name or pose != self._current_pose():
             return
-        self._refresh_pose_pixmap()
+        # A landing never clears: it only ever adds a file, so a miss means
+        # the file belongs to an outfit the store cannot serve yet and what
+        # is showing is still exactly what the store would serve.
+        hit = self._read_pose()
+        if hit is None:
+            return
+        self._show_pose(hit)
         self.update()
 
     def _on_set_promoted(self, game: str, name: str) -> None:

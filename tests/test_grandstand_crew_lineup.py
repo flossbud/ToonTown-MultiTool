@@ -347,3 +347,26 @@ def test_paints_without_error_in_every_treatment(crew, qapp):
     qapp.processEvents()
     assert crew.isVisible() is True
     crew.repaint()          # must not raise, including with null pixmaps
+
+
+def test_a_landing_that_is_not_yet_servable_keeps_the_picture(crew, render_cache):
+    """A landing only ever adds a file. When that file belongs to an outfit
+    the store cannot serve yet, the figure on stage is still the best the
+    lineup has: it keeps it. Only a promotion replaces it."""
+    from tests._render_fixtures import real_png
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "A", "7400", "#ff0000")
+    crew.set_entries([_e("a")])                    # pose "portrait"
+    slot = crew.slot_for("a")
+    assert _pixel(slot.pixmap) == QColor("#ff0000")
+    facade.invalidate("ttr", "A")                  # 7400's files are gone; nothing told the lineup
+    store.note_dna("ttr", "A", "dna2")             # ...and the toon changed outfit meanwhile
+    real_png(store.path_for("ttr", "A", "dna2", "portrait"), "#00ff00")
+    assert store.mark_landed("ttr", "A", "dna2", "portrait")
+    assert facade.pixmap_for("ttr", "A", "portrait") is None      # landed, not servable
+    pf.render_landed.emit("ttr", "A", "portrait")
+    assert slot.pixmap is not None, "a landing cleared the figure"
+    assert _pixel(slot.pixmap) == QColor("#ff0000")
+    complete_set(store, "ttr", "A", "dna2", "#00ff00")
+    pf.set_promoted.emit("ttr", "A")
+    assert _pixel(slot.pixmap) == QColor("#00ff00")

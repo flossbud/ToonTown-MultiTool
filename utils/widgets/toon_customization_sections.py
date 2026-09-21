@@ -987,11 +987,14 @@ class _PoseSection(QWidget):
         # then one tile per `render_landed` (own toon) and every tile on
         # `set_promoted` (own toon). Connections are bound methods of this
         # section, so the process-wide facade drops them when it dies.
-        from utils.toon_renders import ToonRenders
-        self._renders = ToonRenders.instance()
-        self._renders.render_landed.connect(self._on_render_landed)
-        self._renders.set_promoted.connect(self._on_set_promoted)
-        self._fill_tiles()
+        # An empty name is not a toon: a read keyed on it would create a
+        # folder for "" (the preview guards the same way).
+        if self._toon_name:
+            from utils.toon_renders import ToonRenders
+            self._renders = ToonRenders.instance()
+            self._renders.render_landed.connect(self._on_render_landed)
+            self._renders.set_promoted.connect(self._on_set_promoted)
+            self._fill_tiles()
 
     def _build_header(self) -> QWidget:
         header_w = QWidget()
@@ -1118,24 +1121,35 @@ class _PoseSection(QWidget):
             return None
         return hit[0] if hit else None
 
+    def _show(self, tile: "_PoseTile", pm: QPixmap) -> None:
+        tile.set_pixmap(pm)
+        if tile.pose == self._current_pose and self._adjust_view is not None:
+            self._adjust_view.set_pixmap(pm)
+
     def _fill_tiles(self) -> None:
+        """Every tile from disk. This is the section's own clear-or-replace
+        path (set-entry, promotion, refresh): a miss sends the tile to its
+        pending state."""
         for t in self._tiles:
             pm = self._pixmap_from_cache(t.pose)
-            t.set_pixmap(pm)                     # None: tile shows its own pending state
-            if pm is not None and t.pose == self._current_pose and self._adjust_view is not None:
-                self._adjust_view.set_pixmap(pm)
+            if pm is None:
+                t.set_pixmap(None)               # the tile shows its own pending state
+            else:
+                self._show(t, pm)
 
     def _on_render_landed(self, game: str, name: str, pose: str) -> None:
         # The facade is process-wide, so this fires for every toon. Only a
         # landing for THIS toon is worth a read, and only its tile repaints.
+        # A landing never clears: it only ever adds a file, so a miss means
+        # the file belongs to an outfit the store cannot serve yet and what
+        # the tile shows is still exactly what the store would serve.
         if game != self._game or name != self._toon_name:
             return
         for t in self._tiles:
             if t.pose == pose:
                 pm = self._pixmap_from_cache(pose)
-                t.set_pixmap(pm)
-                if pm is not None and pose == self._current_pose and self._adjust_view is not None:
-                    self._adjust_view.set_pixmap(pm)
+                if pm is not None:
+                    self._show(t, pm)
                 break
 
     def _on_set_promoted(self, game: str, name: str) -> None:
@@ -1154,16 +1168,18 @@ class _PoseSection(QWidget):
 
     def _on_refresh_clicked(self) -> None:
         """The one sanctioned cache write from a widget: drop this toon's
-        current set and re-queue it at high priority. Tiles fall back to
-        their pending state and refill as the cache announces the poses."""
+        current set and re-queue it at high priority. Then refill from what
+        the store kept: a pose still on disk (the previous look, or a set
+        the store left alone because a newer outfit is already on its way)
+        keeps showing; only a tile whose file the store deleted falls back
+        to its pending state, to refill as the cache announces the poses."""
         if self._renders is None:
             return
-        for t in self._tiles:
-            t.set_pixmap(None)
         try:
             self._renders.invalidate(self._game, self._toon_name)
         except Exception as exc:                 # noqa: BLE001
             print(f"[ToonRenders] pose refresh failed: {exc}")
+        self._fill_tiles()
 
     def _on_adjust_changed(self) -> None:
         self._transform = self._adjust_view.transform()
