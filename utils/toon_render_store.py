@@ -104,16 +104,30 @@ class ToonRenderStore:
     # ── file checks ───────────────────────────────────────────────────────
 
     def _valid_png(self, path: str) -> bool:
+        """Absent is a normal state (not logged). Present-but-unreadable or
+        present-but-not-a-PNG is a disk fault: logged once, read as absent."""
         try:
             with open(path, "rb") as f:
-                return f.read(len(PNG_SIGNATURE)) == PNG_SIGNATURE
-        except OSError:
+                ok = f.read(len(PNG_SIGNATURE)) == PNG_SIGNATURE
+        except FileNotFoundError:
             return False
+        except OSError as exc:
+            self._warn(f"unreadable render {path}: {exc}")
+            return False
+        if not ok:
+            self._warn(f"not a PNG, ignored: {path}")
+        return ok
 
-    def _set_complete(self, d: str, dna: Optional[str]) -> bool:
+    def _set_complete(self, d: str, m: dict, dna: Optional[str]) -> bool:
+        """Every pose is on disk OR the server refused it (a 4xx: it will never
+        render, and waiting would strand the toon on its previous look). At
+        least one pose must actually be on disk."""
         if not dna:
             return False
-        return all(self._valid_png(os.path.join(d, dna, f"{p}.png")) for p in self._poses)
+        failed = set(m.get("sets", {}).get(dna, {}).get("failed", []))
+        present = [self._valid_png(os.path.join(d, dna, f"{p}.png")) for p in self._poses]
+        return any(present) and all(
+            ok or p in failed for ok, p in zip(present, self._poses))
 
     # ── sets ──────────────────────────────────────────────────────────────
 
@@ -130,16 +144,29 @@ class ToonRenderStore:
         d, m = self._manifest(game, name)
         if dna == m.get("current"):
             return "current"
-        if dna == m.get("previous") and self._set_complete(d, dna):
+        if dna == m.get("previous") and self._set_complete(d, m, dna):
             m["previous"], m["current"] = m["current"], dna
             m["candidate"] = None
             self._write_manifest(d, m)
             return "current"
         if dna != m.get("candidate"):
+            # An outfit that was tried and superseded before it finished would
+            # otherwise sit on disk forever.
+            self._drop_set(d, m, m.get("candidate"))
             m["candidate"] = dna
-            m["sets"].setdefault(dna, {"landed": [], "failed": []})
+            self._set_record(m, dna)
             self._write_manifest(d, m)
         return "candidate"
+
+    @staticmethod
+    def _set_record(m: dict, dna: str) -> dict:
+        return m["sets"].setdefault(dna, {"landed": [], "failed": []})
+
+    def _drop_set(self, d: str, m: dict, dna: Optional[str]) -> None:
+        """Delete a DNA's files unless something still references them."""
+        if dna and dna not in (m.get("current"), m.get("previous")):
+            shutil.rmtree(os.path.join(d, dna), ignore_errors=True)
+            m["sets"].pop(dna, None)
 
     def mark_landed(self, game: str, name: str, dna: str, pose: str) -> bool:
         d, m = self._manifest(game, name)
@@ -147,7 +174,7 @@ class ToonRenderStore:
         if not self._valid_png(path):
             self._warn(f"{game}/{name}/{dna}/{pose}: not a valid PNG, treated as missing")
             return False
-        rec = m["sets"].setdefault(dna, {"landed": [], "failed": []})
+        rec = self._set_record(m, dna)
         if pose not in rec["landed"]:
             rec["landed"].append(pose)
         if pose in rec["failed"]:
@@ -157,7 +184,7 @@ class ToonRenderStore:
 
     def mark_failed(self, game: str, name: str, dna: str, pose: str) -> None:
         d, m = self._manifest(game, name)
-        rec = m["sets"].setdefault(dna, {"landed": [], "failed": []})
+        rec = self._set_record(m, dna)
         if pose not in rec["failed"]:
             rec["failed"].append(pose)
         self._write_manifest(d, m)
@@ -171,13 +198,11 @@ class ToonRenderStore:
     def promote_if_complete(self, game: str, name: str) -> bool:
         d, m = self._manifest(game, name)
         cand = m.get("candidate")
-        if not cand or not self._set_complete(d, cand):
+        if not cand or not self._set_complete(d, m, cand):
             return False
         older = m.get("previous")
         m["previous"], m["current"], m["candidate"] = m.get("current"), cand, None
-        if older and older not in (m["current"], m["previous"]):
-            shutil.rmtree(os.path.join(d, older), ignore_errors=True)
-            m["sets"].pop(older, None)
+        self._drop_set(d, m, older)
         self._write_manifest(d, m)
         return True
 
@@ -193,9 +218,16 @@ class ToonRenderStore:
         return None
 
     def invalidate(self, game: str, name: str) -> Optional[str]:
-        """User-initiated refresh: drop the current set's files and re-queue
-        that DNA as the candidate. Previous stays intact as the fallback."""
+        """User-initiated refresh. If a newer outfit is already on its way,
+        that IS the fresh art the user wants: return its DNA so the caller can
+        re-prioritise it, and touch nothing — deleting current here would send
+        the toon dark if that download stalls. Otherwise drop the current
+        set's files and re-queue that DNA as the candidate; previous stays
+        intact as the fallback."""
         d, m = self._manifest(game, name)
+        cand = m.get("candidate")
+        if cand and cand != m.get("current"):
+            return cand
         cur = m.get("current")
         if not cur:
             return None

@@ -143,6 +143,71 @@ def test_failed_poses_are_not_missing(store):
     assert store.missing_poses("ttr", "Hiro", DNA1) == ["portrait", "head"]
 
 
+def test_a_server_refused_pose_does_not_strand_the_set(store):
+    """A 4xx means the origin will never render that pose for this DNA.
+    Waiting would leave the toon on its previous look forever, so the set
+    promotes without it and lookup falls through for that one pose."""
+    store.note_dna("ttr", "Hiro", DNA1)
+    _land_all(store, "ttr", "Hiro", DNA1)
+    store.promote_if_complete("ttr", "Hiro")
+    store.note_dna("ttr", "Hiro", DNA2)
+    store.mark_failed("ttr", "Hiro", DNA2, "waving")
+    for pose in ("portrait", "head"):
+        _png(store.path_for("ttr", "Hiro", DNA2, pose))
+        store.mark_landed("ttr", "Hiro", DNA2, pose)
+    assert store.missing_poses("ttr", "Hiro", DNA2) == []
+    assert store.promote_if_complete("ttr", "Hiro") is True
+    assert store.current_dna("ttr", "Hiro") == DNA2
+    path, tier = store.lookup("ttr", "Hiro", "waving")
+    assert tier == "previous" and DNA1 in path
+    path, tier = store.lookup("ttr", "Hiro", "head")
+    assert tier == "current" and DNA2 in path
+
+
+def test_an_all_refused_set_never_promotes(store):
+    store.note_dna("ttr", "Hiro", DNA1)
+    for pose in POSES:
+        store.mark_failed("ttr", "Hiro", DNA1, pose)
+    assert store.promote_if_complete("ttr", "Hiro") is False
+    assert store.current_dna("ttr", "Hiro") is None
+
+
+def test_invalidate_defers_to_an_outfit_already_on_its_way(store):
+    """Refreshing while a newer outfit downloads must not send the toon dark:
+    current stays served, and the caller gets the candidate to re-prioritise."""
+    store.note_dna("ttr", "Hiro", DNA1)
+    _land_all(store, "ttr", "Hiro", DNA1)
+    store.promote_if_complete("ttr", "Hiro")
+    store.note_dna("ttr", "Hiro", DNA2)
+    assert store.invalidate("ttr", "Hiro") == DNA2
+    assert store.current_dna("ttr", "Hiro") == DNA1
+    assert store.candidate_dna("ttr", "Hiro") == DNA2
+    _land_all(store, "ttr", "Hiro", DNA2)
+    assert store.promote_if_complete("ttr", "Hiro") is True
+    assert store.lookup("ttr", "Hiro", "head")[1] == "current"
+
+
+def test_an_abandoned_candidate_is_deleted_when_superseded(store):
+    store.note_dna("ttr", "Hiro", DNA1)
+    _png(store.path_for("ttr", "Hiro", DNA1, "head"))
+    store.mark_landed("ttr", "Hiro", DNA1, "head")
+    store.note_dna("ttr", "Hiro", DNA2)          # tried on another outfit first
+    assert not os.path.isdir(os.path.join(store.toon_dir("ttr", "Hiro"), DNA1))
+    assert store.candidate_dna("ttr", "Hiro") == DNA2
+
+
+def test_an_unreadable_file_logs_once_but_an_absent_one_does_not(store, capsys):
+    store.note_dna("ttr", "Hiro", DNA1)
+    assert store.lookup("ttr", "Hiro", "head") is None       # absent: silent
+    bad = store.path_for("ttr", "Hiro", DNA1, "head")
+    with open(bad, "wb") as f:
+        f.write(b"GIF89a")
+    store.mark_landed("ttr", "Hiro", DNA1, "head")
+    store.mark_landed("ttr", "Hiro", DNA1, "head")
+    out = capsys.readouterr().out
+    assert out.count("not a PNG") == 1
+
+
 def test_invalidate_drops_current_only_and_requeues_it(store):
     store.note_dna("ttr", "Hiro", DNA1)
     _land_all(store, "ttr", "Hiro", DNA1)
