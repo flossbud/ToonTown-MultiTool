@@ -1740,7 +1740,22 @@ class LaunchTab(QWidget):
         if game == "cc":
             if not self._cc_gate_ok(game, account_id):
                 return
-            if self._grandstand_launch_is_blocked():
+            # The gate ran a nested event loop. Anything resolved above is
+            # stale: the roster may have been rebuilt (a shifted index would
+            # fetch another account's credentials), the tab may be shutting
+            # down, and a global hotkey may already have started this account.
+            if self._shutting_down or self._grandstand_launch_is_blocked():
+                return
+            slot = self._slots[game].get(account_id)
+            global_idx = self._global_index_of(account_id)
+            if slot is None or global_idx is None:
+                _dbg(f"[Credentials] _on_launch: {game}/{account_id} left the "
+                     "roster while the install gate was open")
+                return
+            if (self.is_account_running(game, account_id)
+                    or self._is_in_flight(game, account_id)):
+                _dbg(f"[Credentials] _on_launch: {game}/{account_id} started "
+                     "while the install gate was open")
                 return
 
         # Check engine path
@@ -2025,9 +2040,11 @@ class LaunchTab(QWidget):
         open_btn = box.addButton("Open official launcher", QMessageBox.AcceptRole)
         box.addButton("Cancel", QMessageBox.RejectRole)
         box.exec()
-        if box.clickedButton() is open_btn:
-            if not run_official_cc_launcher(self.settings_manager):
-                self.log("[Launch] Could not start the official CC launcher.")
+        # The box ran a nested event loop. Opening the launcher is the same
+        # action as the hero's button, so it takes the same guarded boundary
+        # — credential blocking cannot be skipped by arriving from here.
+        if box.clickedButton() is open_btn and not self._shutting_down:
+            self._on_launcher_clicked("cc")
 
     def _on_login_failed(self, game, account_id, worker, msg):
         slot = self._slots[game].get(account_id)
@@ -2191,14 +2208,24 @@ class LaunchTab(QWidget):
 
         game_label = "TTR" if game == "ttr" else "CC"
         self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)} requires 2FA.")
+        slot = self._slots[game].get(account_id)
+        asker = slot.worker if slot is not None else None
         token, ok = QInputDialog.getText(
             self, "Two-Factor Authentication",
             f"{banner}\n\nEnter your authenticator code:",
             QLineEdit.Password,
         )
         self._pending_2fa.discard(key)
+        # The dialog ran a nested event loop. A relaunch meanwhile put a new
+        # worker on the slot; the answer belongs to the one that asked, so the
+        # newcomer gets neither the token nor a cancellation.
         slot = self._slots[game].get(account_id)
         worker = slot.worker if slot is not None else None
+        if worker is not asker:
+            self.log(f"[Launch] {game_label} account "
+                     f"{self._position_of(game, account_id)} 2FA prompt was "
+                     "superseded by a newer launch; answer discarded.")
+            return
         if ok and token.strip():
             if worker:
                 worker.submit_2fa(token.strip())

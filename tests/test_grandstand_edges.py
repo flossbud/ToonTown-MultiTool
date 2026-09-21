@@ -694,3 +694,243 @@ def test_party_releases_delayed_members_if_first_launch_blocks(
     finally:
         tab.shutdown()
         tab.close()
+
+
+# ── nested loops on the remaining launch paths ──────────────────────────────
+
+def test_direct_cc_launch_bails_if_the_account_left_during_the_gate(
+        monkeypatch, qapp):
+    """The roster can be rebuilt while the Clash picker is open (the keyring
+    probe completing does exactly that). A slot and index resolved before the
+    gate are stale afterwards: an index that now points at a different
+    account would launch that account's credentials under this card."""
+    import tabs.launch_tab as launch_tab
+
+    tab, cred = _make_grandstand_launch_tab(
+        monkeypatch, ["a", "b"], blocked=False, game="cc")
+    engine_lookup = MagicMock(return_value="")
+
+    def gate(_settings, parent=None):
+        del cred.get_accounts_metadata.return_value[0]     # "a" is gone
+        tab._reconcile_slots()
+        return True
+
+    monkeypatch.setattr(launch_tab, "_cc_launch_gate", gate)
+    tab._get_engine_dir = engine_lookup
+    tab._show_failure_dialog = MagicMock()
+    try:
+        tab.grandstand.launch_requested.emit("cc", "a")
+        engine_lookup.assert_not_called()
+        cred.get_account.assert_not_called()
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_direct_cc_launch_bails_if_shutdown_began_during_the_gate(
+        monkeypatch, qapp):
+    import tabs.launch_tab as launch_tab
+
+    tab, cred = _make_grandstand_launch_tab(
+        monkeypatch, ["a"], blocked=False, game="cc")
+    engine_lookup = MagicMock(return_value="")
+
+    def gate(_settings, parent=None):
+        tab.shutdown()
+        return True
+
+    monkeypatch.setattr(launch_tab, "_cc_launch_gate", gate)
+    tab._get_engine_dir = engine_lookup
+    tab._show_failure_dialog = MagicMock()
+    try:
+        tab.grandstand.launch_requested.emit("cc", "a")
+        engine_lookup.assert_not_called()
+        cred.get_account.assert_not_called()
+    finally:
+        tab.close()
+
+
+def test_direct_cc_launch_does_not_kill_a_game_started_during_the_gate(
+        monkeypatch, qapp, tmp_path):
+    """A global hotkey is not blocked by the picker. If it started this
+    account while the gate was open, the click that predates it must not
+    fall through to the relaunch-kills-the-running-game branch. The engine
+    is real here so that branch is reachable: nothing short of the recheck
+    stands between the gate and the kill."""
+    import tabs.launch_tab as launch_tab
+
+    engine_dir = tmp_path / "cc"
+    engine_dir.mkdir()
+    (engine_dir / launch_tab.get_cc_engine_executable_name()).touch()
+    tab, cred = _make_grandstand_launch_tab(
+        monkeypatch, ["a"], blocked=False, game="cc")
+    launcher = SimpleNamespace(is_running=lambda: True, kill=MagicMock())
+
+    def gate(_settings, parent=None):
+        tab._slots["cc"]["a"].launcher = launcher
+        return True
+
+    monkeypatch.setattr(launch_tab, "_cc_launch_gate", gate)
+    tab._get_engine_dir = lambda game: str(engine_dir)
+    tab._make_launchers = MagicMock()
+    tab._show_failure_dialog = MagicMock()
+    try:
+        tab.grandstand.launch_requested.emit("cc", "a")
+        launcher.kill.assert_not_called()
+        tab._make_launchers.assert_not_called()
+    finally:
+        tab._slots["cc"]["a"].launcher = None
+        tab.shutdown()
+        tab.close()
+
+
+class _FakeMessageBox:
+    """QMessageBox stand-in whose modal exec runs a caller-supplied side
+    effect, the way a real nested loop lets the world move on."""
+    Warning = object()
+    AcceptRole = object()
+    RejectRole = object()
+    during_exec = staticmethod(lambda: None)
+    choose = "Open official launcher"
+
+    def __init__(self, *args, **kwargs):
+        self._buttons = {}
+        self._clicked = None
+
+    def setIcon(self, *_):
+        pass
+
+    def setWindowTitle(self, *_):
+        pass
+
+    def setText(self, *_):
+        pass
+
+    def setInformativeText(self, *_):
+        pass
+
+    def addButton(self, text, _role):
+        self._buttons[text] = object()
+        return self._buttons[text]
+
+    def exec(self):
+        type(self).during_exec()
+        self._clicked = self._buttons.get(type(self).choose)
+
+    def clickedButton(self):
+        return self._clicked
+
+
+def test_cc_patch_fallback_cannot_skip_the_blocked_guard(monkeypatch, qapp):
+    """The vault can lock while the update-failed box is open. The offer must
+    reach the official launcher through the guarded boundary, never directly."""
+    import PySide6.QtWidgets as qtw
+    import tabs.launch_tab as launch_tab
+
+    tab, _cred = _make_grandstand_launch_tab(
+        monkeypatch, ["a"], blocked=False, game="cc")
+    runner = MagicMock(return_value=True)
+    monkeypatch.setattr(launch_tab, "run_official_cc_launcher", runner)
+    monkeypatch.setattr(launch_tab, "_cc_launch_gate",
+                        lambda _settings, parent=None: True)
+
+    class Box(_FakeMessageBox):
+        during_exec = staticmethod(
+            lambda: tab._set_grandstand_credential_state("blocked"))
+
+    monkeypatch.setattr(qtw, "QMessageBox", Box)
+    try:
+        tab._offer_cc_launcher_fallback("a", "patch failed")
+        runner.assert_not_called()
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_cc_patch_fallback_opens_the_launcher_through_the_boundary(
+        monkeypatch, qapp):
+    """Same offer, nothing changes while the box is open: the launcher runs,
+    with the boundary's own install gate consulted on the way."""
+    import PySide6.QtWidgets as qtw
+    import tabs.launch_tab as launch_tab
+
+    tab, _cred = _make_grandstand_launch_tab(
+        monkeypatch, ["a"], blocked=False, game="cc")
+    runner = MagicMock(return_value=True)
+    gate = MagicMock(return_value=True)
+    monkeypatch.setattr(launch_tab, "run_official_cc_launcher", runner)
+    monkeypatch.setattr(launch_tab, "_cc_launch_gate", gate)
+    monkeypatch.setattr(qtw, "QMessageBox", _FakeMessageBox)
+    try:
+        tab._offer_cc_launcher_fallback("a", "patch failed")
+        gate.assert_called_once()
+        runner.assert_called_once_with(settings_manager=tab.settings_manager)
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+@pytest.mark.parametrize("answer", [("123456", True), ("", False)])
+def test_2fa_prompt_ignores_a_worker_that_superseded_the_asker(
+        monkeypatch, qapp, answer):
+    """A relaunch during the code dialog installs a new worker on the slot.
+    The dialog's answer belongs to the worker that asked: the newcomer must
+    receive neither the token nor a cancellation, and its state must stand."""
+    import tabs.launch_tab as launch_tab
+
+    tab, _cred = _make_grandstand_launch_tab(
+        monkeypatch, ["a"], blocked=False)
+    asker = MagicMock(name="asker")
+    newcomer = MagicMock(name="newcomer")
+    slot = tab._slots["ttr"]["a"]
+    slot.worker = asker
+    slot.state = "logging_in"
+    status = MagicMock(wraps=tab._update_status)
+    tab._update_status = status
+
+    def get_text(*_args, **_kwargs):
+        slot.worker = newcomer
+        return answer
+
+    monkeypatch.setattr(launch_tab.QInputDialog, "getText",
+                        staticmethod(get_text))
+    try:
+        tab._prompt_2fa("ttr", "a", "Two-Factor Authentication required")
+        newcomer.submit_2fa.assert_not_called()
+        newcomer.cancel.assert_not_called()
+        asker.submit_2fa.assert_not_called()
+        asker.cancel.assert_not_called()
+        status.assert_not_called()
+        assert slot.state == "logging_in"
+        assert tab._pending_2fa == set()
+    finally:
+        slot.worker = None
+        tab.shutdown()
+        tab.close()
+
+
+@pytest.mark.parametrize("answer", [("123456", True), ("", False)])
+def test_2fa_prompt_answers_the_worker_that_asked(monkeypatch, qapp, answer):
+    import tabs.launch_tab as launch_tab
+
+    tab, _cred = _make_grandstand_launch_tab(
+        monkeypatch, ["a"], blocked=False)
+    asker = MagicMock(name="asker")
+    slot = tab._slots["ttr"]["a"]
+    slot.worker = asker
+    monkeypatch.setattr(launch_tab.QInputDialog, "getText",
+                        staticmethod(lambda *a, **k: answer))
+    try:
+        tab._prompt_2fa("ttr", "a", "Two-Factor Authentication required")
+        token, ok = answer
+        if ok:
+            asker.submit_2fa.assert_called_once_with(token)
+            asker.cancel.assert_not_called()
+        else:
+            asker.cancel.assert_called_once_with()
+            assert slot.state == "idle"
+            assert slot.message == "2FA cancelled"
+    finally:
+        slot.worker = None
+        tab.shutdown()
+        tab.close()
