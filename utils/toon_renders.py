@@ -37,8 +37,11 @@ class ToonRenders(QObject):
         self.set_promoted = prefetcher.set_promoted
         self.breaker_changed = prefetcher.breaker_changed
         self._lru: "OrderedDict[str, QPixmap]" = OrderedDict()
+        # Landing a pose never clears the LRU: a render is a pure function of its
+        # DNA, a file at a given path is written once, and the only path ever
+        # rewritten is a current set's file after invalidate() -- which already
+        # clears the LRU below.
         prefetcher.set_promoted.connect(lambda g, n: self._lru.clear())
-        prefetcher.render_landed.connect(lambda g, n, p: self._lru.clear())
 
     # ── singleton ─────────────────────────────────────────────────────────
 
