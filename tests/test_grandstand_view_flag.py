@@ -9,7 +9,8 @@ from unittest.mock import MagicMock
 
 from utils.widgets.grandstand.party import LaunchParty
 from utils.widgets.grandstand.view import (
-    HERO_H, SELECTOR_H, STAMP_PREFIX, GrandstandView, grandstand_enabled,
+    HERO_H, MILESTONE, SELECTOR_H, STAMP_PREFIX, GrandstandView,
+    grandstand_enabled,
 )
 
 
@@ -26,12 +27,14 @@ def test_flag_reads_the_env_var(monkeypatch, value, expected):
 
 def test_init_emits_the_startup_stamp(qapp):
     """CLAUDE.local.md running-code proof: never let the operator validate
-    without evidence of which path is live."""
+    without evidence of which path is live. A human greps this exact line
+    during live validation, so it is pinned verbatim, not by prefix."""
     lines = []
     GrandstandView(LaunchParty(None), log=lines.append)
     assert lines, "no stamp emitted"
-    assert lines[0].startswith(STAMP_PREFIX)
-    assert "milestone" in lines[0]
+    assert lines[0] == (
+        f"{STAMP_PREFIX} — TTMT_GRANDSTAND=1 (milestone {MILESTONE})")
+    assert lines[0] == "[Grandstand] view active — TTMT_GRANDSTAND=1 (milestone 1)"
 
 
 def test_stack_fits_the_content_band(qapp):
