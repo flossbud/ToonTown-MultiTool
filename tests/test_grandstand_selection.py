@@ -81,12 +81,14 @@ def test_the_stage_holds_four_and_follows_launch_order(view):
 
 def test_starring_renumbers_the_ribbons_to_match_the_stage(view):
     """Handoff §4.1d: the ribbon shows the toon's stage position, and the
-    star launches first (spec Q3) — so the ribbons follow launch order, not
-    the order the cards were clicked in."""
+    star launches first (spec Q3) — so the ribbons, the hero's names line
+    and the stage all follow launch order, not the order the cards were
+    clicked in. One order everywhere, so the three cannot drift apart."""
     for aid in ("a", "b", "c"):
         _click(view, aid)
     assert [view.shelf.card_for(aid).ribbon_text() for aid in "abc"] == [
         "1", "2", "3"]
+    assert view.hero.names_text() == "Flossbud · Hiro · Katsuro"
 
     view.shelf.card_for("c").star_clicked.emit("c")
 
@@ -94,10 +96,12 @@ def test_starring_renumbers_the_ribbons_to_match_the_stage(view):
         "c", "a", "b"]
     assert [view.shelf.card_for(aid).ribbon_text() for aid in "abc"] == [
         "2", "3", "1"]
+    assert view.hero.names_text() == "Katsuro · Flossbud · Hiro"
 
     view.shelf.card_for("c").star_clicked.emit("c")      # un-star
     assert [view.shelf.card_for(aid).ribbon_text() for aid in "abc"] == [
         "1", "2", "3"]
+    assert view.hero.names_text() == "Flossbud · Hiro · Katsuro"
 
 
 def test_star_sets_the_greeting(view):

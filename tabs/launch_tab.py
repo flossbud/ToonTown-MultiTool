@@ -804,9 +804,15 @@ class LaunchTab(QWidget):
         self._grandstand_credential_kind = kind
         gs.set_credential_state(kind, reason, action_text, on_action)
 
+    def _grandstand_mounted(self) -> bool:
+        """Whether the flagged launcher is the mounted view. Guards that
+        exist only for Grandstand key off this, so the legacy path is
+        byte-for-byte unchanged with the flag unset."""
+        return getattr(self, "grandstand", None) is not None
+
     def _grandstand_launch_is_blocked(self) -> bool:
         """Block only the flagged launcher; the legacy path stays unchanged."""
-        return (getattr(self, "grandstand", None) is not None
+        return (self._grandstand_mounted()
                 and getattr(self, "_grandstand_credential_kind", "ok")
                 == "blocked")
 
@@ -1753,7 +1759,12 @@ class LaunchTab(QWidget):
                 _dbg(f"[Credentials] _on_launch: {game}/{account_id} left the "
                      "roster while the install gate was open")
                 return
-            if (self.is_account_running(game, account_id)
+            # Grandstand never relaunches a live account (Task 13). The
+            # legacy launcher keeps its own behaviour below: a running
+            # account proceeds to the relaunch-terminates branch as it always
+            # has, so this bail is flagged-path only.
+            if self._grandstand_mounted() and (
+                    self.is_account_running(game, account_id)
                     or self._is_in_flight(game, account_id)):
                 _dbg(f"[Credentials] _on_launch: {game}/{account_id} started "
                      "while the install gate was open")
@@ -2041,11 +2052,18 @@ class LaunchTab(QWidget):
         open_btn = box.addButton("Open official launcher", QMessageBox.AcceptRole)
         box.addButton("Cancel", QMessageBox.RejectRole)
         box.exec()
-        # The box ran a nested event loop. Opening the launcher is the same
-        # action as the hero's button, so it takes the same guarded boundary
-        # — credential blocking cannot be skipped by arriving from here.
-        if box.clickedButton() is open_btn and not self._shutting_down:
-            self._on_launcher_clicked("cc")
+        if box.clickedButton() is not open_btn:
+            return
+        if self._grandstand_mounted():
+            # The box ran a nested event loop. On the flagged path opening
+            # the launcher is the same action as the hero's button, so it
+            # takes the same guarded boundary — credential blocking cannot be
+            # skipped by arriving from here.
+            if not self._shutting_down:
+                self._on_launcher_clicked("cc")
+            return
+        if not run_official_cc_launcher(self.settings_manager):
+            self.log("[Launch] Could not start the official CC launcher.")
 
     def _on_login_failed(self, game, account_id, worker, msg):
         slot = self._slots[game].get(account_id)

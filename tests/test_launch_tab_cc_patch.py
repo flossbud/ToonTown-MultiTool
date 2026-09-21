@@ -89,3 +89,58 @@ def test_cc_login_success_aborts_and_offers_launcher_on_failure(monkeypatch, req
 
     assert launcher.launched_with is None
     assert offered and offered[0][0] == "cc-acct" and "files broken" in offered[0][1]
+
+
+class _OpenLauncherBox:
+    """QMessageBox stand-in: the user picks "Open official launcher"."""
+    Warning = object()
+    AcceptRole = object()
+    RejectRole = object()
+
+    def __init__(self, *a, **k):
+        self._buttons = {}
+
+    def setIcon(self, *_):
+        pass
+
+    def setWindowTitle(self, *_):
+        pass
+
+    def setText(self, *_):
+        pass
+
+    def setInformativeText(self, *_):
+        pass
+
+    def addButton(self, text, _role):
+        self._buttons[text] = object()
+        return self._buttons[text]
+
+    def exec(self):
+        pass
+
+    def clickedButton(self):
+        return self._buttons["Open official launcher"]
+
+
+def test_unflagged_fallback_calls_the_runner_directly(monkeypatch, request):
+    """With TTMT_GRANDSTAND unset the offer is what it always was: the runner,
+    called directly with the settings manager, and no install gate — a gate
+    here would prompt on a path that never prompted before."""
+    import PySide6.QtWidgets as qtw
+    monkeypatch.delenv("TTMT_GRANDSTAND", raising=False)
+    tab = _make_tab(monkeypatch, request)
+    assert not hasattr(tab, "grandstand")
+    _seed_slot(tab, _FakeLauncher())
+    runner = []
+    gate = []
+    monkeypatch.setattr(launch_tab, "run_official_cc_launcher",
+                        lambda *args, **kwargs: (runner.append((args, kwargs)), True)[1])
+    monkeypatch.setattr(launch_tab, "_cc_launch_gate",
+                        lambda *args, **kwargs: (gate.append(1), True)[1])
+    monkeypatch.setattr(qtw, "QMessageBox", _OpenLauncherBox)
+
+    tab._offer_cc_launcher_fallback("cc-acct", "files broken")
+
+    assert runner == [((tab.settings_manager,), {})]
+    assert gate == []

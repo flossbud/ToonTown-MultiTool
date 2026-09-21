@@ -1,6 +1,7 @@
 """Play dispatches the party: ordered, staggered, skipping live sessions."""
 import os
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
@@ -570,3 +571,50 @@ def test_shutdown_stops_pending_party_timers(qapp):
     assert tab._party_timers == []
     assert tab._party_gate_ok == set()
     assert tab._party_pending == set()
+
+
+def test_unflagged_running_cc_account_still_reaches_the_relaunch_branch(
+        monkeypatch, qapp, tmp_path):
+    """The legacy launcher (nothing mounted) keeps its base behaviour: a
+    running account that passes the gate proceeds to the relaunch branch,
+    which terminates the game. The flagged launcher's post-gate bail on a
+    live account must not leak into this path."""
+    import tabs.launch_tab as lt
+
+    monkeypatch.setattr(lt, "_cc_launch_gate", lambda sm, parent: True)
+    engine_dir = tmp_path / "cc"
+    engine_dir.mkdir()
+    (engine_dir / lt.get_cc_engine_executable_name()).touch()
+
+    launcher = SimpleNamespace(is_running=lambda: True, kill=MagicMock())
+    tab = lt.LaunchTab.__new__(lt.LaunchTab)
+    QWidget.__init__(tab)
+    assert not hasattr(tab, "grandstand")          # the unflagged shape
+    tab.settings_manager = None
+    tab.window = lambda: None
+    tab._shutting_down = False
+    tab._party_gate_ok = set()
+    tab._party_pending = set()
+    tab._slots = {"ttr": {},
+                  "cc": {"a": SimpleNamespace(worker=None, launcher=launcher)}}
+    tab.is_account_running = lt.LaunchTab.is_account_running.__get__(tab)
+    tab._is_in_flight = lambda game, account_id: False
+    tab._cc_gate_ok = lt.LaunchTab._cc_gate_ok.__get__(tab)
+    tab._global_index_of = lt.LaunchTab._global_index_of.__get__(tab)
+    account = SimpleNamespace(id="a", username="a", password="pw",
+                              launcher_token="token-a", label="a")
+    tab.cred_manager = SimpleNamespace(
+        keyring_probe_pending=False, keyring_available=True,
+        get_accounts_metadata=lambda: [account],
+        get_account=lambda index: account)
+    tab._get_engine_dir = lambda game: str(engine_dir)
+    tab._position_of = lambda game, aid: 1
+    tab._update_status = lambda *args: None
+    tab._show_failure_dialog = lambda *args: None
+    tab._make_launchers = MagicMock()
+    tab.log = lambda message, **kwargs: None
+
+    lt.LaunchTab._on_launch(tab, "cc", "a")
+
+    launcher.kill.assert_called_once_with()
+    tab._make_launchers.assert_not_called()

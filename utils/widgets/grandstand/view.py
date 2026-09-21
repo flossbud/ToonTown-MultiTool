@@ -299,10 +299,10 @@ class GrandstandView(QWidget):
         entries = self._entries[game]
         selected = self._party.selected(game)
         star = self._party.star(game)
-        # One stage order for both surfaces: the ribbon shows the toon's
-        # stage position (handoff §4.1d) and the star launches first (spec
-        # Q3), so ribbons and lineup both read launch_order, never raw
-        # selection order.
+        # One stage order everywhere: the ribbon shows the toon's stage
+        # position (handoff §4.1d) and the star launches first (spec Q3), so
+        # ribbons, the names line and the lineup all read launch_order, never
+        # raw selection order.
         order = self._party.launch_order(game)
 
         self.shelf.set_selection(order, star)
@@ -311,7 +311,7 @@ class GrandstandView(QWidget):
 
         by_id = {e.account_id: e for e in entries}
         self.hero.set_party([
-            (by_id[aid].display_name if aid in by_id else aid) for aid in selected])
+            (by_id[aid].display_name if aid in by_id else aid) for aid in order])
         names = self._main_names.get(game, {})
         self.hero.set_main(names.get(star) if star else None)
         poses = {entry.account_id: entry.pose for entry in entries}
