@@ -1,6 +1,7 @@
 # tests/test_render_prefetcher.py
 """Queue order, in-flight cap, breaker trip/probe/close, signals — with a
 synchronous executor and a scripted downloader. No network."""
+import json
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -193,3 +194,102 @@ def test_corrupt_bytes_count_as_a_failure_not_a_landing(rig, qapp):
     _drain(qapp, pf)
     assert ("ttr", "Hiro", "head") not in landed
     assert "head" in store.missing_poses("ttr", "Hiro", "dna1")
+
+
+def test_a_4xx_probe_probes_the_next_item_instead_of_stranding_the_breaker(rig, qapp):
+    """A 4xx is an answer, not a stall: it cannot close the breaker (only a
+    success may) but it must not leave it open with no probe and no timer."""
+    store, dl, pf, landed, promoted, breaker = rig
+    dl.default = "timeout"
+    pf.discovered("ttr", "Hiro", "dna1")              # one cold pose trips the breaker
+    _drain(qapp, pf)
+    assert pf.breaker_open is True
+    pf.discovered("ttr", "Blue", "dna2")              # queued behind the breaker...
+    pf.want("ttr", "Blue", "head")                    # ...and first in line after the probe
+    dl.outcomes[("dna1", "portrait")] = "client"      # the probe: server refuses the pose
+    dl.default = PNG                                  # everything after it succeeds
+    pf.fire_probe_now()                               # the only manual probe
+    _drain(qapp, pf)
+    assert dl.calls[BREAKER_THRESHOLD] == ("dna1", "portrait")      # the 404 probe
+    assert dl.calls[BREAKER_THRESHOLD + 1] == ("dna2", "head")      # probed next, unprompted
+    assert pf.breaker_open is False
+    assert breaker == [True, False]
+    assert "portrait" not in store.missing_poses("ttr", "Hiro", "dna1")
+    assert store.current_dna("ttr", "Blue") == "dna2"               # queue drained
+    assert pf.pending_count == 0
+
+    # Degenerate: the 404 probe was the only queued item. Nothing is left to
+    # probe and the origin answered, so the breaker closes on an empty queue.
+    store.note_dna("ttr", "Solo", "dna3")
+    for pose in ("head", "waving"):
+        store.mark_failed("ttr", "Solo", "dna3", pose)   # only portrait is missing
+    dl.default = "timeout"
+    pf.discovered("ttr", "Solo", "dna3")
+    _drain(qapp, pf)
+    assert pf.breaker_open is True
+    assert pf.pending_count == 1
+    dl.outcomes[("dna3", "portrait")] = "client"
+    pf.fire_probe_now()
+    _drain(qapp, pf)
+    assert pf.breaker_open is False
+    assert pf.pending_count == 0
+    assert breaker == [True, False, True, False]
+
+
+def test_probe_timer_re_arms_while_a_straggler_is_in_flight(qapp, tmp_path):
+    """Open with a download still out: the probe timer must never be left
+    stopped with no probe in flight — that state can only be woken by hand."""
+    store = ToonRenderStore(str(tmp_path), poses=POSES)
+    submitted = []
+
+    class _Hold:
+        def submit(self, fn, *a):
+            submitted.append(a)
+            return Future()
+
+    pf = RenderPrefetcher(store, downloader=_Downloader(), executor=_Hold(), max_in_flight=2)
+    pf.discovered("ttr", "Hiro", "dna1")             # portrait + head in flight, waving queued
+    straggler = submitted[0]
+    timeout = DownloadError("timeout")
+    for _ in range(BREAKER_THRESHOLD):                # head fails three times -> open
+        pf._on_result("ttr", "Hiro", "dna1", "head", None, timeout)
+    assert pf.breaker_open is True
+    assert pf.in_flight_count == 1                    # the straggler is still out
+    assert pf._probe.isActive()
+    pf.fire_probe_now()                               # timer fires with the straggler out
+    assert pf._probe.isActive()                       # re-armed, not dropped
+    pf._on_result(*straggler, None, timeout)          # the straggler fails too
+    assert pf.breaker_open is True
+    assert pf.in_flight_count == 0
+    assert pf._probe.isActive()
+    assert not (pf.breaker_open and not pf._probe.isActive() and pf._probe_key is None)
+
+
+def test_outfit_change_mid_download_purges_and_ignores_the_old_dna(qapp, tmp_path):
+    """The store dropped set A the moment B was noted; the prefetcher must not
+    fetch A's remaining poses ahead of B nor write A's in-flight bytes back."""
+    store = ToonRenderStore(str(tmp_path), poses=POSES)
+    submitted = []
+
+    class _Hold:
+        def submit(self, fn, *a):
+            submitted.append(a)
+            return Future()
+
+    pf = RenderPrefetcher(store, downloader=_Downloader(), executor=_Hold(), max_in_flight=1)
+    landed = []
+    pf.render_landed.connect(lambda g, n, p: landed.append((g, n, p)))
+    pf.discovered("ttr", "Hiro", "dnaA")             # A/portrait in flight, A/head + A/waving queued
+    assert [a[2] for a in submitted] == ["dnaA"]
+    pf.discovered("ttr", "Hiro", "dnaB")             # outfit changed before A finished
+    assert store.candidate_dna("ttr", "Hiro") == "dnaB"
+    assert all(k[2] == "dnaB" for k in pf._queue)    # A's queued work is gone
+    assert pf.pending_count == len(POSES)
+    # A's held download lands: real bytes for an outfit the store no longer tracks.
+    pf._on_result(*submitted[0], PNG, None)
+    toon_dir = store.toon_dir("ttr", "Hiro")
+    assert not os.path.isdir(os.path.join(toon_dir, "dnaA"))
+    with open(os.path.join(toon_dir, "manifest.json")) as f:
+        assert "dnaA" not in json.load(f)["sets"]
+    assert landed == []
+    assert submitted[1][2] == "dnaB"                  # the pump moved on to B

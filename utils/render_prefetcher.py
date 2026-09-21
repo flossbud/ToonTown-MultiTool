@@ -75,6 +75,7 @@ class RenderPrefetcher(QObject):
 
     def invalidate(self, game: str, name: str) -> None:
         dna = self._store.invalidate(game, name)
+        self._purge_stale(game, name)
         if dna:
             self._enqueue_missing(game, name, dna, PRIORITY_WANT)
 
@@ -101,10 +102,26 @@ class RenderPrefetcher(QObject):
     def _enqueue_missing(self, game: str, name: str, dna: str, priority: int) -> None:
         if not dna or not name:
             return
-        if self._store.note_dna(game, name, dna) == "current":
+        status = self._store.note_dna(game, name, dna)
+        # note_dna may have dropped a half-fetched candidate — on a new outfit
+        # AND on a swap back to the previous one. Its queued poses would only
+        # resurrect an orphan set, and ahead of the new outfit's work.
+        self._purge_stale(game, name)
+        if status == "current":
             return
         for pose in self._store.missing_poses(game, name, dna):
             self._enqueue((game, name, dna, pose), priority)
+
+    def _live(self, game: str, name: str) -> set[Optional[str]]:
+        """The DNAs the store still tracks for this toon; anything else is a
+        superseded outfit whose bytes must not touch disk or the manifest."""
+        return {self._store.current_dna(game, name), self._store.candidate_dna(game, name)}
+
+    def _purge_stale(self, game: str, name: str) -> None:
+        """Drop queued work for outfits the store no longer tracks for this toon."""
+        live = self._live(game, name)
+        for key in [k for k in self._queue if k[0] == game and k[1] == name and k[2] not in live]:
+            del self._queue[key]
 
     def _enqueue(self, key: _Key, priority: int) -> None:
         if key in self._in_flight:
@@ -157,8 +174,18 @@ class RenderPrefetcher(QObject):
         self._in_flight.discard(key)
         was_probe = key == self._probe_key
         self._probe_key = None
+        # The outfit changed while this was out: the store already dropped the
+        # set. The bytes are worthless but the origin did answer, so the
+        # breaker bookkeeping below still counts the result as evidence.
+        stale = dna not in self._live(game, name)
 
         if err is None:
+            if stale:
+                self._consecutive = 0
+                if self._open:
+                    self._close_breaker()
+                self._pump()
+                return
             path = self._store.path_for(game, name, dna, pose)
             tmp = path + ".part"
             try:
@@ -185,20 +212,27 @@ class RenderPrefetcher(QObject):
                     return
                 err = DownloadError("server", None, "body was not a valid PNG")
 
-        if err.kind == "client":
-            self._store.mark_failed(game, name, dna, pose)
+        if err.kind not in BREAKER_KINDS:          # a 4xx: the server refused this pose
+            if not stale:
+                self._store.mark_failed(game, name, dna, pose)
             self._consecutive = 0
-            self._pump()
+            if self._open:
+                self.fire_probe_now()               # answered ⇒ probe the next item now
+            else:
+                self._pump()
             return
 
         # A breaker event (timeout / 5xx / other): keep the work, count it.
-        self._enqueue_silently(key)
+        if not stale:
+            self._enqueue_silently(key)
         self._consecutive += 1
         if was_probe:
             self._backoff_i = min(self._backoff_i + 1, len(self._backoff) - 1)
             self._schedule_probe()
         elif not self._open and self._consecutive >= BREAKER_THRESHOLD:
             self._open_breaker()
+        elif self._open:
+            self._ensure_probe()                    # a straggler: nothing else will re-arm
         else:
             self._pump()
 
@@ -225,11 +259,22 @@ class RenderPrefetcher(QObject):
     def _schedule_probe(self) -> None:
         self._probe.start(self._backoff[self._backoff_i] * 1000)
 
+    def _ensure_probe(self) -> None:
+        """Open ⇒ a probe is in flight or the timer is armed. Restores that after
+        any result that is not itself the probe."""
+        if self._open and self._probe_key is None and not self._probe.isActive():
+            self._schedule_probe()
+
     def fire_probe_now(self) -> None:
         """Send exactly one queued download past the open breaker. On success
         the breaker closes and the queue drains; on failure the backoff grows."""
         self._probe.stop()
-        if not self._open or self._in_flight:
+        if not self._open:
+            return
+        if self._in_flight:
+            # A straggler is still out. Do not drop the probe on the floor —
+            # re-arm at the current backoff and try again.
+            self._schedule_probe()
             return
         key = self._next_key()
         if key is None:
