@@ -10,7 +10,7 @@ from collections import OrderedDict
 from typing import Iterable, Optional
 
 from PySide6.QtCore import QObject
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QImage, QPixmap
 
 from utils.render_prefetcher import RenderPrefetcher
 from utils.toon_render_store import ToonRenderStore
@@ -68,7 +68,11 @@ class ToonRenders(QObject):
         path, tier = hit
         pm = self._lru.get(path)
         if pm is None:
-            pm = QPixmap(path)
+            # QPixmap(path) consults Qt's own name+mtime+size decode cache, which
+            # can serve stale pixels after invalidate() rewrites this same path
+            # within the same wall-clock second; QImage has no such cache.
+            img = QImage(path)
+            pm = QPixmap.fromImage(img)
             if pm.isNull():
                 # Signature passed but the decoder did not: treat as missing so
                 # the prefetcher fetches it again rather than serving a blank.

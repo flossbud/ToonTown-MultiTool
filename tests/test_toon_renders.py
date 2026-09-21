@@ -93,6 +93,23 @@ def test_a_second_lookup_is_served_from_the_lru_not_the_disk(facade):
     assert pm2.toImage().pixelColor(0, 0) == QColor("#ff0000")
 
 
+def test_pixmap_for_never_serves_qts_own_stale_decode_after_a_same_second_rewrite(facade):
+    f, store, _ = facade
+    _complete(store, "ttr", "Hiro", "dna1", "#ff0000")
+    pm1, _ = f.pixmap_for("ttr", "Hiro", "head")
+    assert pm1.toImage().pixelColor(0, 0) == QColor("#ff0000")
+
+    f._lru.clear()                                           # what invalidate() does to us
+
+    # Same path, same size -- the only thing that changes is the bytes. If the
+    # decoder still went through QPixmap(path), Qt's own name+mtime+size cache
+    # could serve the stale red pixels back here regardless of our LRU.
+    path = store.path_for("ttr", "Hiro", "dna1", "head")
+    _real_png(path, "#00ff00")
+    pm2, _ = f.pixmap_for("ttr", "Hiro", "head")
+    assert pm2.toImage().pixelColor(0, 0) == QColor("#00ff00")
+
+
 def test_the_lru_holds_at_most_64_entries_and_evicts_the_oldest(qapp, tmp_path):
     # The 2-pose fixture store can't reach 64 entries; build one on the real
     # 13-pose contract so 5 toons produce 65 distinct paths.
