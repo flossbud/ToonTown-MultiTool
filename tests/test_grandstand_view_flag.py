@@ -166,6 +166,37 @@ def test_populated_demo_fixtures_feed_the_grandstand_shelf(
         tab.close()
 
 
+def test_starring_restyles_the_shelf_without_rebuilding_it(qapp, monkeypatch):
+    """A star click is a refresh, not a render: the party persists the star
+    itself, so rebuilding every card would only discard hover and focus."""
+    from types import SimpleNamespace
+    monkeypatch.setenv("TTMT_GRANDSTAND", "1")
+    from tabs.launch_tab import LaunchTab
+
+    monkeypatch.setattr(LaunchTab, "_start_keyring_probe", lambda self: None)
+    accounts = [
+        SimpleNamespace(id=aid, game="ttr", label=aid, username=aid,
+                        password="pw", launcher_token="")
+        for aid in ("a", "b")
+    ]
+    cred = MagicMock(keyring_available=True, keyring_probe_pending=False)
+    cred.get_accounts_metadata.return_value = accounts
+    settings = MagicMock()
+    settings.get.side_effect = lambda _key, default=None: default
+    tab = LaunchTab(cred_manager=cred, settings_manager=settings)
+    try:
+        before = tab.grandstand.shelf.card_for("a")
+        before.clicked.emit("a")
+        before.star_clicked.emit("a")
+        after = tab.grandstand.shelf.card_for("a")
+        assert after is before
+        assert after.is_starred() is True
+        assert tab._party.star("ttr") == "a"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
 def test_layout_mode_keeps_the_old_launcher_when_flag_is_off(qapp, monkeypatch):
     """The legacy launcher retains compact/full switching until cut-over."""
     monkeypatch.delenv("TTMT_GRANDSTAND", raising=False)

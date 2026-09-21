@@ -79,6 +79,27 @@ def test_the_stage_holds_four_and_follows_launch_order(view):
         "c", "a", "b", "d"]
 
 
+def test_starring_renumbers_the_ribbons_to_match_the_stage(view):
+    """Handoff §4.1d: the ribbon shows the toon's stage position, and the
+    star launches first (spec Q3) — so the ribbons follow launch order, not
+    the order the cards were clicked in."""
+    for aid in ("a", "b", "c"):
+        _click(view, aid)
+    assert [view.shelf.card_for(aid).ribbon_text() for aid in "abc"] == [
+        "1", "2", "3"]
+
+    view.shelf.card_for("c").star_clicked.emit("c")
+
+    assert [s.account_id for s in view.hero.crew_area.slots()] == [
+        "c", "a", "b"]
+    assert [view.shelf.card_for(aid).ribbon_text() for aid in "abc"] == [
+        "2", "3", "1"]
+
+    view.shelf.card_for("c").star_clicked.emit("c")      # un-star
+    assert [view.shelf.card_for(aid).ribbon_text() for aid in "abc"] == [
+        "1", "2", "3"]
+
+
 def test_star_sets_the_greeting(view):
     view.set_main_toon_names("ttr", {"b": "Hiro"})
     view.shelf.card_for("b").star_clicked.emit("b")

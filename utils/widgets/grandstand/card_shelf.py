@@ -238,7 +238,8 @@ class CardShelf(QWidget):
 
     def set_selection(self, selected_ids: list, star_id: Optional[str]) -> None:
         """Paint membership and stage position. Position is 1-based and follows
-        the selection order, which is the stage order."""
+        `selected_ids` as given — the caller passes the stage order (the
+        party's launch order, star first); the shelf never reorders it."""
         for aid, card in self._cards.items():
             selected = aid in selected_ids
             card.set_selected(selected)

@@ -1155,8 +1155,9 @@ class LaunchTab(QWidget):
 
         self.grandstand = GrandstandView(self._party, log=self.log, parent=self)
         self._push_credential_state()
-        self.grandstand.star_changed.connect(
-            lambda g, a: self._render_grandstand(g))
+        # star_changed needs no handler here: LaunchParty persists the star
+        # and the view restyles its own surfaces; a rerender would only
+        # rebuild every card and drop hover/focus.
         self.grandstand.add_account_requested.connect(self._on_add_account)
         self.grandstand.manage_requested.connect(self._on_reorder)
         self.grandstand.game_changed.connect(self._render_grandstand)

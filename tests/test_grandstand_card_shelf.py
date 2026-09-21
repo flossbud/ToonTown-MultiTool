@@ -71,6 +71,9 @@ def test_rebuilding_reuses_nothing_stale(shelf):
 
 
 def test_selection_marks_cards_and_numbers_them(shelf):
+    """The shelf numbers the list it is handed, in that order: the caller
+    passes the stage order (LaunchParty.launch_order, star first). The star
+    id here is decoration only — the shelf never reorders around it."""
     shelf.set_entries([_entry("a"), _entry("b"), _entry("c")])
     shelf.set_selection(["c", "a"], star_id="a")
     assert shelf.card_for("c").is_selected() is True

@@ -299,8 +299,13 @@ class GrandstandView(QWidget):
         entries = self._entries[game]
         selected = self._party.selected(game)
         star = self._party.star(game)
+        # One stage order for both surfaces: the ribbon shows the toon's
+        # stage position (handoff §4.1d) and the star launches first (spec
+        # Q3), so ribbons and lineup both read launch_order, never raw
+        # selection order.
+        order = self._party.launch_order(game)
 
-        self.shelf.set_selection(selected, star)
+        self.shelf.set_selection(order, star)
         self.shelf.set_links_enabled(
             clear_selection=bool(selected), clear_main=star is not None)
 
@@ -310,8 +315,7 @@ class GrandstandView(QWidget):
         names = self._main_names.get(game, {})
         self.hero.set_main(names.get(star) if star else None)
         poses = {entry.account_id: entry.pose for entry in entries}
-        self.hero.set_lineup(
-            lineup_entries(entries, self._party.launch_order(game), poses=poses))
+        self.hero.set_lineup(lineup_entries(entries, order, poses=poses))
 
     def _on_play(self) -> None:
         if self.is_credential_blocked():
