@@ -107,12 +107,47 @@ def test_discovery_reaches_the_prefetcher_with_the_windows_game(facade, qapp, mo
     tab = mt.MultitoonTab.__new__(mt.MultitoonTab)
     tab._toon_capture_sink = None
     tab._last_captured_toon = {}
+    tab._render_seen = {}
     seen = []
     monkeypatch.setattr(f, "discovered", lambda g, n, d: seen.append((g, n, d)))
     mt.MultitoonTab._capture_account_toon(tab, "0x1", "Hiro", "dna1", laff=10)
     assert seen == [("ttr", "Hiro", "dna1")]
     mt.MultitoonTab._capture_account_toon(tab, "0x1", "Hiro", "", laff=10)   # no dna: nothing
     assert seen == [("ttr", "Hiro", "dna1")]
+
+
+def test_discovery_hook_skips_the_window_lookup_on_unchanged_polls(facade, qapp, monkeypatch):
+    f, store, pf, tmp_path = facade
+    from tabs.multitoon import _tab as mt
+    from utils.game_registry import GameRegistry
+    monkeypatch.setattr(GameRegistry, "pid_for_window", staticmethod(lambda wid: None))
+    monkeypatch.setattr(f, "discovered", lambda g, n, d: None)
+    tab = mt.MultitoonTab.__new__(mt.MultitoonTab)
+    tab._toon_capture_sink = None
+    tab._last_captured_toon = {}
+    tab._render_seen = {}
+
+    calls = []
+    monkeypatch.setattr(GameRegistry.instance(), "get_game_for_window",
+                        lambda wid: (calls.append(wid), "ttr")[1])
+
+    mt.MultitoonTab._capture_account_toon(tab, "0x1", "Hiro", "dna1", laff=10)
+    mt.MultitoonTab._capture_account_toon(tab, "0x1", "Hiro", "dna1", laff=10)
+    mt.MultitoonTab._capture_account_toon(tab, "0x1", "Hiro", "dna1", laff=10)
+    assert len(calls) == 1                                     # unchanged: memoised, no lookup
+
+    mt.MultitoonTab._capture_account_toon(tab, "0x1", "Hiro", "dna2", laff=10)
+    assert len(calls) == 2                                     # new outfit: looked up again
+
+    mt.MultitoonTab._capture_account_toon(tab, "0x2", "Hiro", "dna2", laff=10)
+    assert len(calls) == 3                                     # same toon/dna, different window
+
+    none_calls = []
+    monkeypatch.setattr(GameRegistry.instance(), "get_game_for_window",
+                        lambda wid: (none_calls.append(wid), None)[1])
+    mt.MultitoonTab._capture_account_toon(tab, "0x3", "Hiro", "dna3", laff=10)
+    mt.MultitoonTab._capture_account_toon(tab, "0x3", "Hiro", "dna3", laff=10)
+    assert len(none_calls) == 2                                # a None resolution is never memoised
 
 
 def test_discovered_is_memoised_per_toon_until_the_dna_changes(facade):

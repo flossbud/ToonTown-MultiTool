@@ -1532,6 +1532,8 @@ class MultitoonTab(QWidget):
         # Per-window dedup of the last captured (toon_name, dna) so an unchanged
         # toon skips the synchronous pid_for_window X round-trip + sink call.
         self._last_captured_toon: dict[str, tuple[str, str]] = {}
+        # wid -> (toon, dna) already handed to the render cache; skips the PID lookup on unchanged polls
+        self._render_seen: dict[str, tuple[str, str]] = {}
 
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(5000)
@@ -3514,11 +3516,14 @@ class MultitoonTab(QWidget):
         # not depend on whether this instance launched the window.
         if toon_name and dna:
             try:
-                from utils.game_registry import GameRegistry
-                from utils.toon_renders import ToonRenders
-                game = GameRegistry.instance().get_game_for_window(str(wid))
-                if game in ("ttr", "cc"):
-                    ToonRenders.instance().discovered(game, toon_name, dna)
+                render_key = str(wid)
+                if self._render_seen.get(render_key) != (toon_name, dna):
+                    from utils.game_registry import GameRegistry
+                    from utils.toon_renders import ToonRenders
+                    game = GameRegistry.instance().get_game_for_window(render_key)
+                    if game in ("ttr", "cc"):
+                        ToonRenders.instance().discovered(game, toon_name, dna)
+                        self._render_seen[render_key] = (toon_name, dna)
             except Exception as exc:                     # noqa: BLE001
                 print(f"[ToonRenders] discovery hook failed: {exc}")
         if not self._toon_capture_sink or not toon_name:
