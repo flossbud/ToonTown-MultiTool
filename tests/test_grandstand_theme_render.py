@@ -20,6 +20,7 @@ from utils import theme_manager
 from utils.rendition_poses import RenditionPoseFetcher
 from utils.widgets.grandstand import palette as gp
 from utils.widgets.grandstand.card_shelf import CardShelf
+from utils.widgets.grandstand.game_selector import GameSelector
 from utils.widgets.grandstand.hero_stage import COPY_LEFT, HeroStage
 from utils.widgets.grandstand.model import RosterEntry
 
@@ -82,6 +83,80 @@ def test_hero_copy_container_does_not_paint_the_app_background(themed_app):
         f"{theme}: copy container painted {probe.name()} over hero base "
         f"{base.name()}")
     hero.close()
+
+
+def _label_probe(label, host):
+    """A glyph-free pixel inside `label`, in `host` coordinates: the right
+    end of the rect at mid-height. Every label probed here is left-aligned
+    and narrower than its rect, so its right end holds no text."""
+    origin = label.mapTo(host, label.rect().topLeft())
+    return origin.x() + label.width() - 4, origin.y() + label.height() // 2
+
+
+def _bare_pixel(host, widget, w, h, x, y):
+    """The pixel at (x, y) with `widget` hidden but its layout slot kept, so
+    nothing reflows onto the probe and the only difference is the widget's
+    own paint."""
+    policy = widget.sizePolicy()
+    policy.setRetainSizeWhenHidden(True)
+    widget.setSizePolicy(policy)
+    widget.hide()
+    try:
+        return _render(host, w, h).pixelColor(x, y)
+    finally:
+        widget.show()
+
+
+@pytest.mark.parametrize("label_name", ["greeting", "names"])
+def test_hero_labels_do_not_paint_the_app_background(themed_app, label_name):
+    """The live defect one level below the copy container: QLabel is a
+    styled-background widget, so without its own `background: transparent`
+    the app's global QWidget rule paints each hero label as an opaque box
+    (#1a1a1a dark, near-white light) over the art. The copy-container probe
+    sits below both labels, which is why it never saw this."""
+    _qapp, theme = themed_app
+    hero = HeroStage()
+    hero.set_game("ttr")
+    hero.set_party(["Flossbud"])           # a short names line: "Flossbud"
+    label = getattr(hero, label_name)
+    img = _render(hero, 818, 232)
+    x, y = _label_probe(label, hero)
+    text_w = label.fontMetrics().horizontalAdvance(label.text())
+    assert text_w < label.width() - 8, "probe would land on a glyph"
+    face = img.pixelColor(x, y)
+    bare = _bare_pixel(hero, label, 818, 232, x, y)
+
+    base = gp.hero_base("ttr", theme == "dark")
+    assert bare != Qt.magenta and face != Qt.magenta
+    assert _distance(face, bare) < 4, (
+        f"{theme}: {label_name} painted {face.name()} over the hero's "
+        f"{bare.name()} at ({x},{y})")
+    assert _distance(face, base) < 60, (
+        f"{theme}: {label_name} at ({x},{y}) reads {face.name()}, not the "
+        f"hero base {base.name()}")
+    hero.close()
+
+
+def test_selector_logo_labels_do_not_paint_the_app_background(themed_app):
+    """Same class of defect on the game selector: the logo is a pixmap
+    QLabel with no stylesheet, so the global rule squared it off over the
+    card art. Probe a corner of the label, clear of the centred logo."""
+    _qapp, theme = themed_app
+    selector = GameSelector()
+    img = _render(selector, 818, 72)
+    cards = [c for c in selector.children() if hasattr(c, "_logo")]
+    assert len(cards) == 2
+    for card in cards:
+        logo = card._logo
+        origin = logo.mapTo(selector, logo.rect().topLeft())
+        x, y = origin.x() + 1, origin.y() + 1
+        face = img.pixelColor(x, y)
+        bare = _bare_pixel(selector, logo, 818, 72, x, y)
+        assert bare != Qt.magenta and face != Qt.magenta
+        assert _distance(face, bare) < 4, (
+            f"{theme}: {card.game()} logo painted {face.name()} over the "
+            f"card's {bare.name()} at ({x},{y})")
+    selector.close()
 
 
 def test_shelf_containers_do_not_paint_the_app_background(themed_app,

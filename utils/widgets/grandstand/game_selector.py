@@ -77,6 +77,9 @@ class GameCard(QFrame):
                 LOGO_PX, LOGO_PX, Qt.KeepAspectRatio,
                 Qt.SmoothTransformation))
         self._logo.setFixedSize(LOGO_PX, LOGO_PX)
+        # A pixmap label is still a QLabel: without this the app's global
+        # QWidget background rule paints a square behind the logo.
+        self._logo.setStyleSheet("background: transparent;")
         row.addWidget(self._logo, 0, Qt.AlignVCenter)
 
         col = QVBoxLayout()

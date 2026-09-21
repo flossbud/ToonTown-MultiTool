@@ -180,14 +180,19 @@ class HeroStage(QFrame):
     def apply_theme(self, is_dark: bool) -> None:
         self._is_dark = is_dark
         ink = gp.hero_ink(is_dark)
+        # Every label carries `background: transparent`: QLabel is styled-
+        # background, so the app's global `QWidget { background-color }` rule
+        # would otherwise paint each one as an opaque box over the hero art
+        # (the copy container's rule does not reach its children).
         self.greeting.setStyleSheet(
             f"color: {ink['greeting'].name()}; font-family: 'Fredoka';"
-            " font-size: 29px; font-weight: 700;")
+            " font-size: 29px; font-weight: 700; background: transparent;")
         self.names.setStyleSheet(
-            f"color: {ink['names'].name(QColor.HexArgb)}; font-size: 12px;")
+            f"color: {ink['names'].name(QColor.HexArgb)}; font-size: 12px;"
+            " background: transparent;")
         self.blocked_label.setStyleSheet(
             f"color: {ink['blocked'].name()}; font-size: 14px;"
-            " font-weight: 600;")
+            " font-weight: 600; background: transparent;")
         g = gp.hero_ghost_button(is_dark)
         ghost = (f" background: {g['bg'].name(QColor.HexArgb)};"
                  f" color: {g['ink'].name()};"
