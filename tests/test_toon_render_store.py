@@ -196,6 +196,19 @@ def test_an_abandoned_candidate_is_deleted_when_superseded(store):
     assert store.candidate_dna("ttr", "Hiro") == DNA2
 
 
+def test_swapping_back_to_previous_deletes_an_outfit_mid_download(store):
+    for dna in (DNA1, DNA2):
+        store.note_dna("ttr", "Hiro", dna)
+        _land_all(store, "ttr", "Hiro", dna)
+        store.promote_if_complete("ttr", "Hiro")
+    store.note_dna("ttr", "Hiro", "74000101cc")            # third outfit, partial
+    _png(store.path_for("ttr", "Hiro", "74000101cc", "head"))
+    assert store.note_dna("ttr", "Hiro", DNA1) == "current" # swap straight back
+    d = store.toon_dir("ttr", "Hiro")
+    assert not os.path.isdir(os.path.join(d, "74000101cc"))
+    assert os.path.isdir(os.path.join(d, DNA1)) and os.path.isdir(os.path.join(d, DNA2))
+
+
 def test_an_unreadable_file_logs_once_but_an_absent_one_does_not(store, capsys):
     store.note_dna("ttr", "Hiro", DNA1)
     assert store.lookup("ttr", "Hiro", "head") is None       # absent: silent

@@ -145,6 +145,8 @@ class ToonRenderStore:
         if dna == m.get("current"):
             return "current"
         if dna == m.get("previous") and self._set_complete(d, m, dna):
+            # Swapping back supersedes any outfit that was mid-download too.
+            self._drop_set(d, m, m.get("candidate"))
             m["previous"], m["current"] = m["current"], dna
             m["candidate"] = None
             self._write_manifest(d, m)
@@ -171,8 +173,7 @@ class ToonRenderStore:
     def mark_landed(self, game: str, name: str, dna: str, pose: str) -> bool:
         d, m = self._manifest(game, name)
         path = os.path.join(d, dna, f"{pose}.png")
-        if not self._valid_png(path):
-            self._warn(f"{game}/{name}/{dna}/{pose}: not a valid PNG, treated as missing")
+        if not self._valid_png(path):          # _valid_png logs the fault itself
             return False
         rec = self._set_record(m, dna)
         if pose not in rec["landed"]:
