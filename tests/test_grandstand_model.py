@@ -135,15 +135,24 @@ def test_lineup_is_capped_at_four_slots():
 
 @pytest.mark.parametrize("pose", ["waving", "crying", "cake-topper"])
 def test_full_body_pose_stands(pose):
-    entries = [_entry("a")]
-    standing = gm.lineup_entries(entries, ["a"], poses={"a": pose})
+    entries = [_entry("a", customization={"pose": pose})]
+    standing = gm.lineup_entries(entries, ["a"])
     assert standing[0].treatment == "standing"
 
 
 def test_bust_pose_does_not_stand():
-    entries = [_entry("a")]
-    bust = gm.lineup_entries(entries, ["a"], poses={"a": "portrait-grin"})
+    entries = [_entry("a", customization={"pose": "portrait-grin"})]
+    bust = gm.lineup_entries(entries, ["a"])
     assert bust[0].treatment == "bust"
+
+
+def test_the_entry_pose_is_the_only_pose_the_lineup_reads():
+    """One mechanism carries the pose: roster_entry resolves it, the lineup
+    reads it back. No side channel may supply a different one."""
+    import inspect
+    assert "poses" not in inspect.signature(gm.lineup_entries).parameters
+    entry = _entry("a", customization={"pose": "waving"})
+    assert gm.lineup_entries([entry], ["a"])[0].pose == entry.pose == "waving"
 
 
 def test_species_account_becomes_a_cameo_with_its_race_icon():

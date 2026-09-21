@@ -132,8 +132,8 @@ def roster_entry(*, account_id: str, game: str, label: str, username: str,
     )
 
 
-def lineup_entries(entries: list[RosterEntry], order: list[str],
-                   poses: Optional[dict] = None) -> list[LineupEntry]:
+def lineup_entries(entries: list[RosterEntry],
+                   order: list[str]) -> list[LineupEntry]:
     """Resolve the hero lineup for one launch order.
 
     Two rules from README Q7 live here: the stage holds LINEUP_SLOTS toons, and
@@ -156,9 +156,9 @@ def lineup_entries(entries: list[RosterEntry], order: list[str],
 
     out: list[LineupEntry] = []
     for e in chosen:
-        pose = resolve_pose({
-            "pose": (poses or {}).get(e.account_id, e.pose),
-        })
+        # The entry's pose was resolved once in roster_entry; it is the one
+        # source of truth for both the card and the stage.
+        pose = e.pose
         if e.toon_name is None:
             treatment, stem = "placeholder", None
         elif e.portrait_mode == PORTRAIT_SPECIES:

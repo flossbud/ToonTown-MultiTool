@@ -155,21 +155,33 @@ def test_disabled_play_renders_translucent_under_the_real_stylesheet(
         themed_app):
     """The alpha-loss defect painted a solid white Play with an invisible
     label. Under the real stylesheet the disabled button must let the hero
-    show through, so its face is nowhere near opaque white."""
+    show through: its face is a white wash over the backdrop, so it reads
+    lighter than the bare backdrop at the same pixel yet nowhere near opaque
+    white. Both bounds matter — "not white" alone also holds for a button
+    that paints no face at all."""
     _qapp, theme = themed_app
     hero = HeroStage()
     hero.set_game("ttr")
     hero.set_party([])
     assert hero.play_enabled() is False
-    img = _render(hero, 818, 232)
     button = hero.play_button
+    img = _render(hero, 818, 232)
     origin = button.mapTo(hero, button.rect().topLeft())
     # Inside the border, left of the label: face colour only.
-    probe = img.pixelColor(origin.x() + 8, origin.y() + button.height() // 2)
+    x, y = origin.x() + 8, origin.y() + button.height() // 2
+    face = img.pixelColor(x, y)
+
+    button.hide()
+    bare = _render(hero, 818, 232).pixelColor(x, y)
+    button.show()
+
     white = QColor("#ffffff")
-    assert _distance(probe, white) > 300, (
-        f"{theme}: disabled Play face painted {probe.name()}")
-    assert probe != Qt.magenta
+    assert bare != Qt.magenta and face != Qt.magenta
+    assert _distance(face, white) > 300, (
+        f"{theme}: disabled Play face painted {face.name()}")
+    assert _distance(face, QColor("#000000")) > _distance(bare, QColor("#000000")), (
+        f"{theme}: disabled Play face {face.name()} is no lighter than the "
+        f"bare backdrop {bare.name()} — nothing was painted")
     hero.close()
 
 

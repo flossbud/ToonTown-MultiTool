@@ -352,6 +352,72 @@ def test_capture_repaints_a_toonless_card_and_lineup(monkeypatch, qapp):
         tab.close()
 
 
+def _recent_toons_store():
+    from utils.recent_toons import RecentToonsStore
+    values = {}
+    return RecentToonsStore(SimpleNamespace(
+        get=lambda key, default=None: values.get(key, default),
+        set=lambda key, value: values.__setitem__(key, value)))
+
+
+def test_capture_repaints_only_when_it_changes_what_the_card_shows(
+        monkeypatch, qapp):
+    """Captures arrive on every laff tick of every running toon. A rebuild on
+    each one would discard hover and focus mid-play (the discipline Finding
+    7(b) restored), so only a capture that changes a drawn value repaints."""
+    from utils.toon_capture_bridge import ToonCaptureBridge
+
+    tab, _cred = _make_grandstand_launch_tab(
+        monkeypatch, ["a"], blocked=False)
+    try:
+        tab._recent_toons = _recent_toons_store()
+        tab._toon_bridge = ToonCaptureBridge(tab._recent_toons)
+        tab._render_current_view("ttr")
+        tab._toon_bridge.record_launch(4242, "ttr", "a")
+
+        tab.capture_toon(4242, "Flossbud", "7400", species="cat", laff=15)
+        card = tab.grandstand.shelf.card_for("a")
+        assert card.name_text() == "Flossbud"
+
+        tab.capture_toon(4242, "Flossbud", "7400", species="cat", laff=16)
+        assert tab.grandstand.shelf.card_for("a") is card       # laff only
+        assert tab._recent_toons.get("a").laff == 16            # still recorded
+
+        tab.capture_toon(4242, "Hiro", "7401", species="dog", laff=16)
+        after = tab.grandstand.shelf.card_for("a")
+        assert after is not card
+        assert after.name_text() == "Hiro"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_unflagged_capture_records_without_repainting(monkeypatch, qapp):
+    """The legacy launcher painted nothing on capture; its tiles are rebuilt
+    by set_page, so a repaint per laff tick would thrash them."""
+    from utils.toon_capture_bridge import ToonCaptureBridge
+
+    tab, _cred = _make_launch_tab(
+        monkeypatch, ["a"], blocked=False, flagged=False)
+    try:
+        assert not hasattr(tab, "grandstand")
+        tab._recent_toons = _recent_toons_store()
+        tab._toon_bridge = ToonCaptureBridge(tab._recent_toons)
+        tab._toon_bridge.record_launch(4242, "ttr", "a")
+        render_section = MagicMock()
+        tab._render_section = render_section
+        tab._render_grandstand = MagicMock()
+
+        tab.capture_toon(4242, "Flossbud", "7400", species="cat", laff=15)
+
+        render_section.assert_not_called()
+        tab._render_grandstand.assert_not_called()
+        assert tab._recent_toons.get("a").toon_name == "Flossbud"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
 # ── theme ───────────────────────────────────────────────────────────────────
 
 def test_theme_switch_reaches_every_surface(view, monkeypatch):
@@ -553,7 +619,18 @@ def test_blocked_credentials_guard_official_launcher_at_runner_boundary(
 
 def _make_grandstand_launch_tab(monkeypatch, account_ids, *, blocked,
                                 game="ttr"):
-    monkeypatch.setenv("TTMT_GRANDSTAND", "1")
+    return _make_launch_tab(monkeypatch, account_ids, blocked=blocked,
+                            game=game, flagged=True)
+
+
+def _make_launch_tab(monkeypatch, account_ids, *, blocked, game="ttr",
+                     flagged):
+    """`flagged=False` builds the legacy launcher (flag unset, nothing
+    mounted) from the same accounts, for the unflagged pin tests."""
+    if flagged:
+        monkeypatch.setenv("TTMT_GRANDSTAND", "1")
+    else:
+        monkeypatch.delenv("TTMT_GRANDSTAND", raising=False)
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(LaunchTab, "_start_keyring_probe", lambda self: None)
     accounts = [
@@ -928,6 +1005,49 @@ def test_2fa_prompt_answers_the_worker_that_asked(monkeypatch, qapp, answer):
             asker.cancel.assert_not_called()
         else:
             asker.cancel.assert_called_once_with()
+            assert slot.state == "idle"
+            assert slot.message == "2FA cancelled"
+    finally:
+        slot.worker = None
+        tab.shutdown()
+        tab.close()
+
+
+@pytest.mark.parametrize("answer", [("123456", True), ("", False)])
+def test_unflagged_2fa_prompt_answers_whichever_worker_the_slot_holds(
+        monkeypatch, qapp, answer):
+    """Base behaviour, pinned for the legacy launcher: the answer goes to the
+    worker on the slot when the dialog closes, even one that superseded the
+    asker; a dismissal resets the slot to idle. The identity guard is a
+    flagged-path rule only."""
+    import tabs.launch_tab as launch_tab
+
+    tab, _cred = _make_launch_tab(
+        monkeypatch, ["a"], blocked=False, flagged=False)
+    assert not hasattr(tab, "grandstand")
+    asker = MagicMock(name="asker")
+    newcomer = MagicMock(name="newcomer")
+    slot = tab._slots["ttr"]["a"]
+    slot.worker = asker
+    slot.state = "logging_in"
+
+    def get_text(*_args, **_kwargs):
+        slot.worker = newcomer
+        return answer
+
+    monkeypatch.setattr(launch_tab.QInputDialog, "getText",
+                        staticmethod(get_text))
+    try:
+        tab._prompt_2fa("ttr", "a", "Two-Factor Authentication required")
+        token, ok = answer
+        asker.submit_2fa.assert_not_called()
+        asker.cancel.assert_not_called()
+        if ok:
+            newcomer.submit_2fa.assert_called_once_with(token)
+            newcomer.cancel.assert_not_called()
+            assert slot.state == "logging_in"
+        else:
+            newcomer.cancel.assert_called_once_with()
             assert slot.state == "idle"
             assert slot.message == "2FA cancelled"
     finally:

@@ -185,6 +185,13 @@ class GrandstandView(QWidget):
         self._main_names[game] = dict(mapping)
         self.refresh(game)
 
+    def entry_for(self, game: str, account_id: str):
+        """The RosterEntry the view currently holds for one account, or None.
+        Lets the owner decide whether a fresh entry would change anything
+        before it pays for a rebuild."""
+        return next((e for e in self._entries[game]
+                     if e.account_id == account_id), None)
+
     def set_accounts(self, game: str, entries: list) -> None:
         self._entries[game] = list(entries)
         self.selector.set_counts(len(self._entries["ttr"]), len(self._entries["cc"]))
@@ -314,8 +321,7 @@ class GrandstandView(QWidget):
             (by_id[aid].display_name if aid in by_id else aid) for aid in order])
         names = self._main_names.get(game, {})
         self.hero.set_main(names.get(star) if star else None)
-        poses = {entry.account_id: entry.pose for entry in entries}
-        self.hero.set_lineup(lineup_entries(entries, order, poses=poses))
+        self.hero.set_lineup(lineup_entries(entries, order))
 
     def _on_play(self) -> None:
         if self.is_credential_blocked():

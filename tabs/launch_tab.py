@@ -619,8 +619,19 @@ class LaunchTab(QWidget):
         affected = self._toon_bridge.capture(
             pid, toon_name, dna, laff=laff, max_laff=max_laff,
             species=species, accent=accent)
-        if affected is not None:
-            game, _account_id = affected
+        if affected is None or not self._grandstand_mounted():
+            return
+        # Captures arrive on every laff tick of every running toon. Repaint
+        # only when one changed something the view draws: RosterEntry carries
+        # no laff, so a laff-only capture compares equal and the cards — and
+        # any hover or focus on them — are left alone.
+        game, account_id = affected
+        acct = next((a for a in self._ordered_accounts(game)
+                     if a.id == account_id), None)
+        if acct is None:
+            return
+        if self._grandstand_entry(game, acct) != \
+                self.grandstand.entry_for(game, account_id):
             self._render_current_view(game)
 
     def set_overlay_active_provider(self, fn) -> None:
@@ -948,7 +959,7 @@ class LaunchTab(QWidget):
         self._customizations = manager
         for section in self._sections.values():
             section.set_customizations_manager(manager)
-        if getattr(self, "grandstand", None) is not None:
+        if self._grandstand_mounted():
             for game in ("ttr", "cc"):
                 self._render_current_view(game)
 
@@ -1027,7 +1038,7 @@ class LaunchTab(QWidget):
     def _render_current_view(self, game: str) -> None:
         """Repaint whichever launcher is mounted. Account mutations (add, edit,
         reorder, delete) must reach the view the user is actually looking at."""
-        if getattr(self, "grandstand", None) is not None:
+        if self._grandstand_mounted():
             self._render_grandstand(game)
         else:
             self._render_section(game)
@@ -1184,6 +1195,22 @@ class LaunchTab(QWidget):
         for game in ("ttr", "cc"):
             self._render_grandstand(game)
 
+    def _grandstand_entry(self, game: str, acct):
+        """One account's RosterEntry from the stores that own the truth."""
+        from utils.widgets.grandstand.model import roster_entry
+        slot = self._slots[game].get(acct.id)
+        st, msg, raw = self._effective_state(game, slot) if slot else ("idle", "", "")
+        rec = self._recent_toons.get(acct.id)
+        primary = self._recent_toons.primary_name(acct.id)
+        cust = {}
+        if self._customizations is not None and rec is not None:
+            cust = self._customizations.get(game, rec.toon_name) or {}
+        return roster_entry(
+            account_id=acct.id, game=game, label=acct.label or "",
+            username=acct.username or "", rec=rec, entry=cust,
+            state=st, message=msg, raw_error=raw,
+            is_primary=(rec is not None and rec.toon_name == primary))
+
     def _render_grandstand(self, game: str) -> None:
         """Build RosterEntry values for one game and hand them to the view."""
         from utils.widgets.grandstand.model import roster_entry
@@ -1191,8 +1218,10 @@ class LaunchTab(QWidget):
         if self._grandstand_demo is not None:
             # Fixture slots are pinned, so their state is read directly rather
             # than through _effective_state (no launcher or timer to consult).
+            # A reconcile drops them (their ids are not in the credential
+            # store), so a missing slot is rebuilt from its fixture.
             for aid, fixture in self._demo_accounts(self._grandstand_demo, game):
-                slot = self._slots[game][aid]
+                slot = self._slots[game].get(aid) or self._demo_slot(aid, fixture)
                 entries.append(roster_entry(
                     account_id=aid, game=game,
                     label=fixture.get("label", ""),
@@ -1203,18 +1232,7 @@ class LaunchTab(QWidget):
             self.grandstand.set_main_toon_names(game, {})
             return
         for acct in self._ordered_accounts(game):
-            slot = self._slots[game].get(acct.id)
-            st, msg, raw = self._effective_state(game, slot) if slot else ("idle", "", "")
-            rec = self._recent_toons.get(acct.id)
-            primary = self._recent_toons.primary_name(acct.id)
-            cust = {}
-            if self._customizations is not None and rec is not None:
-                cust = self._customizations.get(game, rec.toon_name) or {}
-            entries.append(roster_entry(
-                account_id=acct.id, game=game, label=acct.label or "",
-                username=acct.username or "", rec=rec, entry=cust,
-                state=st, message=msg, raw_error=raw,
-                is_primary=(rec is not None and rec.toon_name == primary)))
+            entries.append(self._grandstand_entry(game, acct))
         self.grandstand.set_accounts(game, entries)
         names = {}
         for acct in self._ordered_accounts(game):
@@ -1238,7 +1256,7 @@ class LaunchTab(QWidget):
         # Grandstand is compact-only (spec Q5): one fluid layout at every size.
         # The legacy body below rebuilds the section container, which would
         # mount the old launcher alongside the new view on any resize.
-        if getattr(self, "grandstand", None) is not None:
+        if self._grandstand_mounted():
             return
         if mode not in ("compact", "full"):
             return
@@ -2236,11 +2254,13 @@ class LaunchTab(QWidget):
         )
         self._pending_2fa.discard(key)
         # The dialog ran a nested event loop. A relaunch meanwhile put a new
-        # worker on the slot; the answer belongs to the one that asked, so the
-        # newcomer gets neither the token nor a cancellation.
+        # worker on the slot; on the flagged path the answer belongs to the
+        # one that asked, so the newcomer gets neither the token nor a
+        # cancellation. The legacy launcher keeps delivering to whichever
+        # worker the slot holds, as it always has.
         slot = self._slots[game].get(account_id)
         worker = slot.worker if slot is not None else None
-        if worker is not asker:
+        if self._grandstand_mounted() and worker is not asker:
             self.log(f"[Launch] {game_label} account "
                      f"{self._position_of(game, account_id)} 2FA prompt was "
                      "superseded by a newer launch; answer discarded.")

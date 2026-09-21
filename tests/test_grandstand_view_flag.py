@@ -169,6 +169,33 @@ def test_populated_demo_fixtures_feed_the_grandstand_shelf(
         tab.close()
 
 
+def test_demo_fixtures_survive_a_slot_reconcile(qapp, monkeypatch):
+    """Demo mode exists to be clicked around. Account dialogs reconcile the
+    slots against the credential store, which drops the fixture slots; the
+    next render must rebuild them from the fixtures, not raise."""
+    monkeypatch.setenv("TTMT_GRANDSTAND", "1")
+    monkeypatch.setenv("TTMT_DEMO_LAUNCH_TAB", "populated")
+    from tabs.launch_tab import LaunchTab
+    from utils.launch_tab_demo_mode import get_demo_fixtures
+
+    monkeypatch.setattr(LaunchTab, "_start_keyring_probe", lambda self: None)
+    cred = MagicMock(keyring_available=True, keyring_probe_pending=False)
+    cred.get_accounts_metadata.return_value = []
+    settings = MagicMock()
+    settings.get.side_effect = lambda _key, default=None: default
+    tab = LaunchTab(cred_manager=cred, settings_manager=settings)
+    try:
+        tab._reconcile_slots()
+        assert tab._slots["ttr"] == {}
+        tab._render_current_view("ttr")
+        assert [(c.entry().label, c.state())
+                for c in tab.grandstand.shelf.cards()] == [
+            (f["label"], f["state"]) for f in get_demo_fixtures()["ttr"]]
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
 def test_starring_restyles_the_shelf_without_rebuilding_it(qapp, monkeypatch):
     """A star click is a refresh, not a render: the party persists the star
     itself, so rebuilding every card would only discard hover and focus."""
