@@ -3510,6 +3510,17 @@ class MultitoonTab(QWidget):
 
     def _capture_account_toon(self, wid, toon_name: str, dna: str, *,
                               laff=None, max_laff=None, species=None, accent=None) -> None:
+        # Render cache first: a toon's name + DNA is all it needs, and it must
+        # not depend on whether this instance launched the window.
+        if toon_name and dna:
+            try:
+                from utils.game_registry import GameRegistry
+                from utils.toon_renders import ToonRenders
+                game = GameRegistry.instance().get_game_for_window(str(wid))
+                if game in ("ttr", "cc"):
+                    ToonRenders.instance().discovered(game, toon_name, dna)
+            except Exception as exc:                     # noqa: BLE001
+                print(f"[ToonRenders] discovery hook failed: {exc}")
         if not self._toon_capture_sink or not toon_name:
             return
         from utils.toon_capture_bridge import toon_changed

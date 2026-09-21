@@ -161,3 +161,13 @@ class RecentToonsStore:
         if self._raw() == doc:
             return
         self._write(doc)
+
+    def all_records(self) -> list[tuple[str, ToonRecord]]:
+        """Every (account_id, ToonRecord) known, for the render-cache sweep."""
+        out: list[tuple[str, ToonRecord]] = []
+        for aid, acc in self._doc().get("accounts", {}).items():
+            for d in acc.get("toons", []):
+                rec = _rec_from_dict(d)
+                if rec is not None:
+                    out.append((aid, rec))
+        return out

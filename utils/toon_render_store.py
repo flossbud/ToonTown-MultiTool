@@ -45,6 +45,9 @@ class ToonRenderStore:
     def poses(self) -> tuple[str, ...]:
         return self._poses
 
+    def toons_root(self) -> str:
+        return os.path.join(self._root, "toons")
+
     def toon_dir(self, game: str, name: str) -> str:
         """The toon's folder, creating it and its manifest on first use.
         Slugs collide ("Blue Cat" / "blue cat"); the manifest carries the exact

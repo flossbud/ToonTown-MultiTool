@@ -42,6 +42,10 @@ class ToonRenders(QObject):
         # rewritten is a current set's file after invalidate() -- which already
         # clears the LRU below.
         prefetcher.set_promoted.connect(lambda g, n: self._lru.clear())
+        # discovered() fires on every poll tick for every game window (every
+        # few seconds, forever) with the same (game, name, dna); memoise so a
+        # repeat costs nothing beyond a dict lookup instead of a manifest read.
+        self._seen: dict[tuple[str, str], str] = {}
 
     # ── singleton ─────────────────────────────────────────────────────────
 
@@ -93,11 +97,45 @@ class ToonRenders(QObject):
         self.prefetcher.want(game, name, pose)
 
     def discovered(self, game: str, name: str, dna: str) -> None:
+        key = (game, name)
+        if self._seen.get(key) == dna:
+            return
+        self._seen[key] = dna
         self.prefetcher.discovered(game, name, dna)
 
     def sweep(self, toons: Iterable[tuple[str, str, str]]) -> None:
         self.prefetcher.sweep(toons)
 
     def invalidate(self, game: str, name: str) -> None:
+        # Not cleared here: the prefetcher re-queues the invalidated DNA
+        # itself, so a later identical discovered() call has nothing to add.
         self._lru.clear()
         self.prefetcher.invalidate(game, name)
+
+    # ── startup ───────────────────────────────────────────────────────────
+
+    def _remembered(self, settings_manager) -> list[tuple[str, str, str]]:
+        from utils.recent_toons import RecentToonsStore
+        return [(rec.game, rec.toon_name, rec.dna)
+                for _aid, rec in RecentToonsStore(settings_manager).all_records()
+                if rec.dna]
+
+    def import_once(self, settings_manager, flat_dir: str) -> int:
+        """First run only: copy remembered toons' renders out of the legacy
+        flat cache. A marker file makes it idempotent."""
+        marker = os.path.join(self.store.toons_root(), ".imported")
+        if os.path.exists(marker):
+            return 0
+        n = self.store.import_flat_cache(flat_dir, self._remembered(settings_manager))
+        try:
+            os.makedirs(os.path.dirname(marker), exist_ok=True)
+            with open(marker, "w") as f:
+                f.write("1\n")
+        except OSError:
+            pass
+        return n
+
+    def sweep_remembered(self, settings_manager) -> int:
+        toons = self._remembered(settings_manager)
+        self.sweep(toons)
+        return len(toons)

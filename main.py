@@ -2398,6 +2398,19 @@ if __name__ == "__main__":
         "use_system_title_bar": bool(window.settings_manager.get("use_system_title_bar", False)),
         "qt_version": _QLI.version().toString() if hasattr(_QLI, "version") else "",
     })
+    # Render cache: import the legacy flat cache once, then fill gaps for every
+    # remembered toon. 2 s after first show so it never competes with startup
+    # paint; both are background, fire-and-forget.
+    def _warm_render_cache():
+        try:
+            from utils.build_flavor import config_dir as _cfg
+            from utils.toon_renders import ToonRenders
+            tr = ToonRenders.instance()
+            tr.import_once(window.settings_manager, os.path.join(_cfg(), "rendition_cache"))
+            tr.sweep_remembered(window.settings_manager)
+        except Exception as exc:                          # noqa: BLE001
+            print(f"[ToonRenders] startup warm failed: {exc}")
+    QTimer.singleShot(2000, _warm_render_cache)
     QTimer.singleShot(0, window._maybe_notify_float_startup_recovered)
     _lock_cc_prefs_silently()
     # macOS first-run permission onboarding. Fired POST-show (so --self-check,
