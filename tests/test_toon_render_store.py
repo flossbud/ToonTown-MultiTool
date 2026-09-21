@@ -246,3 +246,46 @@ def test_disk_faults_read_as_not_present(store, tmp_path):
     os.remove(store.path_for("ttr", "Hiro", DNA1, "head"))
     assert store.lookup("ttr", "Hiro", "head") is None
     assert "head" in store.missing_poses("ttr", "Hiro", DNA1)
+
+
+def _flat(flat_dir, dna, pose):
+    p = os.path.join(flat_dir, f"{dna}__{pose}__512.png")
+    _png(p, tag=pose.encode())
+    return p
+
+
+def test_import_promotes_a_complete_flat_set(store, tmp_path):
+    flat = str(tmp_path / "flat")
+    for pose in POSES:
+        _flat(flat, DNA1, pose)
+    n = store.import_flat_cache(flat, [("ttr", "Hiro", DNA1)])
+    assert n == 3
+    assert store.current_dna("ttr", "Hiro") == DNA1
+    path, tier = store.lookup("ttr", "Hiro", "head")
+    assert tier == "current"
+    with open(path, "rb") as f:
+        assert f.read().endswith(b"head")          # the bytes were copied, not re-made
+    assert os.path.exists(os.path.join(flat, f"{DNA1}__head__512.png"))   # source untouched
+
+
+def test_import_leaves_a_partial_set_as_candidate_for_the_sweep(store, tmp_path):
+    flat = str(tmp_path / "flat")
+    _flat(flat, DNA1, "portrait")
+    assert store.import_flat_cache(flat, [("ttr", "Hiro", DNA1)]) == 1
+    assert store.current_dna("ttr", "Hiro") is None
+    assert store.candidate_dna("ttr", "Hiro") == DNA1
+    assert store.missing_poses("ttr", "Hiro", DNA1) == ["head", "waving"]
+
+
+def test_import_is_idempotent_and_never_demotes(store, tmp_path):
+    flat = str(tmp_path / "flat")
+    for pose in POSES:
+        _flat(flat, DNA1, pose)
+    store.import_flat_cache(flat, [("ttr", "Hiro", DNA1)])
+    assert store.import_flat_cache(flat, [("ttr", "Hiro", DNA1)]) == 0
+    assert store.current_dna("ttr", "Hiro") == DNA1
+
+
+def test_import_skips_toons_with_no_dna_and_missing_dirs(store, tmp_path):
+    assert store.import_flat_cache(str(tmp_path / "nope"), [("ttr", "Hiro", DNA1)]) == 0
+    assert store.import_flat_cache(str(tmp_path), [("ttr", "Hiro", "")]) == 0

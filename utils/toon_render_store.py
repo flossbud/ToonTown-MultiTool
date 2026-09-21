@@ -237,3 +237,34 @@ class ToonRenderStore:
         m["sets"][cur] = {"landed": [], "failed": []}
         self._write_manifest(d, m)
         return cur
+
+    # ── migration ─────────────────────────────────────────────────────────
+
+    def import_flat_cache(self, flat_dir: str,
+                          toons: Iterable[tuple[str, str, str]]) -> int:
+        """One-time copy from the legacy flat layout (`<dna>__<pose>__512.png`)
+        for each remembered (game, name, dna). Complete sets promote; partial
+        ones become the candidate the startup sweep fills in. Sources are left
+        in place — the legacy launcher still reads them until cut-over."""
+        if not os.path.isdir(flat_dir):
+            return 0
+        copied = 0
+        for game, name, dna in toons:
+            if not dna:
+                continue
+            if self.note_dna(game, name, dna) == "current":
+                continue
+            for pose in self._poses:
+                src = os.path.join(flat_dir, f"{dna}__{pose}__512.png")
+                dst = self.path_for(game, name, dna, pose)
+                if self._valid_png(dst) or not self._valid_png(src):
+                    continue
+                try:
+                    shutil.copyfile(src, dst)
+                except OSError as exc:
+                    self._warn(f"import of {src} failed: {exc}")
+                    continue
+                if self.mark_landed(game, name, dna, pose):
+                    copied += 1
+            self.promote_if_complete(game, name)
+        return copied
