@@ -22,6 +22,10 @@ from utils.toon_render_store import ToonRenderStore
 PRIORITY_WANT = 0
 PRIORITY_DISCOVERED = 1
 PRIORITY_SWEEP = 2
+# A pose that already failed is worth less than any untried one: the probe
+# that closes the breaker is far more likely to be a pose nobody has asked
+# the origin for yet (it may be warm at the edge) than one that just hung.
+PRIORITY_RETRY = 3
 BREAKER_THRESHOLD = 3
 BACKOFF_S = (30, 60, 120, 300)
 
@@ -52,6 +56,9 @@ class RenderPrefetcher(QObject):
         self._open = False
         self._backoff_i = 0
         self._probe_key: Optional[_Key] = None
+        # On-screen needs for toons whose DNA is not known yet (a card mounts
+        # before the hook reports the toon). Honoured at discovery.
+        self._pending_wants: set[tuple[str, str, str]] = set()
         self._probe = QTimer(self)
         self._probe.setSingleShot(True)
         self._probe.timeout.connect(self.fire_probe_now)
@@ -69,7 +76,10 @@ class RenderPrefetcher(QObject):
     def want(self, game: str, name: str, pose: str) -> None:
         """A consumer needs this pose on screen now: front of the queue."""
         dna = self._store.candidate_dna(game, name) or self._store.current_dna(game, name)
-        if not dna or pose not in self._store.missing_poses(game, name, dna):
+        if not dna:
+            self._pending_wants.add((game, name, pose))
+            return
+        if pose not in self._store.missing_poses(game, name, dna):
             return
         self._enqueue((game, name, dna, pose), PRIORITY_WANT)
 
@@ -110,8 +120,16 @@ class RenderPrefetcher(QObject):
         # No early return on "current": a complete set costs 13 stats here,
         # and a current set with a lost or corrupt file is refilled by the
         # sweep rather than only by an on-screen want.
-        for pose in self._store.missing_poses(game, name, dna):
-            self._enqueue((game, name, dna, pose), priority)
+        # Each enqueue pumps, so the poses a consumer is already waiting for
+        # must go in first, not merely at a higher priority.
+        missing = self._store.missing_poses(game, name, dna)
+        wanted = [p for p in missing if (game, name, p) in self._pending_wants]
+        for pose in wanted + [p for p in missing if p not in wanted]:
+            if pose in wanted:
+                self._pending_wants.discard((game, name, pose))
+                self._enqueue((game, name, dna, pose), PRIORITY_WANT)
+            else:
+                self._enqueue((game, name, dna, pose), priority)
 
     def _live(self, game: str, name: str) -> set[Optional[str]]:
         """The DNAs the store still tracks for this toon; anything else is a
@@ -133,6 +151,12 @@ class RenderPrefetcher(QObject):
             self._queue[key] = (priority, self._seq)
         elif priority < prev[0]:
             self._queue[key] = (priority, prev[1])
+        if priority == PRIORITY_WANT and self._open and not self._in_flight:
+            # An on-screen need is the most valuable probe there is: send it
+            # now rather than after the backoff. One request, bounded by user
+            # actions, and it may well be warm at the edge.
+            self.fire_probe_now()
+            return
         self._pump()
 
     def _next_key(self) -> Optional[_Key]:
@@ -254,7 +278,7 @@ class RenderPrefetcher(QObject):
     def _enqueue_silently(self, key: _Key) -> None:
         if key not in self._queue:
             self._seq += 1
-            self._queue[key] = (PRIORITY_WANT, self._seq)   # retried first once open
+            self._queue[key] = (PRIORITY_RETRY, self._seq)  # behind every untried pose
 
     # ── breaker ────────────────────────────────────────────────────────────
 
