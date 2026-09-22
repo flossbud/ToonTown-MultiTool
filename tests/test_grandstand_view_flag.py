@@ -733,3 +733,13 @@ def test_enter_in_a_field_saves(shown, monkeypatch):
     shown.open_account_sheet("ttr", _draft(), [], None)
     QTest.keyClick(shown.account_sheet.username_input, Qt.Key_Return)
     assert len(seen) == 1
+
+
+def test_theme_reaches_the_sheet_its_body_and_the_browser(roster):
+    roster.apply_theme(False)
+    assert roster.sheet._is_dark is False
+    assert roster.account_sheet._is_dark is False
+    assert roster.browser._is_dark is False
+    assert roster.account_sheet.preview._is_dark is False
+    roster.apply_theme(True)
+    assert roster.account_sheet._is_dark is True

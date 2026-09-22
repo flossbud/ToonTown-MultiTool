@@ -267,3 +267,31 @@ def test_the_theme_independent_sheet_tokens_are_deliberate():
     """Danger red and the blue Save fill are the same in both themes."""
     for fn, args in UNTHEMED_SHEET_TOKENS:
         assert fn(*args, True) == fn(*args, False), fn.__name__
+
+
+def test_sheet_tokens_have_a_light_branch():
+    """Light values are theme_manager's light tokens of the same name."""
+    assert gp.sheet_surface(False) == {"bg": QColor("#ffffff"),
+                                       "border": QColor("#e2e8f0")}
+    assert gp.sheet_ink(False)["title"] == QColor("#334155")     # text_secondary
+    assert gp.sheet_ink(False)["sub"] == QColor("#475569")       # text_muted
+    assert gp.sheet_ink(False)["caption"] == QColor("#64748b")   # text_disabled
+    light_input = gp.sheet_input(False, False)
+    assert light_input["ink"] == QColor("#0f172a")               # text_primary
+    assert light_input["border"] == QColor("#cbd5e1")            # border_light
+    assert light_input["bg"] == QColor("#ffffff")                # bg_input
+    assert gp.sheet_input(True, False)["border"] == QColor("#ff7575")
+    assert gp.frow(False)["bg"] == QColor("#f1f5f9")             # bg_card_inner
+    assert gp.frow(False)["name"] == QColor("#0f172a")
+    assert gp.link_button(False)["ink"] == QColor("#334155")
+    assert gp.sheet_chrome_button(True, False)["ink"] == QColor("#0f172a")
+    assert gp.sheet_footer_button(False, False, False)["ink"] == QColor("#334155")
+    assert gp.browser_empty_ink(False) == {"title": QColor("#0f172a"),
+                                           "body": QColor("#475569")}
+    # Danger reds and Save's blue are theme-independent.
+    assert gp.danger_button(False, False) == gp.danger_button(False, True)
+    assert gp.danger_button(True, False) == gp.danger_button(True, True)
+    assert gp.sheet_footer_button(True, False, False) == gp.sheet_footer_button(True, False, True)
+    # And the light branch is a different surface, not the dark one renamed.
+    assert gp.sheet_surface(False)["bg"] != gp.sheet_surface(True)["bg"]
+    assert gp.sheet_ink(False)["title"] != gp.sheet_ink(True)["title"]
