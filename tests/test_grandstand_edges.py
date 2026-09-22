@@ -1322,3 +1322,116 @@ def test_unflagged_tab_never_reaches_the_sheet_handler(monkeypatch, qapp):
     finally:
         tab.shutdown()
         tab.close()
+
+
+# ── add mode (sub-project C, Task 3) ────────────────────────────────────────
+
+def _mutating_add(accounts):
+    """A cred_manager.add_account that appends to the rig's metadata list
+    and reports success, the way the real store does."""
+    def add(label, username, password, game):
+        accounts.append(SimpleNamespace(
+            id=f"n{len(accounts)}", game=game, label=label, username=username,
+            password=password, launcher_token=""))
+        return True
+    return add
+
+
+def test_add_account_opens_the_sheet_in_add_mode(monkeypatch, qapp, capsys):
+    _stub_editor(monkeypatch)
+    tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        tab.grandstand.shelf.add_tile.click()
+        assert tab.grandstand.in_focus_mode() is True
+        sheet = tab.grandstand.account_sheet
+        d = sheet.draft()
+        assert (d.mode, d.id, d.game) == (MODE_ADD, "", "ttr")
+        assert (d.label, d.username, d.password) == ("", "", "")
+        assert sheet.danger_field.isVisibleTo(sheet) is False
+        assert "[Grandstand] sheet: account add" in capsys.readouterr().out
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_add_mode_save_calls_add_account_and_shows_the_new_card(monkeypatch, qapp):
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    cred.add_account.side_effect = _mutating_add(cred.get_accounts_metadata.return_value)
+    try:
+        tab.grandstand.shelf.add_tile.click()
+        sheet = tab.grandstand.account_sheet
+        sheet.label_input.setText("Alt")
+        sheet.username_input.setText("newbie")
+        sheet.password_input.setText("secret")
+        tab.grandstand.sheet.save_button.click()
+        cred.add_account.assert_called_once_with(
+            label="Alt", username="newbie", password="secret", game="ttr")
+        assert tab.grandstand.in_focus_mode() is False
+        assert [c.account_id() for c in tab.grandstand.shelf.cards()] == ["a", "n1"]
+        assert tab.grandstand.shelf.card_for("n1").name_text() == "Alt"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_add_mode_requires_username_and_password(monkeypatch, qapp):
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        tab.grandstand.shelf.add_tile.click()
+        tab.grandstand.sheet.save_button.click()
+        cred.add_account.assert_not_called()
+        assert tab.grandstand.in_focus_mode() is True
+        assert tab.grandstand.account_sheet.errors() == {
+            "username": "Username is required",
+            "password": "Password is required"}
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_a_refused_add_keeps_the_sheet_open(monkeypatch, qapp, capsys):
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    cred.add_account.return_value = False
+    try:
+        tab.grandstand.shelf.add_tile.click()
+        sheet = tab.grandstand.account_sheet
+        sheet.username_input.setText("newbie")
+        sheet.password_input.setText("secret")
+        tab.grandstand.sheet.save_button.click()
+        cred.add_account.assert_called_once()
+        assert tab.grandstand.in_focus_mode() is True
+        assert sheet.draft().username == "newbie"
+        assert [c.account_id() for c in tab.grandstand.shelf.cards()] == ["a"]
+        assert "[Launch] Could not add TTR account." in capsys.readouterr().out
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_the_ceiling_keeps_the_sheet_closed(monkeypatch, qapp):
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(
+        monkeypatch, [f"a{i}" for i in range(16)], blocked=False)
+    try:
+        tab.grandstand.shelf.add_tile.click()
+        assert tab.grandstand.in_focus_mode() is False
+        cred.add_account.assert_not_called()
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_unflagged_add_still_opens_todays_editor(monkeypatch, qapp):
+    EditorStub = _stub_editor(monkeypatch)
+    tab, _cred = _make_launch_tab(monkeypatch, ["a"], blocked=False, flagged=False)
+    try:
+        tab._on_add_account("ttr")
+        assert len(EditorStub.opened) == 1
+        assert EditorStub.opened[0]["mode"] == "add"
+        assert EditorStub.opened[0]["game"] == "ttr"
+    finally:
+        tab.shutdown()
+        tab.close()

@@ -1282,10 +1282,45 @@ class LaunchTab(QWidget):
             game, draft, self._recent_toons.list(account_id),
             self._recent_toons.primary_name(account_id))
 
+    def _open_add_sheet(self, game: str) -> None:
+        """Spec §3 "Open (add)": an empty draft, no toons, the same sheet."""
+        readable = bool(getattr(self.cred_manager, "keyring_available", True))
+        draft = AccountDraft(id="", game=game, mode=MODE_ADD,
+                             keyring_readable=readable)
+        self.grandstand.open_account_sheet(game, draft, [], None)
+
+    def _save_new_account(self, game: str, draft) -> None:
+        """Sheet Save in add mode. Mirrors _on_add_account's _save closure
+        line for line; that closure stays untouched for the unflagged launcher."""
+        if len(self._ordered_accounts(game)) >= MAX_PER_GAME:
+            self.grandstand.close_sheet()
+            return
+        ok = self.cred_manager.add_account(
+            label=draft.label, username=draft.username, password=draft.password,
+            game=game,
+        )
+        if ok is False:
+            # add_account refused (its own capacity guard or a storage
+            # failure). Nothing was written: keep the sheet and the draft so
+            # the user can retry or Back out.
+            self.log(f"[Launch] Could not add {game.upper()} account.")
+            return
+        self._reconcile_slots()
+        target = self._newest_account_id(game)
+        if target is not None:
+            self._navigate_to_account(game, target)
+        else:
+            self._render_current_view(game)
+            self.refresh_theme()
+        self.grandstand.close_sheet()
+
     def _on_account_save(self, game: str, draft) -> None:
         """Sheet Save (spec §3). Mirrors _on_tile_edit's _save closure line for
         line; that closure stays untouched for the unflagged launcher."""
         if not self._grandstand_mounted():
+            return
+        if draft.mode == MODE_ADD:
+            self._save_new_account(game, draft)
             return
         global_idx = self._global_index_of(draft.id)
         if global_idx is None:
@@ -1449,6 +1484,9 @@ class LaunchTab(QWidget):
     def _on_add_account(self, game: str):
         if len(self._ordered_accounts(game)) >= MAX_PER_GAME:
             return  # hard ceiling (the footer Add button is also hidden at 16)
+        if self._grandstand_mounted():
+            self._open_add_sheet(game)        # sub-project C: the sheet, add mode
+            return
         editor = AccountEditor(game=game, mode="add", parent=self.window())
 
         def _save(label: str, username: str, password: str):

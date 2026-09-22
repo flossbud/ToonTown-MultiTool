@@ -413,3 +413,21 @@ def test_save_with_errors_renders_them_inline(roster):
     roster.sheet.save_button.click()
     assert len(seen) == 1
     assert roster.account_sheet.errors() == {}
+
+
+def test_add_mode_has_no_cross_link_and_stamps_add(roster):
+    roster.open_account_sheet(
+        "ttr", _draft(mode=MODE_ADD, label="", username="", password=""), [], None)
+    assert roster.in_focus_mode() is True
+    assert roster.sheet.header.title_text() == "Add account"
+    assert roster.sheet.header.cross_link_text() == ""
+    assert roster.sheet.note_text() == "No toons discovered yet"
+    assert roster.lines[-1] == "[Grandstand] sheet: account add"
+    seen = []
+    roster.account_save_requested.connect(lambda g, d: seen.append(d))
+    roster.account_sheet.username_input.setText("newbie")
+    roster.account_sheet.password_input.setText("secret")
+    roster.sheet.save_button.click()
+    assert len(seen) == 1
+    assert (seen[0].mode, seen[0].id, seen[0].username, seen[0].password) == (
+        MODE_ADD, "", "newbie", "secret")

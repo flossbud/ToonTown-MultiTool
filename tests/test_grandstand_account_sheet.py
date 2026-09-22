@@ -326,3 +326,21 @@ def test_a_theme_change_keeps_the_error_border(sheet):
     sheet.apply_theme(False)
     assert _red(False) in sheet.username_input.styleSheet()
     assert sheet.username_error.isVisibleTo(sheet) is True
+
+
+# ── add mode (spec §1, §2) ──────────────────────────────────────────────────
+
+def test_add_mode_hides_the_danger_zone_and_shows_a_nameless_card(sheet):
+    _open(sheet, draft=_draft(MODE_ADD, label="", username="", password=""),
+          toons=[], primary=None)
+    assert sheet.is_open() is True
+    assert sheet.account_id() == ""
+    assert sheet.danger_field.isVisibleTo(sheet) is False
+    assert sheet.choose_button.isEnabled() is False
+    e = sheet.preview_entry()
+    assert (e.account_id, e.display_name, e.toon_name) == ("", "", None)
+    assert sheet.preview.name_text() == ""
+    # Edit mode restores both.
+    _open(sheet)
+    assert sheet.danger_field.isVisibleTo(sheet) is True
+    assert sheet.choose_button.isEnabled() is True
