@@ -254,6 +254,21 @@ class RosterCard(QFrame):
         self.set_state(entry.state, entry.message, entry.raw_error)
         self.update()
 
+    def set_identity_text(self, entry) -> None:
+        """Text-only refresh: the two identity labels and the entry they came
+        from, nothing else.
+
+        set_entry() is the identity path — it re-reads the portrait (about
+        four manifest reads through pixmap_for on a cold toon) and reparses
+        five stylesheets. The account sheet's live preview runs on every
+        keystroke, where only the label and the username can change, and
+        neither touches the portrait, the accent or the state machine. The
+        entry is stored so entry() keeps telling the truth.
+        """
+        self._entry = entry
+        self.name.setText(entry.display_name)
+        self.user.setText(entry.username)
+
     def set_selected(self, value: bool) -> None:
         self._selected = bool(value)
         self._restyle()

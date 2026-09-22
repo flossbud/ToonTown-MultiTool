@@ -82,8 +82,17 @@ def test_a_whitespace_password_means_keep_the_stored_one():
     assert _draft(password="   ").password_for_save() is None
     assert _draft(password="").password_for_save() is None
     assert _draft(password="\t\n ").password_for_save() is None
-    assert _draft(password="  pw  ").password_for_save() == "pw"
     assert _draft(password="pw").password_for_save() == "pw"
+
+
+def test_a_password_with_edge_spaces_is_written_exactly_as_typed():
+    """Whitespace-only still means "keep", but a password that has real
+    characters is nobody's business to trim: Add writes the raw string
+    (cred_manager.add_account(password=draft.password)), so a stripped Edit
+    would silently corrupt an account that logs in today."""
+    assert _draft(password="  pw  ").password_for_save() == "  pw  "
+    assert _draft(password=" pw").password_for_save() == " pw"
+    assert _draft(password="pw ").password_for_save() == "pw "
 
 
 def test_display_name_prefers_the_label():

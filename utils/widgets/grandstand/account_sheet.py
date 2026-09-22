@@ -518,25 +518,41 @@ class AccountSheet(QWidget):
         if key in self._errors:
             del self._errors[key]
             self._render_errors()
-        self._rebuild_preview()
+        self._refresh_preview_text()
         self.changed.emit()
 
-    def _rebuild_preview(self) -> None:
-        """The card re-reads text only (spec §3): colour and framing edits
-        live in sub-project B, so the accent is the roster's resolved one."""
+    def _preview_entry(self) -> Optional[RosterEntry]:
+        """The entry the preview should be showing for the current draft.
+        Text only (spec §3): colour and framing edits live in sub-project B,
+        so the accent is the roster's resolved one."""
         d = self._draft
         if d is None:
-            return
+            return None
         rec = self.primary_record()
         base = self._base
-        entry = roster_entry(
+        return roster_entry(
             account_id=d.id, game=d.game, label=d.label, username=d.username,
             rec=rec, entry={"accent": base.accent} if base is not None else {},
             state=base.state if base is not None else "idle",
             message=base.message if base is not None else "",
             raw_error=base.raw_error if base is not None else "",
             is_primary=(rec is not None and rec.toon_name == self._primary))
-        self.preview.set_entry(entry)
+
+    def _rebuild_preview(self) -> None:
+        """Full rebuild: the identity changed (open, a toon change, a state
+        change), so the portrait and the state machine are re-read."""
+        entry = self._preview_entry()
+        if entry is not None:
+            self.preview.set_entry(entry)
+
+    def _refresh_preview_text(self) -> None:
+        """The keystroke path. Only `label` and `username` can change while
+        typing, and neither moves the portrait, the accent or the state — so
+        the card takes the two labels rather than a full set_entry(), which
+        would reload the render and reparse five stylesheets per character."""
+        entry = self._preview_entry()
+        if entry is not None:
+            self.preview.set_identity_text(entry)
 
     # ── theme ──────────────────────────────────────────────────────────────
 

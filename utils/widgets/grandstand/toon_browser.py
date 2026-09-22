@@ -250,6 +250,10 @@ class ToonBrowser(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("gs_browser")
+        # The panel is focusable so an empty browser is not a keyboard dead
+        # end: with no cards there is nothing for focus_current() to land on
+        # and Esc would never reach keyPressEvent.
+        self.setFocusPolicy(Qt.StrongFocus)
         self._is_dark = True
         self._game = "ttr"
         self._cards: list[_ToonCard] = []
@@ -349,9 +353,17 @@ class ToonBrowser(QFrame):
         return self.header.subtitle_text()
 
     def focus_current(self) -> None:
+        """Land focus on the surface. With cards that is the checked one; with
+        none it is the panel itself, or an empty browser would be a keyboard
+        dead end — nothing focusable, so Esc never reaches keyPressEvent.
+
+        The owner calls this *after* swapping the browser into the shelf's
+        slot: setFocus() on a widget the stack still hides is dropped."""
         card = self.current_card() or (self._cards[0] if self._cards else None)
         if card is not None:
             card.setFocus()
+            return
+        self.setFocus()
 
     def _on_card_move_focus(self, delta: int) -> None:
         """Bound method, never a lambda: a lambda has no receiver QObject, so

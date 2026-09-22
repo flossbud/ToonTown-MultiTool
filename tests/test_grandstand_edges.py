@@ -1289,6 +1289,30 @@ def test_the_pencil_still_opens_todays_editor(monkeypatch, qapp):
         tab.close()
 
 
+def test_the_cross_link_hands_the_dialog_what_was_typed(monkeypatch, qapp):
+    """Whole-branch review I4: the cross-link drops the draft on its way out,
+    so unless the typed values ride along they vanish with no warning — the
+    dialog would open on the stored account and the user would retype."""
+    EditorStub = _stub_editor(monkeypatch)
+    tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        sheet = _open_sheet_via_gear(tab)
+        sheet.label_input.setText("Gag grind alt")
+        sheet.username_input.setText("floss2")
+        sheet.password_input.setText("typed-pw")
+        tab.grandstand.sheet.header.cross_link.click()
+        assert len(EditorStub.opened) == 1
+        opened = EditorStub.opened[0]
+        assert opened["initial_label"] == "Gag grind alt"
+        assert opened["initial_username"] == "floss2"
+        assert opened["initial_password"] == "typed-pw"
+        assert opened["mode"] == "edit" and opened["game"] == "ttr"
+        assert tab.grandstand.in_focus_mode() is False     # the draft still goes
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
 def test_the_cross_link_closes_the_sheet_before_the_legacy_editor_opens(
         monkeypatch, qapp):
     """The dialog edits the sheet's own three fields. Left open behind it,
@@ -1562,6 +1586,69 @@ def test_toon_chosen_sets_the_primary_and_rebuilds_card_hero_and_sheet(
         assert tab.grandstand.shelf.card_for("a").footer_text() == "Primary"
         after = tab.grandstand.hero.crew_area.slot_for("a")
         assert after is not before and after.toon_name == "Flossbud"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def _renamed_toon_store():
+    """The user's real shape: one toon renamed, so two records share a DNA,
+    and the stored primary still names the one unique_toons merges away."""
+    store = _recent_toons_store()
+    store.record("a", "Blue Cat", "ttr", "7400", species="cat")
+    store.record("a", "Katsuro", "ttr", "7400", species="cat")   # newest first
+    store.set_primary("a", "Blue Cat")
+    return store
+
+
+def test_opening_the_sheet_heals_a_primary_a_rename_merged_away(
+        monkeypatch, qapp, capsys):
+    """Whole-branch review I1: RecentToonsStore.get resolves the primary from
+    the raw list, the sheet and the browser from the deduped one, so the card
+    said "Blue Cat" while the frow, the preview and the browser's check all
+    said "Katsuro" — and the browser's checked card is inert, so the new UI
+    could not repair it. LaunchTab is the only writer, so it heals the store."""
+    _stub_editor(monkeypatch)
+    tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        tab._recent_toons = _renamed_toon_store()
+        tab._render_current_view("ttr")
+        assert tab.grandstand.shelf.card_for("a").name_text() == "Blue Cat"
+        capsys.readouterr()
+
+        sheet = _open_sheet_via_gear(tab)
+        assert tab._recent_toons.primary_name("a") == "Katsuro"
+        assert sheet.frow_name_text() == "Katsuro"
+        assert sheet.preview.name_text() == "Katsuro"
+        assert tab.grandstand.shelf.card_for("a").name_text() == "Katsuro"
+        sheet.choose_button.click()
+        assert tab.grandstand.browser.current_card().toon_name() == "Katsuro"
+        assert ("[Launch] TTR account 1: primary toon renamed to Katsuro."
+                in capsys.readouterr().out)
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_a_primary_that_still_exists_is_never_rewritten(monkeypatch, qapp):
+    """The control: the repair is for a ghost only. A healthy primary must
+    not be touched, or every sheet open would write to the store."""
+    _stub_editor(monkeypatch)
+    tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        tab._recent_toons = _recent_toons_store()
+        tab._recent_toons.record("a", "Flossbud", "ttr", "7400", species="cat")
+        tab._recent_toons.record("a", "Pepper", "ttr", "7401", species="dog")
+        tab._recent_toons.set_primary("a", "Flossbud")
+        writes = []
+        real = tab._recent_toons.set_primary
+        tab._recent_toons.set_primary = lambda aid, name: (
+            writes.append((aid, name)), real(aid, name))[1]
+
+        sheet = _open_sheet_via_gear(tab)
+        assert writes == []
+        assert tab._recent_toons.primary_name("a") == "Flossbud"
+        assert sheet.frow_name_text() == "Flossbud"
     finally:
         tab.shutdown()
         tab.close()

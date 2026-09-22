@@ -481,6 +481,17 @@ class GrandstandView(QWidget):
     def browser_open(self) -> bool:
         return self.shelf_stack.currentIndex() == SLOT_BROWSER
 
+    def _stamp(self, message: str) -> None:
+        """A running-code stamp reaches the journal as well as the log.
+
+        LaunchTab.log routes to the Debug tab, which drops everything that is
+        not [Credentials] unless logging is switched on, so on a default
+        install the stamp never reaches journalctl — and every live-validation
+        instruction begins by confirming one. Printed plainly, the way
+        utils/toon_renders.py prints its [ToonRenders] lines."""
+        self._log(message)
+        print(message)
+
     def open_account_sheet(self, game: str, draft: AccountDraft, toons: list,
                            primary_name) -> None:
         """Enter focus mode on the account surface. `toons` is the account's
@@ -493,7 +504,7 @@ class GrandstandView(QWidget):
         self._sheet_game = game
         self._sheet_toons = list(toons)
         self._sheet_primary = primary_name
-        self._log(f"{SHEET_STAMP_PREFIX} account {draft.id or 'add'}")
+        self._stamp(f"{SHEET_STAMP_PREFIX} account {draft.id or 'add'}")
         base = self.entry_for(game, draft.id) if draft.id else None
         self.account_sheet.open(draft, self._sheet_toons, primary_name, base)
         live = self._live_states.get((game, draft.id)) if draft.id else None
@@ -504,6 +515,14 @@ class GrandstandView(QWidget):
         self.sheet.set_note(note_for(self.account_sheet.toon_count()))
         self._go_to_page(PAGE_SHEET)
         self.account_sheet.focus_first()
+
+    def sheet_draft(self) -> AccountDraft | None:
+        """A snapshot of the open draft, or None. For an owner that must
+        carry what the user typed somewhere else — the cross-link hands it to
+        the legacy dialog before close_sheet() drops it. A copy, like the one
+        Save emits: what leaves the view never changes underneath a consumer."""
+        draft = self.account_sheet.draft()
+        return None if draft is None else dataclasses.replace(draft)
 
     def close_sheet(self) -> None:
         """Leave focus mode. The draft is dropped; nothing is written."""
@@ -626,7 +645,7 @@ class GrandstandView(QWidget):
         self._browser_account = account_id
         self._browser_game = game
         self._browser_return_to = return_to
-        self._log(f"{SHEET_STAMP_PREFIX} toon-browser {account_id}")
+        self._stamp(f"{SHEET_STAMP_PREFIX} toon-browser {account_id}")
         draft = self.account_sheet.draft()
         if draft is not None and draft.id == account_id:
             display = draft.display_name

@@ -47,8 +47,13 @@ class AccountDraft:
         """The password to write, or None to keep whatever is stored. Blank
         *or whitespace-only* means keep: a field holding nothing but spaces
         is not a new password, and writing it would destroy a good keyring
-        entry. validate() strips the same way, so the two agree."""
-        return self.password.strip() or None
+        entry. validate() strips the same way, so the two agree.
+
+        What is written is the field *as typed*, never a stripped copy: the
+        legacy dialog and _save_new_account both write the raw string, so a
+        password with an edge space is created intact by Add and would be
+        silently corrupted by the next Edit that retyped it."""
+        return self.password if self.password.strip() else None
 
     def validate(self) -> dict[str, str]:
         """Field -> message. Empty when the draft may be saved."""

@@ -7,7 +7,7 @@ os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 import pytest
 from unittest.mock import MagicMock
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel
 
@@ -34,9 +34,9 @@ def test_flag_reads_the_env_var(monkeypatch, value, expected):
 
 
 def test_init_emits_the_startup_stamp(qapp):
-    """CLAUDE.local.md running-code proof: never let the operator validate
-    without evidence of which path is live. A human greps this exact line
-    during live validation, so it is pinned verbatim, not by prefix."""
+    """Running-code proof: never let the operator validate without evidence
+    of which path is live. A human greps this exact line during live
+    validation, so it is pinned verbatim, not by prefix."""
     lines = []
     GrandstandView(LaunchParty(None), log=lines.append)
     assert lines, "no stamp emitted"
@@ -298,6 +298,23 @@ def test_open_account_sheet_enters_focus_mode_and_stamps(roster):
     assert roster.lines[-1] == "[Grandstand] sheet: account a"
 
 
+def test_the_sheet_stamps_reach_stdout_not_only_the_log(roster, capsys):
+    """Whole-branch review M1: LaunchTab.log routes to the Debug tab, which
+    drops anything that is not [Credentials] unless logging is enabled, so on
+    a default install these lines never reach journalctl — and live
+    validation begins by confirming one. This roster's log only appends to a
+    list, so only a real print can satisfy this."""
+    roster.open_account_sheet("ttr", _draft(), _toons(), "Flossbud")
+    roster.account_sheet.choose_button.click()
+    roster.close_toon_browser()
+    roster.close_sheet()
+    roster.open_account_sheet("ttr", _draft(mode=MODE_ADD, id=""), [], None)
+    out = capsys.readouterr().out
+    assert "[Grandstand] sheet: account a" in out
+    assert "[Grandstand] sheet: toon-browser a" in out
+    assert "[Grandstand] sheet: account add" in out
+
+
 def test_the_sheet_takes_the_roster_entry_as_its_preview_base(roster):
     roster.set_account_state("ttr", "a", "running")
     roster.open_account_sheet("ttr", _draft(), [], None)
@@ -541,6 +558,30 @@ def test_close_toon_browser_returns_to_the_sheet_with_the_new_primary(roster):
     assert roster.account_sheet.draft().label == "Main"        # same draft
     assert roster.account_sheet.frow_name_text() == "Pepper"
     assert roster.account_sheet.preview.name_text() == "Pepper"
+
+
+def test_esc_backs_out_of_a_toonless_browser(roster, qapp):
+    """Whole-branch review I2: on an account with no toons there is no card
+    for focus_current() to land on, so unless the panel itself takes focus
+    nothing on the surface can receive Esc and Back is mouse-only."""
+    roster.resize(880, 688)
+    roster.show()
+    qapp.processEvents()
+    roster.open_account_sheet("ttr", _draft(), [], None)
+    roster.account_sheet.choose_button.click()
+    qapp.processEvents()
+    assert roster.browser_open() is True
+    assert roster.browser.is_empty_state() is True
+    assert qapp.focusWidget() is roster.browser
+    # And the panel can be focused in its own right, so focus that wanders off
+    # can come back: with NoFocus neither a click nor Tab can return to an
+    # empty surface, and it is a dead end again.
+    roster.browser.clearFocus()
+    QTest.mouseClick(roster.browser, Qt.LeftButton, pos=QPoint(5, 5))
+    assert qapp.focusWidget() is roster.browser
+    QTest.keyClick(qapp.focusWidget(), Qt.Key_Escape)
+    assert roster.browser_open() is False
+    assert roster.shelf_stack.currentIndex() == SLOT_SHELF
 
 
 def test_the_browsers_back_arrow_returns_to_the_sheet_unchanged(roster):

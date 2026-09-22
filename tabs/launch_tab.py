@@ -64,7 +64,9 @@ from utils.widgets.confirm_dialog import ConfirmDialog
 from utils.widgets.error_modal import ErrorModal
 from utils.widgets.grandstand.party import LaunchParty
 from utils.widgets.grandstand.view import GrandstandView, grandstand_enabled
-from utils.widgets.grandstand.draft import MODE_ADD, MODE_EDIT, AccountDraft
+from utils.widgets.grandstand.draft import (
+    MODE_ADD, MODE_EDIT, AccountDraft, unique_toons,
+)
 from utils.launch_tab_demo_mode import get_demo_fixtures
 
 
@@ -1258,10 +1260,51 @@ class LaunchTab(QWidget):
         # The cross-link is the only way in here with the sheet open, and the
         # dialog it opens edits the sheet's own three fields. Drop the draft
         # first: a Save behind the dialog would write the stale label back
-        # over whatever the dialog just saved.
+        # over whatever the dialog just saved. Carry the typed values across
+        # so dropping it costs the user nothing.
         if self._grandstand_mounted() and self.grandstand.in_focus_mode():
+            draft = self.grandstand.sheet_draft()
             self.grandstand.close_sheet()
+            if draft is not None and draft.id == account_id:
+                self._open_appearance_editor(game, account_id, draft)
+                return
         self._on_tile_edit(game, account_id)
+
+    def _open_appearance_editor(self, game: str, account_id: str, draft) -> None:
+        """The sheet's cross-link into the legacy editor. Mirrors
+        _on_tile_edit line for line — that method stays untouched for the
+        unflagged launcher — except the dialog opens on the draft's values
+        rather than the stored account's, so a label, username or password
+        typed in the sheet survives the hop instead of vanishing unwarned."""
+        global_idx = self._global_index_of(account_id)
+        if global_idx is None:
+            return
+        acct = self.cred_manager.get_account(global_idx)
+        if acct is None:
+            return
+        editor = AccountEditor(
+            game=game, mode="edit",
+            initial_label=draft.label,
+            initial_username=draft.username,
+            initial_password=draft.password,
+            parent=self.window(),
+        )
+
+        def _save(label: str, username: str, password: str):
+            # Empty password means "keep current"; pass None to preserve
+            # the existing stored password.
+            pw = password if password else None
+            self.cred_manager.update_account(
+                global_idx, label=label, username=username, password=pw,
+            )
+            self._reconcile_slots()
+            self._render_current_view(game)
+            self.refresh_theme()
+            game_label = "TTR" if game == "ttr" else "CC"
+            self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)} updated.")
+
+        editor.account_saved.connect(_save)
+        editor.exec()
 
     def _open_account_sheet(self, game: str, account_id: str) -> None:
         """Build the edit draft from the store (spec §3 "Open (edit)") and
@@ -1273,6 +1316,8 @@ class LaunchTab(QWidget):
         acct = self.cred_manager.get_account(global_idx)
         if acct is None:
             return
+        if self._repair_renamed_primary(game, account_id):
+            self._render_grandstand(game)
         readable = bool(getattr(self.cred_manager, "keyring_available", True))
         password = (getattr(acct, "password", "") or "") if readable else ""
         draft = AccountDraft(
@@ -1283,6 +1328,37 @@ class LaunchTab(QWidget):
         self.grandstand.open_account_sheet(
             game, draft, self._recent_toons.list(account_id),
             self._recent_toons.primary_name(account_id))
+
+    def _repair_renamed_primary(self, game: str, account_id: str) -> bool:
+        """Repoint a primary that a rename merged away. Returns True on a fix.
+
+        Two records on one account with one DNA are one toon renamed (spec
+        §3). RecentToonsStore.get resolves the primary from the *raw* list,
+        which still holds the old name, while the sheet and the browser
+        resolve from the deduped one — so the card could say "Blue Cat" while
+        the sheet, the preview and the browser's check all said "Katsuro",
+        and the browser's checked card is inert, so the new UI could not
+        repair it. Healing the store here makes all four agree by
+        construction; LaunchTab is the only writer, so it belongs here.
+        """
+        primary = self._recent_toons.primary_name(account_id)
+        if not primary:
+            return False
+        records = self._recent_toons.list(account_id)
+        survivors = unique_toons(records)
+        if any(rec.toon_name == primary for rec in survivors):
+            return False                     # still a toon the launcher shows
+        ghost = next((rec for rec in records if rec.toon_name == primary), None)
+        if ghost is None or not ghost.dna:
+            return False                     # gone, or a CC record: not a rename
+        survivor = next((rec for rec in survivors if rec.dna == ghost.dna), None)
+        if survivor is None:
+            return False
+        self._recent_toons.set_primary(account_id, survivor.toon_name)
+        game_label = "TTR" if game == "ttr" else "CC"
+        self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)}:"
+                 f" primary toon renamed to {survivor.toon_name}.")
+        return True
 
     def _open_add_sheet(self, game: str) -> None:
         """Spec §3 "Open (add)": an empty draft, no toons, the same sheet."""

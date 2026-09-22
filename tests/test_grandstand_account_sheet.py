@@ -270,6 +270,53 @@ def test_preview_keeps_the_toon_name_while_the_label_changes(sheet):
     assert sheet.preview_entry().label == "Main"
 
 
+def test_typing_never_rebuilds_the_whole_preview_card(sheet, monkeypatch):
+    """Whole-branch review I5: set_entry() reloads the portrait and reparses
+    five stylesheets. Only the label and the username can change while
+    typing, so the keystroke path must not go through it — while the text it
+    does own still tracks every character."""
+    rebuilds = []
+    real = RosterCard.set_entry
+
+    def counting(card, entry):
+        rebuilds.append(entry.display_name)
+        real(card, entry)
+
+    monkeypatch.setattr(RosterCard, "set_entry", counting)
+    _open(sheet, toons=[], primary=None)     # no toon: the card shows the text
+    assert len(rebuilds) == 1                # the open builds it, once
+    for n in range(1, 6):
+        sheet.label_input.setText("Alpha"[:n])
+        assert sheet.preview.name_text() == "Alpha"[:n]
+    sheet.username_input.setText("floss")
+    assert sheet.preview.user_text() == "floss"
+    assert len(rebuilds) == 1                # six keystrokes, no rebuild
+    assert sheet.preview_entry().label == "Alpha"
+
+
+def test_typing_never_re_reads_the_portrait(sheet, render_cache, monkeypatch):
+    """The cost I5 names: on a cold toon set_entry's portrait read is about
+    four manifest reads through pixmap_for, per character."""
+    facade, store, _pf = render_cache
+    store.note_dna("ttr", "Flossbud", "7400")
+    reads = []
+    real = type(facade).pixmap_for
+
+    def counting(self, game, name, pose):
+        reads.append((game, name, pose))
+        return real(self, game, name, pose)
+
+    monkeypatch.setattr(type(facade), "pixmap_for", counting)
+    _open(sheet)
+    at_open = len(reads)
+    assert at_open >= 1                      # the open really does read
+    for n in range(1, 6):
+        sheet.label_input.setText("Alpha"[:n])
+    assert len(reads) == at_open             # five keystrokes, no re-read
+    assert sheet.preview_entry().label == "Alpha"
+    assert sheet.preview.name_text() == "Flossbud"     # the toon still wins
+
+
 def test_a_state_change_survives_a_later_edit(sheet):
     _open(sheet, base=_entry())
     sheet.set_account_state("running")
