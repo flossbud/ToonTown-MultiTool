@@ -132,3 +132,98 @@ def test_no_colour_literals_outside_the_palette():
                 if _LITERAL.search(line):
                     offenders.append(f"{os.path.basename(path)}:{number}: {line.strip()}")
     assert offenders == []
+
+
+# ── sheet tokens (handoff §4.4, §4.5, §9) ───────────────────────────────────
+
+from PySide6.QtGui import QColor                    # noqa: E402
+from utils.color_math import with_alpha             # noqa: E402
+from utils.widgets.grandstand import palette as gp  # noqa: E402
+
+
+def test_sheet_surface_is_the_card_panel():
+    d = gp.sheet_surface(True)
+    assert d["bg"] == QColor("#252525")              # --bg-card
+    assert d["border"] == QColor("#363636")          # --border-card
+
+
+def test_sheet_ink_dark_tokens():
+    d = gp.sheet_ink(True)
+    assert d["title"] == QColor("#bbbbbb")           # --text-secondary
+    assert d["sub"] == d["label"] == QColor("#888888")   # --text-muted
+    assert d["caption"] == d["note"] == QColor("#666666")  # --text-disabled
+
+
+def test_sheet_input_dark_tokens_and_the_invalid_border():
+    ok = gp.sheet_input(False, True)
+    assert ok["bg"] == with_alpha("#ffffff", 0.04)
+    assert ok["border"] == with_alpha("#ffffff", 0.10)
+    assert ok["focus_border"] == QColor("#3399ff")   # --blue-border
+    assert ok["error"] == QColor("#ff7575")
+    bad = gp.sheet_input(True, True)
+    assert bad["border"] == QColor("#ff7575")
+    assert bad["ink"] == ok["ink"] == QColor("#ffffff")
+
+
+def test_frow_tokens():
+    d = gp.frow(True)
+    assert d["bg"] == QColor("#2e2e2e")              # --bg-card-inner
+    assert d["border"] == QColor("#363636")          # --border-card
+    assert d["name"] == QColor("#ffffff")
+    assert d["sub"] == QColor("#888888")             # --text-muted
+
+
+def test_link_button_tokens():
+    d = gp.link_button(True)
+    assert d["border"] == QColor("#363636")          # --border-card
+    assert d["ink"] == QColor("#bbbbbb")             # --text-secondary
+    assert d["bg"].alpha() == 0
+
+
+def test_danger_button_rest_and_hover():
+    rest = gp.danger_button(False, True)
+    assert rest["ink"] == QColor("#e07878")
+    assert rest["border"] == with_alpha("#e07878", 0.32)
+    hover = gp.danger_button(True, True)
+    assert hover["bg"] == with_alpha("#e05252", 0.14)
+    assert hover["border"] == QColor("#e05252")
+    assert hover["ink"] == QColor("#ff9b9b")
+
+
+def test_sheet_chrome_button_rest_and_hover():
+    """`.sheet-x` and the back arrow (handoff §4.5)."""
+    rest = gp.sheet_chrome_button(False, True)
+    assert rest["bg"] == with_alpha("#ffffff", 0.05)
+    assert rest["border"] == with_alpha("#ffffff", 0.13)
+    assert rest["ink"] == QColor("#888888")          # --text-muted
+    hover = gp.sheet_chrome_button(True, True)
+    assert hover["bg"] == with_alpha("#ffffff", 0.09)
+    assert hover["border"] == QColor("#555555")      # --border-light
+    assert hover["ink"] == QColor("#ffffff")
+
+
+def test_save_is_blue_filled_and_hovers_to_blue_border():
+    save = gp.sheet_footer_button(True, False, True)
+    assert save["bg"] == QColor("#0077ff")           # --blue
+    assert save["ink"] == QColor("#ffffff")
+    assert gp.sheet_footer_button(True, True, True)["bg"] == QColor("#3399ff")
+    cancel = gp.sheet_footer_button(False, False, True)
+    assert cancel["bg"].alpha() == 0
+    assert cancel["ink"] == QColor("#bbbbbb")        # --text-secondary
+
+
+def test_browser_empty_ink():
+    d = gp.browser_empty_ink(True)
+    assert d["title"] == QColor("#ffffff")
+    assert d["body"] == QColor("#888888")            # --text-muted
+
+
+def test_every_sheet_token_accepts_both_themes():
+    for fn, args in ((gp.sheet_surface, ()), (gp.sheet_ink, ()),
+                     (gp.sheet_input, (False,)), (gp.frow, ()),
+                     (gp.link_button, ()), (gp.danger_button, (False,)),
+                     (gp.sheet_chrome_button, (False,)),
+                     (gp.sheet_footer_button, (True, False)),
+                     (gp.browser_empty_ink, ())):
+        for is_dark in (True, False):
+            assert fn(*args, is_dark) is not None
