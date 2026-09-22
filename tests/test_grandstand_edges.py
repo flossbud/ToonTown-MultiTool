@@ -1435,3 +1435,92 @@ def test_unflagged_add_still_opens_todays_editor(monkeypatch, qapp):
     finally:
         tab.shutdown()
         tab.close()
+
+
+# ── remove (sub-project C, Task 4) ──────────────────────────────────────────
+
+def _confirm(monkeypatch, accepted: bool):
+    import tabs.launch_tab as launch_tab
+
+    class Dialog:
+        DialogCode = SimpleNamespace(Accepted=1, Rejected=0)
+        shown = []
+
+        def __init__(self, *args, **kwargs):
+            Dialog.shown.append(kwargs)
+
+        def exec(self):
+            return self.DialogCode.Accepted if accepted else self.DialogCode.Rejected
+
+    monkeypatch.setattr(launch_tab, "ConfirmDialog", Dialog)
+    return Dialog
+
+
+def _mutating_delete(accounts):
+    def delete(index):
+        removed = accounts.pop(index)
+        return removed.id, ""
+    return delete
+
+
+def test_remove_confirms_then_deletes_and_closes_the_sheet(monkeypatch, qapp):
+    _stub_editor(monkeypatch)
+    dialog = _confirm(monkeypatch, accepted=True)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a", "b"], blocked=False)
+    cred.delete_account.side_effect = _mutating_delete(
+        cred.get_accounts_metadata.return_value)
+    try:
+        sheet = _open_sheet_via_gear(tab, "a")
+        sheet.remove_button.click()
+        assert len(dialog.shown) == 1
+        assert dialog.shown[0]["title"] == "Delete a?"
+        cred.delete_account.assert_called_once_with(0)
+        assert tab.grandstand.in_focus_mode() is False
+        assert [c.account_id() for c in tab.grandstand.shelf.cards()] == ["b"]
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_a_declined_confirm_keeps_the_sheet_and_the_account(monkeypatch, qapp):
+    _stub_editor(monkeypatch)
+    _confirm(monkeypatch, accepted=False)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        sheet = _open_sheet_via_gear(tab, "a")
+        sheet.label_input.setText("kept")
+        sheet.remove_button.click()
+        cred.delete_account.assert_not_called()
+        assert tab.grandstand.in_focus_mode() is True
+        assert sheet.draft().label == "kept"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_an_account_removed_underneath_closes_the_open_sheet(monkeypatch, qapp):
+    """Manage, another tab: the roster re-renders without the account and
+    the sheet for it must not survive (spec §4)."""
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a", "b"], blocked=False)
+    try:
+        _open_sheet_via_gear(tab, "a")
+        cred.get_accounts_metadata.return_value.pop(0)
+        tab._reconcile_slots()
+        tab._render_grandstand("ttr")
+        assert tab.grandstand.in_focus_mode() is False
+        assert tab.grandstand.account_sheet.is_open() is False
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_unflagged_tab_never_reaches_the_remove_handler(monkeypatch, qapp):
+    _confirm(monkeypatch, accepted=True)
+    tab, cred = _make_launch_tab(monkeypatch, ["a"], blocked=False, flagged=False)
+    try:
+        tab._on_account_remove("ttr", "a")
+        cred.delete_account.assert_not_called()
+    finally:
+        tab.shutdown()
+        tab.close()

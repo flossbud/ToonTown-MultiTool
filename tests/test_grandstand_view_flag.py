@@ -431,3 +431,37 @@ def test_add_mode_has_no_cross_link_and_stamps_add(roster):
     assert len(seen) == 1
     assert (seen[0].mode, seen[0].id, seen[0].username, seen[0].password) == (
         MODE_ADD, "", "newbie", "secret")
+
+
+# ── remove + pruning (spec §3 "Remove", §4 "Account removed underneath") ────
+
+def test_the_danger_button_emits_the_remove_intent(roster):
+    seen = []
+    roster.account_remove_requested.connect(lambda g, a: seen.append((g, a)))
+    roster.open_account_sheet("ttr", _draft(), [], None)
+    assert roster.account_sheet.remove_button.text().endswith(
+        "Remove La from the launcher")
+    roster.account_sheet.remove_button.click()
+    assert seen == [("ttr", "a")]
+    assert roster.in_focus_mode() is True        # the owner confirms and closes
+
+
+def test_pruning_closes_the_sheet_for_a_vanished_account(roster):
+    roster.open_account_sheet("ttr", _draft(), [], None)
+    roster.set_accounts("ttr", [_entry("b")])     # "a" removed underneath
+    assert roster.in_focus_mode() is False
+    assert roster.account_sheet.is_open() is False
+
+
+def test_a_refresh_keeps_a_surviving_sheet_and_updates_its_base(roster):
+    roster.open_account_sheet("ttr", _draft(), [], None)
+    roster.set_accounts("ttr", [_entry("a", state="failed"), _entry("b")])
+    assert roster.in_focus_mode() is True
+    assert roster.account_sheet.preview.state() == "failed"
+
+
+def test_pruning_leaves_an_add_mode_sheet_alone(roster):
+    roster.open_account_sheet(
+        "ttr", _draft(mode=MODE_ADD, label="", username="", password=""), [], None)
+    roster.set_accounts("ttr", [])
+    assert roster.in_focus_mode() is True

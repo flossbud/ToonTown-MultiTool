@@ -224,6 +224,7 @@ class GrandstandView(QWidget):
         self.sheet.cancel_requested.connect(self.close_sheet)
         self.sheet.save_requested.connect(self._on_sheet_save)
         self.sheet.cross_link_requested.connect(self._on_sheet_cross_link)
+        self.account_sheet.remove_requested.connect(self._on_sheet_remove)
 
         self.apply_theme(self._is_dark)
 
@@ -272,12 +273,19 @@ class GrandstandView(QWidget):
             self._reconcile_focus(game)
 
     def _reconcile_focus(self, game: str) -> None:
-        """An open sheet follows its account: a surviving one feeds the
-        preview its fresh state and accent (Task 4 adds: a vanished one
-        closes the sheet)."""
+        """An open sheet or browser follows its account (spec §4): one removed
+        underneath (Manage, another tab) closes the surface; one that
+        survives feeds the preview its fresh state and accent."""
+        ids = {e.account_id for e in self._entries[game]}
+        if self._browser_account is not None and self._browser_account not in ids:
+            self.close_sheet()
+            return
         aid = self.account_sheet.account_id()
         if not aid:
             return                                   # closed, or add mode
+        if aid not in ids:
+            self.close_sheet()
+            return
         self.account_sheet.set_base_entry(self.entry_for(game, aid))
 
     def set_account_state(self, game: str, account_id: str, state: str,
@@ -496,3 +504,11 @@ class GrandstandView(QWidget):
         if draft is None or self._sheet_game is None or not draft.id:
             return
         self.edit_requested.emit(self._sheet_game, draft.id, "appearance")
+
+    def _on_sheet_remove(self) -> None:
+        """The danger button. Confirmation and the delete belong to the owner
+        (spec §3 "Remove"); the sheet stays until the owner closes it."""
+        draft = self.account_sheet.draft()
+        if draft is None or self._sheet_game is None or not draft.id:
+            return
+        self.account_remove_requested.emit(self._sheet_game, draft.id)

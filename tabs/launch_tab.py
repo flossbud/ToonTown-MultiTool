@@ -1190,6 +1190,7 @@ class LaunchTab(QWidget):
         # Sub-project C: the sheet's intents. Every handler re-checks
         # _grandstand_mounted() so the legacy path is byte-for-byte.
         self.grandstand.account_save_requested.connect(self._on_account_save)
+        self.grandstand.account_remove_requested.connect(self._on_account_remove)
         self._layout.addWidget(self.grandstand, 1)
         # The legacy sections remain parented for external callers, but without
         # a layout Qt shows them at (0, 0) over Grandstand when their parent is
@@ -1338,6 +1339,16 @@ class LaunchTab(QWidget):
         game_label = "TTR" if game == "ttr" else "CC"
         self.log(f"[Launch] {game_label} account {self._position_of(game, draft.id)} updated.")
         self.grandstand.close_sheet()
+
+    def _on_account_remove(self, game: str, account_id: str) -> None:
+        """Sheet danger button: today's confirm + delete flow, then close.
+        _on_delete already prunes the party and re-renders; the re-render's
+        pruning closes the sheet too, and this close is the explicit one."""
+        if not self._grandstand_mounted():
+            return
+        self._on_delete(game, account_id)
+        if self._global_index_of(account_id) is None:
+            self.grandstand.close_sheet()
 
     # ── Layout mode ────────────────────────────────────────────────────────
 
