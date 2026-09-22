@@ -1191,6 +1191,7 @@ class LaunchTab(QWidget):
         # _grandstand_mounted() so the legacy path is byte-for-byte.
         self.grandstand.account_save_requested.connect(self._on_account_save)
         self.grandstand.account_remove_requested.connect(self._on_account_remove)
+        self.grandstand.toon_chosen.connect(self._on_toon_chosen)
         self._layout.addWidget(self.grandstand, 1)
         # The legacy sections remain parented for external callers, but without
         # a layout Qt shows them at (0, 0) over Grandstand when their parent is
@@ -1349,6 +1350,17 @@ class LaunchTab(QWidget):
         self._on_delete(game, account_id)
         if self._global_index_of(account_id) is None:
             self.grandstand.close_sheet()
+
+    def _on_toon_chosen(self, game: str, account_id: str, toon_name: str) -> None:
+        """The primary-toon write (spec §3 "Choose toon", handoff §6.3): pin
+        the pick, rebuild the roster for the new identity, return the view to
+        the sheet with the same draft."""
+        if not self._grandstand_mounted():
+            return
+        self._recent_toons.set_primary(account_id, toon_name)
+        self._render_grandstand(game)
+        self.grandstand.close_toon_browser(
+            primary_name=self._recent_toons.primary_name(account_id))
 
     # ── Layout mode ────────────────────────────────────────────────────────
 

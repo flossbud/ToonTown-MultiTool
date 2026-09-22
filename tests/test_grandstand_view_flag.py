@@ -476,3 +476,113 @@ def test_the_note_counts_merged_toons(roster):
     roster.open_account_sheet("ttr", _draft(), ghosts, None)
     assert roster.sheet.note_text() == "1 toon discovered"
     assert roster.account_sheet.frow_name_text() == "Katsuro"
+
+
+# ── the choose-a-toon browser (spec §3 "Choose toon", handoff §4.7) ─────────
+
+def _toons():
+    from types import SimpleNamespace
+    return [SimpleNamespace(toon_name="Pepper", dna="7401", game="ttr", species="dog",
+                            accent=None, laff=52),
+            SimpleNamespace(toon_name="Flossbud", dna="7400", game="ttr", species="cat",
+                            accent=None, laff=137)]
+
+
+def test_choose_toon_swaps_the_shelf_for_the_browser_and_keeps_the_hero(roster, qapp):
+    roster.resize(880, 688)
+    roster.show()
+    qapp.processEvents()
+    hero_before = roster.hero.geometry()
+    slot_before = roster.shelf_stack.geometry()
+    roster.open_account_sheet("ttr", _draft(), _toons(), "Flossbud")
+    roster.account_sheet.choose_button.click()
+    qapp.processEvents()
+    assert roster.browser_open() is True
+    assert roster.in_focus_mode() is False            # page 0: selector + hero stay
+    assert roster.roster_page.isVisible() is True
+    assert roster.hero.geometry() == hero_before
+    assert roster.shelf_stack.geometry() == slot_before
+    assert roster.browser.title_text() == "Choose a toon · La"
+    assert roster.browser.current_card().toon_name() == "Flossbud"
+    assert roster.lines[-1] == "[Grandstand] sheet: toon-browser a"
+    assert roster.account_sheet.is_open() is True     # the draft is kept
+
+
+def test_the_browser_title_uses_the_drafts_edited_label(roster):
+    roster.open_account_sheet("ttr", _draft(), _toons(), "Flossbud")
+    roster.account_sheet.label_input.setText("Main")
+    roster.account_sheet.choose_button.click()
+    assert roster.browser.title_text() == "Choose a toon · Main"
+
+
+def test_a_pick_emits_toon_chosen_and_nothing_else(roster):
+    seen = []
+    roster.toon_chosen.connect(lambda g, a, n: seen.append((g, a, n)))
+    roster.open_account_sheet("ttr", _draft(), _toons(), "Flossbud")
+    roster.account_sheet.choose_button.click()
+    roster.browser.card_for("Pepper").ribbon.click()
+    assert seen == [("ttr", "a", "Pepper")]
+    assert roster.browser_open() is True              # the owner closes it
+
+
+def test_close_toon_browser_returns_to_the_sheet_with_the_new_primary(roster):
+    roster.open_account_sheet("ttr", _draft(), _toons(), "Flossbud")
+    roster.account_sheet.label_input.setText("Main")
+    roster.account_sheet.choose_button.click()
+    roster.close_toon_browser(primary_name="Pepper")
+    assert roster.browser_open() is False
+    assert roster.in_focus_mode() is True
+    assert roster.account_sheet.draft().label == "Main"        # same draft
+    assert roster.account_sheet.frow_name_text() == "Pepper"
+    assert roster.account_sheet.preview.name_text() == "Pepper"
+
+
+def test_the_browsers_back_arrow_returns_to_the_sheet_unchanged(roster):
+    roster.open_account_sheet("ttr", _draft(), _toons(), "Flossbud")
+    roster.account_sheet.choose_button.click()
+    roster.browser.header.back_button.click()
+    assert roster.browser_open() is False
+    assert roster.in_focus_mode() is True
+    assert roster.account_sheet.frow_name_text() == "Flossbud"
+
+
+def test_a_pick_rebuilds_the_lineup_rather_than_diffing_it(roster):
+    """Handoff §6.3: a new identity, not an animation between two."""
+    roster.shelf.card_for("a").clicked.emit("a")
+    before = roster.hero.crew_area.slot_for("a")
+    assert before is not None
+    roster.open_account_sheet("ttr", _draft(), _toons(), "Flossbud")
+    roster.account_sheet.choose_button.click()
+    # The owner re-renders with the new primary, then closes the browser.
+    roster.set_accounts("ttr", [RosterEntry(
+        account_id="a", game="ttr", label="La", username="ua", toon_name="Pepper",
+        species="dog", dna="7401", accent="#4a8fe7", footer="Primary",
+        portrait_mode="render", state="idle", message="", raw_error=""), _entry("b")])
+    roster.close_toon_browser(primary_name="Pepper")
+    after = roster.hero.crew_area.slot_for("a")
+    assert after is not None and after is not before
+    assert after.toon_name == "Pepper"
+
+
+def test_open_toon_browser_from_the_roster_returns_to_the_roster(roster):
+    """The future B entry point: return_to="roster" never reopens a sheet."""
+    roster.open_toon_browser("ttr", "b", _toons(), None, return_to="roster")
+    assert roster.browser_open() is True
+    assert roster.browser.title_text() == "Choose a toon · Lb"
+    roster.close_toon_browser(primary_name="Pepper")
+    assert roster.browser_open() is False
+    assert roster.in_focus_mode() is False
+
+
+def test_pruning_closes_an_open_browser_too(roster):
+    roster.open_account_sheet("ttr", _draft(), _toons(), "Flossbud")
+    roster.account_sheet.choose_button.click()
+    roster.set_accounts("ttr", [_entry("b")])
+    assert roster.browser_open() is False
+    assert roster.in_focus_mode() is False
+    assert roster.account_sheet.is_open() is False
+
+
+def test_theme_reaches_the_browser(roster):
+    roster.apply_theme(False)
+    assert roster.browser._is_dark is False

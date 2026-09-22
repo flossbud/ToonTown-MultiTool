@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
+from PySide6.QtCore import Qt
 
 from tabs.launch_tab import LaunchTab
 from utils.credential_copy import KEYRING_WARNING_COPY
@@ -1521,6 +1522,58 @@ def test_unflagged_tab_never_reaches_the_remove_handler(monkeypatch, qapp):
     try:
         tab._on_account_remove("ttr", "a")
         cred.delete_account.assert_not_called()
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+# ── toon chosen (sub-project C, Task 6) ─────────────────────────────────────
+
+def test_toon_chosen_sets_the_primary_and_rebuilds_card_hero_and_sheet(
+        monkeypatch, qapp):
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QTest
+    from utils.widgets.grandstand.roster_card import CARD_H, CARD_W
+
+    _stub_editor(monkeypatch)
+    tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        tab._recent_toons = _recent_toons_store()
+        tab._recent_toons.record("a", "Flossbud", "ttr", "7400", species="cat")
+        tab._recent_toons.record("a", "Pepper", "ttr", "7401", species="dog")
+        tab._render_current_view("ttr")
+        assert tab.grandstand.shelf.card_for("a").name_text() == "Pepper"   # newest
+        tab.grandstand.shelf.card_for("a").clicked.emit("a")
+        before = tab.grandstand.hero.crew_area.slot_for("a")
+
+        sheet = _open_sheet_via_gear(tab)
+        assert sheet.frow_name_text() == "Pepper"
+        sheet.choose_button.click()
+        assert tab.grandstand.browser_open() is True
+        card = tab.grandstand.browser.card_for("Flossbud")
+        QTest.mouseClick(card, Qt.LeftButton, pos=QPoint(CARD_W // 2, CARD_H // 2))
+
+        assert tab._recent_toons.primary_name("a") == "Flossbud"
+        assert tab.grandstand.browser_open() is False
+        assert tab.grandstand.in_focus_mode() is True
+        assert sheet.frow_name_text() == "Flossbud"
+        assert sheet.preview.name_text() == "Flossbud"
+        assert tab.grandstand.shelf.card_for("a").name_text() == "Flossbud"
+        assert tab.grandstand.shelf.card_for("a").footer_text() == "Primary"
+        after = tab.grandstand.hero.crew_area.slot_for("a")
+        assert after is not before and after.toon_name == "Flossbud"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_unflagged_tab_never_reaches_the_toon_handler(monkeypatch, qapp):
+    tab, _cred = _make_launch_tab(monkeypatch, ["a"], blocked=False, flagged=False)
+    try:
+        tab._recent_toons = _recent_toons_store()
+        tab._recent_toons.record("a", "Flossbud", "ttr", "7400")
+        tab._on_toon_chosen("ttr", "a", "Flossbud")
+        assert tab._recent_toons.primary_name("a") is None
     finally:
         tab.shutdown()
         tab.close()

@@ -182,8 +182,12 @@ class GrandstandView(QWidget):
         self.shelf_stack.setObjectName("gs_shelf_stack")
         self.shelf_stack.setStyleSheet("#gs_shelf_stack { background: transparent; }")
         from utils.widgets.grandstand.card_shelf import CardShelf
+        from utils.widgets.grandstand.toon_browser import ToonBrowser
         self.shelf = CardShelf(self.shelf_stack)
         self.shelf_stack.addWidget(self.shelf)
+        self.browser = ToonBrowser(self.shelf_stack)
+        self.shelf_stack.addWidget(self.browser)
+        self.shelf_stack.setCurrentIndex(SLOT_SHELF)
         stack.addWidget(self.shelf_stack, 1)          # the only stretching band
         self.pages.addWidget(self.roster_page)
 
@@ -225,6 +229,9 @@ class GrandstandView(QWidget):
         self.sheet.save_requested.connect(self._on_sheet_save)
         self.sheet.cross_link_requested.connect(self._on_sheet_cross_link)
         self.account_sheet.remove_requested.connect(self._on_sheet_remove)
+        self.account_sheet.choose_toon_requested.connect(self._on_choose_toon)
+        self.browser.back_requested.connect(self.close_toon_browser)
+        self.browser.toon_picked.connect(self._on_toon_picked)
 
         self.apply_theme(self._is_dark)
 
@@ -348,6 +355,7 @@ class GrandstandView(QWidget):
         self.hero.crew_area.apply_theme(is_dark)
         self.shelf.apply_theme(is_dark)
         self.sheet.apply_theme(is_dark)               # forwards to the body
+        self.browser.apply_theme(is_dark)
 
     def _on_game_clicked(self, game: str) -> None:
         if game == self._party.active_game():
@@ -512,3 +520,60 @@ class GrandstandView(QWidget):
         if draft is None or self._sheet_game is None or not draft.id:
             return
         self.account_remove_requested.emit(self._sheet_game, draft.id)
+
+    # ── the choose-a-toon browser (spec §3 "Choose toon") ──────────────────
+
+    def _on_choose_toon(self) -> None:
+        draft = self.account_sheet.draft()
+        if draft is None or self._sheet_game is None or not draft.id:
+            return
+        self.open_toon_browser(self._sheet_game, draft.id, self._sheet_toons,
+                               self._sheet_primary, return_to="settings")
+
+    def open_toon_browser(self, game: str, account_id: str, toons: list,
+                          primary_name, return_to: str = "settings") -> None:
+        """A shelf-level surface (handoff §4.7): the browser takes the shelf's
+        slot on page 0 so the selector and hero stay put. An open sheet keeps
+        its draft in memory; `return_to` says where Back / a pick lands."""
+        self._browser_account = account_id
+        self._browser_return_to = return_to
+        self._log(f"{SHEET_STAMP_PREFIX} toon-browser {account_id}")
+        draft = self.account_sheet.draft()
+        if draft is not None and draft.id == account_id:
+            display = draft.display_name
+        else:
+            entry = self.entry_for(game, account_id)
+            display = (entry.label or entry.username) if entry is not None else account_id
+        self.browser.open(game, account_id, display, toons, primary_name)
+        self.shelf_stack.setCurrentIndex(SLOT_BROWSER)
+        if self.in_focus_mode():
+            self._go_to_page(PAGE_ROSTER)
+        self.browser.focus_current()
+
+    def close_toon_browser(self, primary_name=None) -> None:
+        """Back to wherever the browser was opened from. With `primary_name`
+        (a pick the owner just committed) the sheet's row follows and the
+        hero is rebuilt for the new identity (handoff §6.3)."""
+        self.shelf_stack.setCurrentIndex(SLOT_SHELF)
+        self._browser_account = None
+        game = self._sheet_game or self._party.active_game()
+        if primary_name is not None:
+            self._sheet_primary = primary_name
+            if self.account_sheet.is_open():
+                self.account_sheet.set_toons(self._sheet_toons, primary_name)
+            self._rebuild_lineup(game)
+        if self._browser_return_to == "settings" and self.account_sheet.is_open():
+            self._go_to_page(PAGE_SHEET)
+            self.account_sheet.choose_button.setFocus()
+
+    def _rebuild_lineup(self, game: str) -> None:
+        """Handoff §6.3: a primary-toon change is a new identity, not an
+        animation between two, so the lineup is emptied and rebuilt rather
+        than diffed into place."""
+        self.hero.set_lineup([])
+        self.refresh(game)
+
+    def _on_toon_picked(self, toon_name: str) -> None:
+        if self._browser_account is None:
+            return
+        self.toon_chosen.emit(self._party.active_game(), self._browser_account, toon_name)
