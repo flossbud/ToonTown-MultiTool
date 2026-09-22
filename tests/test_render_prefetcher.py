@@ -292,17 +292,17 @@ def test_a_4xx_probe_probes_the_next_item_instead_of_stranding_the_breaker(rig, 
     pf.discovered("ttr", "Hiro", "dna1")              # one cold pose trips the breaker
     _drain(qapp, pf)
     assert pf.breaker_open is True
-    pf.discovered("ttr", "Blue", "dna2")              # queued behind the breaker...
-    pf.want("ttr", "Blue", "head")                    # ...and first in line after the probe
-    dl.outcomes[("dna1", "portrait")] = "client"      # the probe: server refuses the pose
+    pf.discovered("ttr", "Blue", "dna2")              # queued behind the breaker, untried,
+                                                      # so it is probed before Hiro's retries
+    dl.outcomes[("dna2", "portrait")] = "client"      # the probe: server refuses the pose
     dl.default = PNG                                  # everything after it succeeds
     pf.fire_probe_now()                               # the only manual probe
     _drain(qapp, pf)
-    assert dl.calls[BREAKER_THRESHOLD] == ("dna1", "portrait")      # the 404 probe
+    assert dl.calls[BREAKER_THRESHOLD] == ("dna2", "portrait")      # the 404 probe
     assert dl.calls[BREAKER_THRESHOLD + 1] == ("dna2", "head")      # probed next, unprompted
     assert pf.breaker_open is False
     assert breaker == [True, False]
-    assert "portrait" not in store.missing_poses("ttr", "Hiro", "dna1")
+    assert "portrait" not in store.missing_poses("ttr", "Blue", "dna2")
     assert store.current_dna("ttr", "Blue") == "dna2"               # queue drained
     assert pf.pending_count == 0
 
@@ -342,13 +342,13 @@ def test_probe_timer_re_arms_while_a_straggler_is_in_flight(qapp, tmp_path):
     for _ in range(BREAKER_THRESHOLD):                # head fails three times -> open
         pf._on_result("ttr", "Hiro", "dna1", "head", None, timeout)
     assert pf.breaker_open is True
-    assert pf.in_flight_count == 1                    # the straggler is still out
+    assert ("ttr", "Hiro", "dna1", "portrait") in pf._in_flight   # the straggler is still out
     assert pf._probe.isActive()
     pf.fire_probe_now()                               # timer fires with the straggler out
     assert pf._probe.isActive()                       # re-armed, not dropped
     pf._on_result(*straggler, None, timeout)          # the straggler fails too
     assert pf.breaker_open is True
-    assert pf.in_flight_count == 0
+    assert ("ttr", "Hiro", "dna1", "portrait") not in pf._in_flight
     assert pf._probe.isActive()
     assert not (pf.breaker_open and not pf._probe.isActive() and pf._probe_key is None)
 
@@ -478,3 +478,64 @@ def test_the_probe_timer_fires_the_probe_without_being_poked(qapp, tmp_path):
     assert breaker[-1] is False
     _drain(qapp, pf)
     assert store.current_dna("ttr", "Timer Toon") == "dna1"
+
+
+# ── 2026-09-22: a warm pose starved behind cold siblings ───────────────────
+
+_KATSURO = ("portrait", "portrait-delighted", "portrait-grin", "head")
+_COLD_PORTRAITS = {("dna1", p): "timeout" for p in _KATSURO[:3]}   # head stays warm (PNG)
+
+
+def test_a_wanted_warm_pose_lands_even_when_cold_siblings_open_the_breaker(qapp, tmp_path):
+    """Seen live: Katsuro's `head` was a Cloudflare edge HIT (0.1 s) while
+    every portrait pose was cold. The card wanted `head` before the hook had
+    reported the DNA, the three cold portraits opened the breaker, and the
+    retried cold pose was the only thing the probe ever tried. `head` never
+    landed although one request would have fetched it."""
+    store = ToonRenderStore(str(tmp_path), poses=_KATSURO)
+    dl = _Downloader(_COLD_PORTRAITS)
+    pf = RenderPrefetcher(store, downloader=dl, executor=_Immediate(), max_in_flight=1)
+    landed = []
+    pf.render_landed.connect(lambda g, n, p: landed.append(p))
+
+    pf.want("ttr", "Katsuro", "head")            # the card mounts first...
+    pf.discovered("ttr", "Katsuro", "dna1")       # ...the hook reports the DNA later
+    _drain(qapp, pf)
+
+    assert "head" in landed
+    assert dl.calls[0] == ("dna1", "head")         # the on-screen pose goes first
+    assert pf.breaker_open is True                 # the cold ones still tripped it
+
+
+def test_a_want_arriving_while_the_breaker_is_open_is_probed_at_once(qapp, tmp_path):
+    """Roboroni (all cold) opened the breaker first; Katsuro's card then
+    wanted its warm `head`. That must not wait for the backoff timer: an
+    on-screen need is the most valuable probe there is."""
+    poses = ("portrait", "head")
+    store = ToonRenderStore(str(tmp_path), poses=poses)
+    dl = _Downloader({("dnaR", "portrait"): "timeout", ("dnaR", "head"): "timeout",
+                      ("dnaK", "portrait"): "timeout"})       # Katsuro head warm
+    pf = RenderPrefetcher(store, downloader=dl, executor=_Immediate(), max_in_flight=1)
+    landed = []
+    pf.render_landed.connect(lambda g, n, p: landed.append((n, p)))
+
+    pf.discovered("ttr", "Roboroni", "dnaR")
+    _drain(qapp, pf)
+    assert pf.breaker_open is True and landed == []
+
+    pf.want("ttr", "Katsuro", "head")            # pending: DNA unknown yet
+    pf.discovered("ttr", "Katsuro", "dnaK")
+    _drain(qapp, pf)                              # no fire_probe_now(): the want itself must probe
+
+    assert ("Katsuro", "head") in landed
+
+
+def test_a_failed_pose_is_retried_only_after_every_untried_pose(qapp, tmp_path):
+    """The probe is worth most when it tries something new. A pose that
+    already failed goes to the back, never ahead of an untried one."""
+    store = ToonRenderStore(str(tmp_path), poses=("portrait", "head"))
+    dl = _Downloader({("dna1", "portrait"): "timeout"})
+    pf = RenderPrefetcher(store, downloader=dl, executor=_Immediate(), max_in_flight=1)
+    pf.discovered("ttr", "Hiro", "dna1")
+    _drain(qapp, pf)
+    assert dl.calls[:2] == [("dna1", "portrait"), ("dna1", "head")]

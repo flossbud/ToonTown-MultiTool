@@ -115,8 +115,13 @@ def test_a_never_seen_toon_shows_a_silhouette_then_completes_on_recovery(world, 
     facade.discovered("ttr", "Blue Cat", "dna-new")
     _drain(qapp, pf)
     assert pf.breaker_open is True
+    calls_before = origin.calls
     card = RosterCard()
     card.set_entry(_entry("Blue Cat", "dna-new"))
+    # The card's want is probed at once even though the breaker is open; the
+    # origin is still stalled, so that probe fails and the backoff grows.
+    _drain(qapp, pf)
+    assert origin.calls == calls_before + 1
     assert card.portrait_pixmap() is None                   # nothing ever rendered
     origin.recover()
     pf.fire_probe_now()
