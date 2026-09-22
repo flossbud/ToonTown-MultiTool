@@ -1,5 +1,7 @@
 """The focus-mode sheet shell: header, cross-link, footer, body hosting."""
+import glob
 import os
+import re
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
@@ -113,3 +115,36 @@ def test_theme_reaches_the_body(shell):
     shell.set_body(body)                 # hosting applies the current theme
     shell.apply_theme(False)
     assert body.seen == [True, False]
+
+
+# ── discipline ──────────────────────────────────────────────────────────────
+
+# A lambda passed to .connect() has no receiver QObject, so Qt can't
+# auto-disconnect it when the true receiver is torn down, and the closure
+# holds a strong ref to self (the crash this guards against). Signal
+# receivers must be bound methods.
+#
+# Scope: sheet.py, account_sheet.py and draft.py only — the sheet's own
+# construction chain that this fix touches. card_shelf.py, roster_card.py
+# and view.py already carry several pre-existing lambda connections (shelf
+# signal forwarding) that predate this rule and are not one-line fixes; they
+# are a separate cleanup, not part of this task, so they are deliberately
+# left out of the scan rather than papered over with a broad exemption.
+_LAMBDA_CONNECT = re.compile(r"\.connect\(\s*lambda\b")
+_SCANNED_MODULES = ("sheet.py", "account_sheet.py", "draft.py")
+
+
+def test_no_lambda_signal_connections_in_the_grandstand_package():
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "utils", "widgets", "grandstand")
+    offenders = []
+    for name in _SCANNED_MODULES:
+        path = os.path.join(root, name)
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        for match in _LAMBDA_CONNECT.finditer(text):
+            line = text.count("\n", 0, match.start()) + 1
+            offenders.append(f"{name}:{line}")
+    assert offenders == [], (
+        "signal receivers must be bound methods, not lambdas "
+        f"(Qt can't auto-disconnect a lambda on teardown): {offenders}")

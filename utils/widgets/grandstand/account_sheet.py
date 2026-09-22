@@ -243,11 +243,12 @@ class AccountSheet(QWidget):
         grid.setRowStretch(3, 1)
         row.addWidget(self.fields, 1, Qt.AlignTop)
 
-        for key, edit in (("label", self.label_input),
-                          ("username", self.username_input),
-                          ("password", self.password_input)):
-            edit.textChanged.connect(
-                lambda _text, key=key: self._on_field_changed(key))
+        # Bound methods, not lambdas: a lambda has no receiver QObject, so
+        # Qt can't auto-disconnect it on teardown and the closure holds a
+        # strong ref to self.
+        self.label_input.textChanged.connect(self._on_label_edited)
+        self.username_input.textChanged.connect(self._on_username_edited)
+        self.password_input.textChanged.connect(self._on_password_edited)
 
         self.apply_theme(True)
 
@@ -399,6 +400,15 @@ class AccountSheet(QWidget):
         self.label_input.setFocus()
 
     # ── draft ──────────────────────────────────────────────────────────────
+
+    def _on_label_edited(self, _text: str) -> None:
+        self._on_field_changed("label")
+
+    def _on_username_edited(self, _text: str) -> None:
+        self._on_field_changed("username")
+
+    def _on_password_edited(self, _text: str) -> None:
+        self._on_field_changed("password")
 
     def _on_field_changed(self, key: str) -> None:
         d = self._draft
