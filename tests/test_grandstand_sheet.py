@@ -124,14 +124,16 @@ def test_theme_reaches_the_body(shell):
 # holds a strong ref to self (the crash this guards against). Signal
 # receivers must be bound methods.
 #
-# Scope: sheet.py, account_sheet.py and draft.py only — the sheet's own
-# construction chain that this fix touches. card_shelf.py, roster_card.py
-# and view.py already carry several pre-existing lambda connections (shelf
-# signal forwarding) that predate this rule and are not one-line fixes; they
-# are a separate cleanup, not part of this task, so they are deliberately
-# left out of the scan rather than papered over with a broad exemption.
+# Scope: sheet.py, account_sheet.py, draft.py and toon_browser.py only — the
+# sheet's own construction chain that this fix touches, plus every module
+# written under the rule since. card_shelf.py, roster_card.py and view.py
+# already carry several pre-existing lambda connections (shelf signal
+# forwarding) that predate this rule and are not one-line fixes; they are a
+# separate cleanup, not part of this task, so they are deliberately left out
+# of the scan rather than papered over with a broad exemption.
 _LAMBDA_CONNECT = re.compile(r"\.connect\(\s*lambda\b")
-_SCANNED_MODULES = ("sheet.py", "account_sheet.py", "draft.py")
+_SCANNED_MODULES = ("sheet.py", "account_sheet.py", "draft.py",
+                    "toon_browser.py")
 
 
 def test_no_lambda_signal_connections_in_the_grandstand_package():
