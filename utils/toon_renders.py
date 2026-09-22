@@ -17,6 +17,10 @@ from utils.render_prefetcher import RenderPrefetcher
 from utils.toon_render_store import ToonRenderStore
 
 PREVIOUS_LOOK_TOOLTIP = "Showing previous look — new render pending."
+# A silhouette that persists: the toon has been discovered and asked for, but
+# the render origin has not produced this outfit yet (2026-09-22: it takes
+# anywhere from tens of seconds to never). The prefetcher keeps probing.
+AWAITING_RENDER_TOOLTIP = "The render service hasn't drawn {name} yet — retrying in the background."
 _LRU_MAX = 64
 
 
@@ -110,6 +114,12 @@ class ToonRenders(QObject):
         else:
             self._lru.move_to_end(path)
         return pm, tier
+
+    def awaiting_render(self, game: str, name: str) -> bool:
+        """True while the toon's newest outfit is known but nothing of it has
+        landed: a consumer with no picture can say so instead of staying mute."""
+        dna = self.store.candidate_dna(game, name)
+        return bool(dna) and len(self.store.missing_poses(game, name, dna)) == len(self.store.poses)
 
     def want(self, game: str, name: str, pose: str) -> None:
         self.prefetcher.want(game, name, pose)

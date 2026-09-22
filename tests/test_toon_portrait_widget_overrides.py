@@ -264,6 +264,21 @@ def test_nothing_on_disk_paints_the_slot_circle_not_the_ellipsis(render_cache):
     assert miss != ref.grab().toImage()
 
 
+def test_a_badge_with_nothing_drawn_yet_says_so(render_cache):
+    from tabs.multitoon._tab import ToonPortraitWidget
+    from tests._render_fixtures import complete_set
+    from utils.toon_renders import AWAITING_RENDER_TOOLTIP
+    facade, store, pf = render_cache
+    store.note_dna("ttr", "Roboroni", "dnaR")           # discovered, nothing landed
+    w = ToonPortraitWidget(1)
+    w.set_game("ttr"); w.set_toon("Roboroni", "dnaR")
+    assert w.portrait_tier() is None
+    assert w.toolTip() == AWAITING_RENDER_TOOLTIP.format(name="Roboroni")
+    complete_set(store, "ttr", "Roboroni", "dnaR")
+    pf.set_promoted.emit("ttr", "Roboroni")
+    assert w.portrait_tier() == "current" and w.toolTip() == ""
+
+
 def test_previous_look_sets_the_tooltip_and_current_clears_it(render_cache):
     """Tier "previous" (the last complete look shown while a newer outfit
     downloads) carries the facade's PREVIOUS_LOOK_TOOLTIP; any other state

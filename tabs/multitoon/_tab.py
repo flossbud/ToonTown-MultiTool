@@ -272,11 +272,18 @@ class ToonPortraitWidget(QWidget):
         would leave the ellipsis up forever. Tier "previous" (the last
         complete look shown while a newer outfit downloads) carries the
         facade's tooltip."""
-        from utils.toon_renders import PREVIOUS_LOOK_TOOLTIP
+        from utils.toon_renders import AWAITING_RENDER_TOOLTIP, PREVIOUS_LOOK_TOOLTIP
         self._pixmap, self._tier = hit if hit is not None else (None, None)
         self._loading = False
         self._dim_cache = None   # content changes -> rebuild dim
-        self.setToolTip(PREVIOUS_LOOK_TOOLTIP if self._tier == "previous" else "")
+        if self._tier == "previous":
+            tip = PREVIOUS_LOOK_TOOLTIP
+        elif hit is None and self._toon_name and self._game in ("cc", "ttr") \
+                and self._renders.awaiting_render(self._game, self._toon_name):
+            tip = AWAITING_RENDER_TOOLTIP.format(name=self._toon_name)
+        else:
+            tip = ""
+        self.setToolTip(tip)
         self.update()
 
     def _refresh_from_cache(self) -> None:

@@ -124,12 +124,18 @@ def test_in_flight_cap_is_respected(qapp, tmp_path):
             submitted.append(a)
             return Future()                             # never completes
 
-    pf = RenderPrefetcher(store, downloader=_Downloader(), executor=_Hold(), max_in_flight=2)
+    pf = RenderPrefetcher(store, downloader=_Downloader(), executor=_Hold(), max_in_flight=1)
+    # A never-rendered outfit sends one canary regardless of the cap, so land
+    # one pose first: the remaining two then compete for the single slot.
+    store.note_dna("ttr", "Hiro", "dna1")
+    with open(store.path_for("ttr", "Hiro", "dna1", "waving"), "wb") as f:
+        f.write(PNG)
+    store.mark_landed("ttr", "Hiro", "dna1", "waving")
     pf.discovered("ttr", "Hiro", "dna1")
     qapp.processEvents()
-    assert len(submitted) == 2
+    assert len(submitted) == 1
     assert pf.pending_count == 1
-    assert pf.in_flight_count == 2
+    assert pf.in_flight_count == 1
 
 
 def test_want_jumps_ahead_of_sweep_work(qapp, tmp_path):
@@ -146,9 +152,9 @@ def test_want_jumps_ahead_of_sweep_work(qapp, tmp_path):
     pf.discovered("ttr", "Hiro", "dna1")             # 3 discovered-priority items queued
     pf.want("ttr", "Hiro", "head")                   # bumps that one to the front
     order = [(a[1], a[3]) for a in submitted]        # (name, pose) submitted so far
-    assert order == [("Sleepy", "portrait")]
+    assert order == [("Sleepy", "head")]              # the sweep's canary
     # simulate the in-flight one finishing so the next pops
-    pf._on_result("ttr", "Sleepy", "dnaS", "portrait", PNG, None)
+    pf._on_result("ttr", "Sleepy", "dnaS", "head", PNG, None)
     qapp.processEvents()
     assert (submitted[1][1], submitted[1][3]) == ("Hiro", "head")
 
@@ -238,7 +244,8 @@ def test_breaker_opens_after_three_consecutive_failures_and_stops_downloading(ri
     assert pf.breaker_open is True
     assert breaker == [True]
     assert len(dl.calls) == BREAKER_THRESHOLD            # exactly three attempts, then silence
-    assert pf.pending_count == 6                          # everything re-queued, nothing dropped
+    assert pf.pending_count == 2                          # one canary per outfit re-queued;
+                                                          # the other poses wait on them
     assert pf.probe_interval_ms == BACKOFF_S[0] * 1000
 
 
@@ -294,15 +301,15 @@ def test_a_4xx_probe_probes_the_next_item_instead_of_stranding_the_breaker(rig, 
     assert pf.breaker_open is True
     pf.discovered("ttr", "Blue", "dna2")              # queued behind the breaker, untried,
                                                       # so it is probed before Hiro's retries
-    dl.outcomes[("dna2", "portrait")] = "client"      # the probe: server refuses the pose
+    dl.outcomes[("dna2", "head")] = "client"          # the probe (Blue's canary): refused
     dl.default = PNG                                  # everything after it succeeds
     pf.fire_probe_now()                               # the only manual probe
     _drain(qapp, pf)
-    assert dl.calls[BREAKER_THRESHOLD] == ("dna2", "portrait")      # the 404 probe
-    assert dl.calls[BREAKER_THRESHOLD + 1] == ("dna2", "head")      # probed next, unprompted
+    assert dl.calls[BREAKER_THRESHOLD] == ("dna2", "head")          # the 404 probe
+    assert dl.calls[BREAKER_THRESHOLD + 1] == ("dna2", "portrait")  # released and probed next, unprompted
     assert pf.breaker_open is False
     assert breaker == [True, False]
-    assert "portrait" not in store.missing_poses("ttr", "Blue", "dna2")
+    assert "head" not in store.missing_poses("ttr", "Blue", "dna2")
     assert store.current_dna("ttr", "Blue") == "dna2"               # queue drained
     assert pf.pending_count == 0
 
@@ -336,19 +343,20 @@ def test_probe_timer_re_arms_while_a_straggler_is_in_flight(qapp, tmp_path):
             return Future()
 
     pf = RenderPrefetcher(store, downloader=_Downloader(), executor=_Hold(), max_in_flight=2)
-    pf.discovered("ttr", "Hiro", "dna1")             # portrait + head in flight, waving queued
+    pf.discovered("ttr", "Hiro", "dna1")             # Hiro's canary (head) in flight
+    pf.discovered("ttr", "Blue", "dna2")             # Blue's canary in flight beside it
     straggler = submitted[0]
     timeout = DownloadError("timeout")
-    for _ in range(BREAKER_THRESHOLD):                # head fails three times -> open
-        pf._on_result("ttr", "Hiro", "dna1", "head", None, timeout)
+    for _ in range(BREAKER_THRESHOLD):                # Blue's canary fails three times -> open
+        pf._on_result("ttr", "Blue", "dna2", "head", None, timeout)
     assert pf.breaker_open is True
-    assert ("ttr", "Hiro", "dna1", "portrait") in pf._in_flight   # the straggler is still out
+    assert ("ttr", "Hiro", "dna1", "head") in pf._in_flight        # the straggler is still out
     assert pf._probe.isActive()
     pf.fire_probe_now()                               # timer fires with the straggler out
     assert pf._probe.isActive()                       # re-armed, not dropped
     pf._on_result(*straggler, None, timeout)          # the straggler fails too
     assert pf.breaker_open is True
-    assert ("ttr", "Hiro", "dna1", "portrait") not in pf._in_flight
+    assert ("ttr", "Hiro", "dna1", "head") not in pf._in_flight
     assert pf._probe.isActive()
     assert not (pf.breaker_open and not pf._probe.isActive() and pf._probe_key is None)
 
@@ -372,7 +380,7 @@ def test_outfit_change_mid_download_purges_and_ignores_the_old_dna(qapp, tmp_pat
     pf.discovered("ttr", "Hiro", "dnaB")             # outfit changed before A finished
     assert store.candidate_dna("ttr", "Hiro") == "dnaB"
     assert all(k[2] == "dnaB" for k in pf._queue)    # A's queued work is gone
-    assert pf.pending_count == len(POSES)
+    assert pf.pending_count == 1                      # B's canary; the rest wait on it
     # A's held download lands: real bytes for an outfit the store no longer tracks.
     pf._on_result(*submitted[0], PNG, None)
     toon_dir = store.toon_dir("ttr", "Hiro")
@@ -533,9 +541,68 @@ def test_a_want_arriving_while_the_breaker_is_open_is_probed_at_once(qapp, tmp_p
 def test_a_failed_pose_is_retried_only_after_every_untried_pose(qapp, tmp_path):
     """The probe is worth most when it tries something new. A pose that
     already failed goes to the back, never ahead of an untried one."""
-    store = ToonRenderStore(str(tmp_path), poses=("portrait", "head"))
+    store = ToonRenderStore(str(tmp_path), poses=POSES)
     dl = _Downloader({("dna1", "portrait"): "timeout"})
     pf = RenderPrefetcher(store, downloader=dl, executor=_Immediate(), max_in_flight=1)
+    # Partly landed (waving), so both remaining poses queue at once rather
+    # than one canary holding the other back.
+    store.note_dna("ttr", "Hiro", "dna1")
+    with open(store.path_for("ttr", "Hiro", "dna1", "waving"), "wb") as f:
+        f.write(PNG)
+    store.mark_landed("ttr", "Hiro", "dna1", "waving")
     pf.discovered("ttr", "Hiro", "dna1")
     _drain(qapp, pf)
     assert dl.calls[:2] == [("dna1", "portrait"), ("dna1", "head")]
+
+
+# ── canary: one request finds out whether the origin draws an outfit ────────
+
+def _held():
+    submitted = []
+
+    class _Hold:
+        def submit(self, fn, *a):
+            submitted.append(a)
+            return Future()
+
+    return submitted, _Hold()
+
+
+def test_a_never_rendered_outfit_sends_one_canary_and_holds_the_rest(qapp, tmp_path):
+    """Roboroni, 2026-09-22: thirteen hanging requests taught us nothing the
+    first one had not. Under an open breaker each probe retries ONE pose, so
+    thirteen queued poses per cold toon meant a given toon was re-tried about
+    once an hour; one canary per outfit means within one backoff period."""
+    store = ToonRenderStore(str(tmp_path), poses=POSES)
+    submitted, hold = _held()
+    pf = RenderPrefetcher(store, downloader=_Downloader(), executor=hold, max_in_flight=3)
+    pf.discovered("ttr", "Roboroni", "dnaR")
+    qapp.processEvents()
+    assert [(a[1], a[3]) for a in submitted] == [("Roboroni", "head")]   # CARD_POSE, one request
+    assert pf.pending_count == 0                                        # nothing else queued
+    pf._on_result("ttr", "Roboroni", "dnaR", "head", PNG, None)        # the origin draws it
+    qapp.processEvents()
+    assert sorted(a[3] for a in submitted[1:]) == sorted(p for p in POSES if p != "head")
+
+
+def test_a_wanted_pose_is_the_canary(qapp, tmp_path):
+    store = ToonRenderStore(str(tmp_path), poses=POSES)
+    submitted, hold = _held()
+    pf = RenderPrefetcher(store, downloader=_Downloader(), executor=hold, max_in_flight=3)
+    pf.want("ttr", "Roboroni", "portrait")           # a badge asked before discovery
+    pf.discovered("ttr", "Roboroni", "dnaR")
+    qapp.processEvents()
+    assert [(a[1], a[3]) for a in submitted] == [("Roboroni", "portrait")]
+
+
+def test_a_refused_canary_releases_the_rest(qapp, tmp_path):
+    """A 4xx is an answer — the origin knows the outfit and refuses that one
+    pose — so the others must be tried, not held forever."""
+    store = ToonRenderStore(str(tmp_path), poses=POSES)
+    dl = _Downloader({("dnaR", "head"): "client"})
+    pf = RenderPrefetcher(store, downloader=dl, executor=_Immediate(), max_in_flight=1)
+    pf.discovered("ttr", "Roboroni", "dnaR")
+    _drain(qapp, pf)
+    assert dl.calls[0] == ("dnaR", "head")
+    assert sorted(dl.calls[1:]) == sorted(("dnaR", p) for p in POSES if p != "head")
+    assert store.current_dna("ttr", "Roboroni") == "dnaR"   # 2 landed + 1 refused: complete
