@@ -188,3 +188,19 @@ def test_focus_current_lands_on_the_checked_card(browser, qapp):
     qapp.processEvents()
     browser.focus_current()
     assert qapp.focusWidget() is browser.card_for("Pepper Fizzlebounce")
+
+
+def test_the_strip_floor_grows_for_its_own_scrollbar(browser, qapp):
+    """F1 (Task 6 review): CardShelf connects rangeChanged to _fit_strip
+    (card_shelf.py:159) so the bar's height joins the floor once it appears;
+    the browser copied the method but not the connection, so its 6px bar was
+    clipped instead of pushing the scroll area's own floor down."""
+    browser.resize(300, 400)
+    browser.show()
+    toons = [_rec(f"Toon{i}", f"74{i:02d}") for i in range(10)]
+    _open(browser, toons=toons, primary="Toon0")
+    qapp.processEvents()
+    bar = browser.scroll.horizontalScrollBar()
+    assert bar.maximum() > bar.minimum()
+    assert browser.scroll.minimumHeight() >= (
+        browser._strip.minimumSizeHint().height() + bar.sizeHint().height())

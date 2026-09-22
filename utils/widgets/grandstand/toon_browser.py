@@ -235,7 +235,6 @@ class ToonBrowser(QFrame):
         self.setObjectName("gs_browser")
         self._is_dark = True
         self._game = "ttr"
-        self._account_id = ""
         self._cards: list[_ToonCard] = []
 
         root = QVBoxLayout(self)
@@ -260,6 +259,10 @@ class ToonBrowser(QFrame):
         self._row.addStretch()
         self.scroll.setWidget(self._strip)
         root.addWidget(self.scroll, 1)
+
+        # The bar's height comes and goes with its range, and the strip's
+        # floor must include it (card_shelf.py:159).
+        self.scroll.horizontalScrollBar().rangeChanged.connect(self._fit_strip)
 
         self.empty = QWidget(self)
         _transparent(self.empty, "gs_browser_empty")
@@ -287,7 +290,7 @@ class ToonBrowser(QFrame):
              toons: list, primary_name) -> None:
         """Rebuild the strip for one account. Rename ghosts collapse (spec
         §3); the checked card is the record the account shows now."""
-        self._game, self._account_id = game, account_id
+        self._game = game
         records = unique_toons(list(toons))
         current = shown_record(records, primary_name)
         self.header.set_copy(title_for(display_name), subtitle_for(len(records)))
@@ -349,7 +352,7 @@ class ToonBrowser(QFrame):
         target.setFocus()
         self.scroll.ensureWidgetVisible(target)
 
-    def _fit_strip(self) -> None:
+    def _fit_strip(self, *_) -> None:
         """Same floor as the shelf: never squeeze the viewport below the cards."""
         bar = self.scroll.horizontalScrollBar()
         bar_h = bar.sizeHint().height() if bar.maximum() > bar.minimum() else 0

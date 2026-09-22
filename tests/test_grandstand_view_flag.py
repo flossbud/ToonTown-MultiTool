@@ -12,7 +12,7 @@ from utils.widgets.grandstand.model import RosterEntry
 from utils.widgets.grandstand.party import LaunchParty
 from utils.widgets.grandstand.view import (
     HERO_H, MILESTONE, PAGE_ROSTER, PAGE_SHEET, SELECTOR_H, SHEET_STAMP_PREFIX,
-    STAMP_PREFIX, GrandstandView, grandstand_enabled,
+    SLOT_SHELF, STAMP_PREFIX, GrandstandView, grandstand_enabled,
 )
 
 
@@ -586,3 +586,43 @@ def test_pruning_closes_an_open_browser_too(roster):
 def test_theme_reaches_the_browser(roster):
     roster.apply_theme(False)
     assert roster.browser._is_dark is False
+
+
+def test_a_stale_browser_account_cannot_close_an_unrelated_sheet(roster):
+    """F2 (Task 6 review): open_account_sheet reset the shelf slot but left
+    _browser_account set, so a browser left open under account A leaves a
+    stale id that _reconcile_focus would use to close B's sheet once A's
+    account is pruned underneath — B never asked for anything to close."""
+    roster.open_account_sheet("ttr", _draft("a"), _toons(), "Flossbud")
+    roster.account_sheet.choose_button.click()          # browser open for "a"
+    roster.open_account_sheet("ttr", _draft("b"), _toons(), "Flossbud")
+    roster.account_sheet.label_input.setText("Lb main")
+    roster.set_accounts("ttr", [_entry("b")])            # "a" pruned underneath
+    assert roster.in_focus_mode() is True
+    assert roster.account_sheet.is_open() is True
+    assert roster.account_sheet.draft().id == "b"
+    assert roster.account_sheet.draft().label == "Lb main"
+
+
+def test_a_game_switch_closes_an_open_browser(roster):
+    """F3 (Task 6 review): the browser only ever closed on a game switch by
+    coincidence, via _reconcile_focus's id-mismatch branch. Close it here
+    explicitly so the shelf slot is back for the new game's own cards."""
+    roster.open_account_sheet("ttr", _draft(), _toons(), "Flossbud")
+    roster.account_sheet.choose_button.click()
+    assert roster.browser_open() is True
+    roster.selector.game_clicked.emit("cc")
+    assert roster.browser_open() is False
+    assert roster.shelf_stack.currentIndex() == SLOT_SHELF
+    assert roster.active_game() == "cc"
+
+
+def test_a_pick_emits_the_browsers_own_game_not_the_active_one(roster):
+    """F3: open_toon_browser's own `game` argument, not active_game(), is
+    what must reach toon_chosen — right today only because nothing yet opens
+    the browser for a game other than the active one."""
+    seen = []
+    roster.toon_chosen.connect(lambda g, a, n: seen.append((g, a, n)))
+    roster.open_toon_browser("cc", "b", _toons(), "Flossbud", return_to="roster")
+    roster.browser.card_for("Pepper").ribbon.click()   # unchecked: "Flossbud" is current
+    assert seen == [("cc", "b", "Pepper")]

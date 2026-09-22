@@ -124,6 +124,7 @@ class GrandstandView(QWidget):
         self._sheet_toons: list = []
         self._sheet_primary: str | None = None
         self._browser_account: str | None = None
+        self._browser_game: str | None = None
         self._browser_return_to = "settings"
         # The last live launch state per (game, account): a RosterEntry only
         # carries the state at render time, and the sheet's preview must open
@@ -364,6 +365,14 @@ class GrandstandView(QWidget):
         # while a sheet is open; a programmatic switch drops the draft first.
         if self.in_focus_mode():
             self.close_sheet()
+        # The browser sits on page 0 alongside the selector, so it can be
+        # open here even though the sheet cannot; close it explicitly rather
+        # than leaving it for `_reconcile_focus`'s id-mismatch branch to
+        # catch by accident once the new game's entries land.
+        if self.browser_open():
+            self.shelf_stack.setCurrentIndex(SLOT_SHELF)
+            self._browser_account = None
+            self._browser_game = None
         self._party.set_active_game(game)
         self.selector.set_active(game)
         self.hero.set_game(game)
@@ -457,6 +466,9 @@ class GrandstandView(QWidget):
         raw record list, newest first; the sheet collapses rename ghosts."""
         if self.browser_open():
             self.shelf_stack.setCurrentIndex(SLOT_SHELF)
+        self._browser_account = None
+        self._browser_game = None
+        self._browser_return_to = "settings"
         self._sheet_game = game
         self._sheet_toons = list(toons)
         self._sheet_primary = primary_name
@@ -477,6 +489,7 @@ class GrandstandView(QWidget):
         if self.browser_open():
             self.shelf_stack.setCurrentIndex(SLOT_SHELF)
         self._browser_account = None
+        self._browser_game = None
         if self.in_focus_mode():
             self._go_to_page(PAGE_ROSTER)
         self.account_sheet.clear()
@@ -536,6 +549,7 @@ class GrandstandView(QWidget):
         slot on page 0 so the selector and hero stay put. An open sheet keeps
         its draft in memory; `return_to` says where Back / a pick lands."""
         self._browser_account = account_id
+        self._browser_game = game
         self._browser_return_to = return_to
         self._log(f"{SHEET_STAMP_PREFIX} toon-browser {account_id}")
         draft = self.account_sheet.draft()
@@ -556,6 +570,7 @@ class GrandstandView(QWidget):
         hero is rebuilt for the new identity (handoff §6.3)."""
         self.shelf_stack.setCurrentIndex(SLOT_SHELF)
         self._browser_account = None
+        self._browser_game = None
         game = self._sheet_game or self._party.active_game()
         if primary_name is not None:
             self._sheet_primary = primary_name
@@ -576,4 +591,4 @@ class GrandstandView(QWidget):
     def _on_toon_picked(self, toon_name: str) -> None:
         if self._browser_account is None:
             return
-        self.toon_chosen.emit(self._party.active_game(), self._browser_account, toon_name)
+        self.toon_chosen.emit(self._browser_game, self._browser_account, toon_name)
