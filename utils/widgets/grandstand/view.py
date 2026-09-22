@@ -11,14 +11,19 @@ from __future__ import annotations
 import dataclasses
 import os
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import (
+    QEasingCurve, QParallelAnimationGroup, QPointF, QPropertyAnimation, QRect,
+    Qt, Signal,
+)
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QSizePolicy, QStackedWidget, QVBoxLayout,
-    QWidget,
+    QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QSizePolicy,
+    QStackedWidget, QVBoxLayout, QWidget,
 )
 
+import utils.motion as motion
 from utils.credential_copy import KEYRING_WARNING_COPY, MACOS_VAULT_COPY
+from utils.effects_flags import effects_disabled
 from utils.widgets.grandstand import palette as gp
 from utils.widgets.grandstand.account_sheet import (
     CROSS_LINK, note_for, subtitle_for, title_for,
@@ -46,6 +51,20 @@ PAGE_ROSTER = 0
 PAGE_SHEET = 1
 SLOT_SHELF = 0
 SLOT_BROWSER = 1
+
+# Focus-mode collapse (handoff §5 motion inventory): 320 ms basis, 200 ms
+# opacity, --ease-out = cubic-bezier(.22, 1, .36, 1). Reduced motion: a plain
+# page switch. Durations are scaled by motion._TEST_DURATION_SCALE.
+COLLAPSE_MS = 320
+COLLAPSE_FADE_MS = 200
+
+
+def _ease_out() -> QEasingCurve:
+    curve = QEasingCurve(QEasingCurve.BezierSpline)
+    curve.addCubicBezierSegment(QPointF(0.22, 1.0), QPointF(0.36, 1.0),
+                                QPointF(1.0, 1.0))
+    return curve
+
 
 _FLAG = "TTMT_GRANDSTAND"
 
@@ -130,6 +149,8 @@ class GrandstandView(QWidget):
         # carries the state at render time, and the sheet's preview must open
         # showing what the card shows now.
         self._live_states: dict[tuple[str, str], tuple] = {}
+        # The in-flight page collapse: (group, proxy label) or None.
+        self._transition = None
 
         self.setObjectName("grandstand_view")
 
@@ -498,8 +519,62 @@ class GrandstandView(QWidget):
         self._sheet_primary = None
 
     def _go_to_page(self, index: int) -> None:
-        """Plain switch for now; Task 7 adds the handoff's collapse."""
+        """Focus-mode collapse (handoff §5): the outgoing page's snapshot
+        shrinks to nothing over COLLAPSE_MS and fades over COLLAPSE_FADE_MS
+        on --ease-out, while the incoming page is already in place beneath
+        it — end state first, so an interrupted animation loses nothing.
+        Reduced motion, or a view that is not on screen, just switches."""
+        if self.pages.currentIndex() == index:
+            return
+        self._finish_transition()
+        if motion.is_reduced() or not self.isVisible():
+            self.pages.setCurrentIndex(index)
+            return
+        outgoing = self.pages.currentWidget()
+        snapshot = outgoing.grab()
         self.pages.setCurrentIndex(index)
+        proxy = QLabel(self.pages)
+        proxy.setObjectName("gs_page_proxy")
+        proxy.setPixmap(snapshot)
+        proxy.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        proxy.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        proxy.setGeometry(self.pages.rect())
+        proxy.show()
+        proxy.raise_()
+        scale = motion._TEST_DURATION_SCALE
+        group = QParallelAnimationGroup(self)
+        collapse = QPropertyAnimation(proxy, b"geometry", group)
+        collapse.setDuration(int(COLLAPSE_MS * scale))
+        collapse.setEasingCurve(_ease_out())
+        start = proxy.geometry()
+        collapse.setStartValue(start)
+        collapse.setEndValue(QRect(start.x(), start.y(), start.width(), 0))
+        group.addAnimation(collapse)
+        if not effects_disabled():
+            effect = QGraphicsOpacityEffect(proxy)
+            proxy.setGraphicsEffect(effect)
+            fade = QPropertyAnimation(effect, b"opacity", group)
+            fade.setDuration(int(COLLAPSE_FADE_MS * scale))
+            fade.setEasingCurve(_ease_out())
+            fade.setStartValue(1.0)
+            fade.setEndValue(0.0)
+            group.addAnimation(fade)
+        self._transition = (group, proxy)
+        group.finished.connect(self._finish_transition)
+        group.start()
+
+    def _finish_transition(self) -> None:
+        """Snap to the end state: drop the proxy (reparented out first, so
+        findChildren no longer sees it — deleteLater alone is deferred)."""
+        if self._transition is None:
+            return
+        group, proxy = self._transition
+        self._transition = None
+        group.stop()
+        proxy.hide()
+        proxy.setParent(None)
+        proxy.deleteLater()
+        group.deleteLater()
 
     def _on_sheet_save(self) -> None:
         """Validate, then hand the draft to the owner. Errors repaint inline

@@ -7,12 +7,18 @@ os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 import pytest
 from unittest.mock import MagicMock
 
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QLabel
+
+import utils.motion as motion
 from utils.widgets.grandstand.draft import MODE_ADD, MODE_EDIT, AccountDraft
 from utils.widgets.grandstand.model import RosterEntry
 from utils.widgets.grandstand.party import LaunchParty
 from utils.widgets.grandstand.view import (
-    HERO_H, MILESTONE, PAGE_ROSTER, PAGE_SHEET, SELECTOR_H, SHEET_STAMP_PREFIX,
-    SLOT_SHELF, STAMP_PREFIX, GrandstandView, grandstand_enabled,
+    COLLAPSE_FADE_MS, COLLAPSE_MS, HERO_H, MILESTONE, PAGE_ROSTER, PAGE_SHEET,
+    SELECTOR_H, SHEET_STAMP_PREFIX, SLOT_SHELF, STAMP_PREFIX, GrandstandView,
+    grandstand_enabled,
 )
 
 
@@ -626,3 +632,69 @@ def test_a_pick_emits_the_browsers_own_game_not_the_active_one(roster):
     roster.open_toon_browser("cc", "b", _toons(), "Flossbud", return_to="roster")
     roster.browser.card_for("Pepper").ribbon.click()   # unchecked: "Flossbud" is current
     assert seen == [("cc", "b", "Pepper")]
+
+
+# ── motion (handoff §5: focus-mode collapse 320 ms basis / 200 ms opacity) ──
+
+@pytest.fixture
+def shown(roster, qapp):
+    roster.resize(880, 688)
+    roster.show()
+    qapp.processEvents()
+    return roster
+
+
+def test_reduced_motion_is_a_plain_page_switch(shown, monkeypatch):
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    shown.open_account_sheet("ttr", _draft(), [], None)
+    assert shown.pages.currentIndex() == PAGE_SHEET
+    assert shown._transition is None
+    assert shown.pages.findChildren(QLabel, "gs_page_proxy") == []
+
+
+def test_the_collapse_uses_the_handoff_durations(shown, monkeypatch):
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 1.0)
+    monkeypatch.delenv("TTMT_NO_EFFECTS", raising=False)
+    shown.open_account_sheet("ttr", _draft(), [], None)
+    assert shown.pages.currentIndex() == PAGE_SHEET          # end state first
+    group, proxy = shown._transition
+    durations = [group.animationAt(i).duration()
+                 for i in range(group.animationCount())]
+    assert durations == [COLLAPSE_MS, COLLAPSE_FADE_MS] == [320, 200]
+    assert proxy.objectName() == "gs_page_proxy"
+    assert proxy.isVisible() is True
+    assert proxy.geometry() == shown.pages.rect()
+    shown._finish_transition()
+    assert shown._transition is None
+    assert shown.pages.findChildren(QLabel, "gs_page_proxy") == []
+
+
+def test_the_transition_completes_and_removes_its_proxy(shown, monkeypatch):
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 0.0)
+    shown.open_account_sheet("ttr", _draft(), [], None)
+    assert shown.pages.currentIndex() == PAGE_SHEET
+    assert shown._transition is None
+    assert shown.pages.findChildren(QLabel, "gs_page_proxy") == []
+    shown.close_sheet()                                     # back the same way
+    assert shown.pages.currentIndex() == PAGE_ROSTER
+    assert shown._transition is None
+
+
+def test_a_second_switch_finishes_the_first(shown, monkeypatch):
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+    monkeypatch.setattr(motion, "_TEST_DURATION_SCALE", 1.0)
+    shown.open_account_sheet("ttr", _draft(), [], None)
+    first = shown._transition
+    shown.close_sheet()
+    assert shown._transition is not first
+    assert shown.pages.findChildren(QLabel, "gs_page_proxy") == [shown._transition[1]]
+    shown._finish_transition()
+
+
+def test_a_hidden_view_switches_without_animating(roster, monkeypatch):
+    monkeypatch.setattr(motion, "is_reduced", lambda: False)
+    roster.open_account_sheet("ttr", _draft(), [], None)     # never shown
+    assert roster.pages.currentIndex() == PAGE_SHEET
+    assert roster._transition is None
