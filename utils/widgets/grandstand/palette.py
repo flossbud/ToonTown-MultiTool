@@ -235,3 +235,133 @@ def hero_ghost_button(is_dark: bool) -> dict:
     return {"bg": with_alpha("#000000", 0.26),
             "border": with_alpha("#ffffff", 0.24),
             "ink": QColor("#ffffff")}
+
+
+# ── Account sheet + toon browser (2026-09-22 spec, sub-project C) ───────────
+# The sheet is the first grandstand surface with a light branch. Light values
+# are theme_manager's light tokens of the same name (annotated), so the sheet
+# reads as one surface with the rest of the light app; the roster's own light
+# pass (sub-project A, spec Q8) will bring the panel/card tokens above in line.
+
+
+def sheet_surface(is_dark: bool) -> dict:
+    """The focus-mode page and the browser's shelf-slot panel."""
+    if is_dark:
+        return {"bg": QColor("#252525"),            # --bg-card
+                "border": QColor("#363636")}        # --border-card
+    return {"bg": QColor("#ffffff"),                # bg_card (light)
+            "border": QColor("#e2e8f0")}            # border_card (light)
+
+
+def sheet_ink(is_dark: bool) -> dict:
+    """Header title/subtitle, section labels, the preview caption, footer note."""
+    if is_dark:
+        return {"title": QColor("#bbbbbb"),         # --text-secondary
+                "sub": QColor("#888888"),           # --text-muted
+                "label": QColor("#888888"),         # --text-muted
+                "caption": QColor("#666666"),       # --text-disabled
+                "note": QColor("#666666")}          # --text-disabled
+    return {"title": QColor("#334155"),             # text_secondary (light)
+            "sub": QColor("#475569"),               # text_muted (light)
+            "label": QColor("#475569"),             # text_muted (light)
+            "caption": QColor("#64748b"),           # text_disabled (light)
+            "note": QColor("#64748b")}              # text_disabled (light)
+
+
+def sheet_input(invalid: bool, is_dark: bool) -> dict:
+    """Text inputs (handoff §4.4): translucent fill, hairline border, blue
+    focus border; an invalid field takes the error red for its border, and
+    its message uses the same red."""
+    if is_dark:
+        d = {"bg": with_alpha("#ffffff", 0.04),
+             "border": with_alpha("#ffffff", 0.10),
+             "ink": QColor("#ffffff")}
+    else:
+        d = {"bg": QColor("#ffffff"),               # bg_input (light)
+             "border": QColor("#cbd5e1"),           # border_light (light)
+             "ink": QColor("#0f172a")}              # text_primary (light)
+    d["focus_border"] = QColor("#3399ff")           # --blue-border
+    d["error"] = QColor("#ff7575")                  # error
+    if invalid:
+        d["border"] = d["error"]
+    return d
+
+
+def frow(is_dark: bool) -> dict:
+    """'Toon this account shows' row (handoff §4.4)."""
+    if is_dark:
+        return {"bg": QColor("#2e2e2e"),            # --bg-card-inner
+                "border": QColor("#363636"),        # --border-card
+                "name": QColor("#ffffff"),
+                "sub": QColor("#888888"),           # --text-muted
+                "portrait_bg": with_alpha("#000000", 0.22)}
+    return {"bg": QColor("#f1f5f9"),                # bg_card_inner (light)
+            "border": QColor("#e2e8f0"),            # border_card (light)
+            "name": QColor("#0f172a"),              # text_primary (light)
+            "sub": QColor("#475569"),               # text_muted (light)
+            "portrait_bg": with_alpha("#0f172a", 0.06)}
+
+
+def link_button(is_dark: bool) -> dict:
+    """`.linkbtn` — Choose toon: a quiet hairline button."""
+    if is_dark:
+        return {"bg": with_alpha("#000000", 0.0),
+                "border": QColor("#363636"),        # --border-card
+                "ink": QColor("#bbbbbb")}           # --text-secondary
+    return {"bg": with_alpha("#000000", 0.0),
+            "border": QColor("#e2e8f0"),            # border_card (light)
+            "ink": QColor("#334155")}               # text_secondary (light)
+
+
+def danger_button(hover: bool, is_dark: bool) -> dict:
+    """The remove button (handoff §4.4). Danger reds are theme-independent."""
+    if hover:
+        return {"bg": with_alpha("#e05252", 0.14),
+                "border": QColor("#e05252"),
+                "ink": QColor("#ff9b9b")}
+    return {"bg": with_alpha("#000000", 0.0),
+            "border": with_alpha("#e07878", 0.32),
+            "ink": QColor("#e07878")}
+
+
+def sheet_chrome_button(hover: bool, is_dark: bool) -> dict:
+    """The back arrow and the one `.sheet-x` cross-link (handoff §4.5)."""
+    if is_dark:
+        if hover:
+            return {"bg": with_alpha("#ffffff", 0.09),
+                    "border": QColor("#555555"),    # --border-light
+                    "ink": QColor("#ffffff")}
+        return {"bg": with_alpha("#ffffff", 0.05),
+                "border": with_alpha("#ffffff", 0.13),
+                "ink": QColor("#888888")}           # --text-muted
+    if hover:
+        return {"bg": with_alpha("#0f172a", 0.09),
+                "border": QColor("#cbd5e1"),        # border_light (light)
+                "ink": QColor("#0f172a")}           # text_primary (light)
+    return {"bg": with_alpha("#0f172a", 0.05),
+            "border": with_alpha("#0f172a", 0.13),
+            "ink": QColor("#475569")}               # text_muted (light)
+
+
+def sheet_footer_button(primary: bool, hover: bool, is_dark: bool) -> dict:
+    """Cancel (quiet) and Save (--blue filled, --blue-border on hover)."""
+    if primary:
+        return {"bg": QColor("#3399ff") if hover else QColor("#0077ff"),
+                "border": with_alpha("#000000", 0.0),
+                "ink": QColor("#ffffff")}
+    if is_dark:
+        return {"bg": with_alpha("#000000", 0.0),
+                "border": with_alpha("#ffffff", 0.15),
+                "ink": QColor("#bbbbbb")}           # --text-secondary
+    return {"bg": with_alpha("#000000", 0.0),
+            "border": with_alpha("#0f172a", 0.15),
+            "ink": QColor("#334155")}               # text_secondary (light)
+
+
+def browser_empty_ink(is_dark: bool) -> dict:
+    """The choose-a-toon empty state (handoff §4.7)."""
+    if is_dark:
+        return {"title": QColor("#ffffff"),
+                "body": QColor("#888888")}          # --text-muted
+    return {"title": QColor("#0f172a"),             # text_primary (light)
+            "body": QColor("#475569")}              # text_muted (light)

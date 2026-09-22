@@ -1,0 +1,213 @@
+"""The focus-mode sheet shell: header, cross-link, footer, body hosting."""
+import glob
+import os
+import re
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
+
+import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QLineEdit, QPushButton, QWidget
+
+from utils.widgets.grandstand.sheet import (
+    BACK_GLYPH, BACK_SIZE, CROSS_LINK_H, FOOTER_BUTTON_H, SheetHeader,
+    SheetShell,
+)
+
+TITLE = "Account · Flossbud"
+SUBTITLE = "Toontown Rewritten · changes apply to this account only"
+CROSS = "✏ Customize appearance"
+
+
+@pytest.fixture
+def shell(qapp):
+    s = SheetShell()
+    yield s
+    s.close()
+    s.deleteLater()
+    qapp.processEvents()
+
+
+def test_header_copy_is_kept_verbatim_and_rendered_uppercase(shell):
+    """Handoff §4.4 writes `Account · {label|username}`; the prototype renders
+    the title as an uppercase section label, the subtitle in sentence case."""
+    shell.set_header(TITLE, SUBTITLE)
+    assert shell.header.title_text() == TITLE
+    assert shell.header.title.text() == "ACCOUNT · FLOSSBUD"
+    assert shell.header.subtitle_text() == SUBTITLE
+    assert shell.header.subtitle.text() == SUBTITLE
+
+
+def test_the_one_cross_link_shows_only_with_copy(shell):
+    assert shell.header.cross_link.isVisibleTo(shell) is False
+    assert shell.header.cross_link_text() == ""
+    shell.set_cross_link(CROSS)
+    assert shell.header.cross_link.isVisibleTo(shell) is True
+    assert shell.header.cross_link_text() == CROSS
+    shell.set_cross_link("")
+    assert shell.header.cross_link.isVisibleTo(shell) is False
+    assert shell.header.cross_link_text() == ""
+
+
+def test_back_cancel_save_and_cross_link_emit_their_intents(shell):
+    seen = []
+    shell.back_requested.connect(lambda: seen.append("back"))
+    shell.cancel_requested.connect(lambda: seen.append("cancel"))
+    shell.save_requested.connect(lambda: seen.append("save"))
+    shell.cross_link_requested.connect(lambda: seen.append("x"))
+    shell.set_cross_link(CROSS)
+    shell.back_button.click()
+    shell.cancel_button.click()
+    shell.save_button.click()
+    shell.header.cross_link.click()
+    assert seen == ["back", "cancel", "save", "x"]
+
+
+def test_footer_note(shell):
+    shell.set_note("3 toons discovered")
+    assert shell.note_text() == "3 toons discovered"
+    assert shell.note.text() == "3 toons discovered"
+
+
+def test_body_is_hosted_and_replaceable(shell):
+    assert shell.body() is None
+    first = QWidget()
+    shell.set_body(first)
+    assert shell.body() is first
+    assert first.parent() is shell
+    second = QWidget()
+    shell.set_body(second)
+    assert shell.body() is second
+    assert first.parent() is None
+
+
+def test_handoff_measurements(shell):
+    """§4.4: 28 px back arrow, 30 px footer buttons; §4.5: 28 px cross-link."""
+    assert (BACK_SIZE, CROSS_LINK_H, FOOTER_BUTTON_H) == (28, 28, 30)
+    assert shell.back_button.width() == shell.back_button.height() == BACK_SIZE
+    assert shell.back_button.text() == BACK_GLYPH
+    assert shell.header.cross_link.height() == CROSS_LINK_H
+    assert shell.cancel_button.height() == shell.save_button.height() == FOOTER_BUTTON_H
+    assert (shell.cancel_button.text(), shell.save_button.text()) == ("Cancel", "Save")
+
+
+def test_header_is_reusable_on_its_own(qapp):
+    """The toon browser mounts the same head row (handoff §4.7)."""
+    header = SheetHeader()
+    header.set_copy("Choose a toon · Flossbud", "x")
+    seen = []
+    header.back_requested.connect(lambda: seen.append(1))
+    header.back_button.click()
+    assert seen == [1]
+    assert header.title.text() == "CHOOSE A TOON · FLOSSBUD"
+
+
+def test_theme_reaches_the_body(shell):
+    class Body(QWidget):
+        def __init__(self):
+            super().__init__()
+            self.seen = []
+
+        def apply_theme(self, is_dark):
+            self.seen.append(is_dark)
+
+    body = Body()
+    shell.set_body(body)                 # hosting applies the current theme
+    shell.apply_theme(False)
+    assert body.seen == [True, False]
+
+
+# ── keyboard (spec §4: Esc = Back, Enter in a field = Save) ─────────────────
+
+def _field_body():
+    body = QWidget()
+    body.field = QLineEdit(body)
+    body.tab_chain = lambda: [body.field]
+    return body
+
+
+def test_escape_from_a_field_requests_back(shell):
+    body = _field_body()
+    shell.set_body(body)
+    seen = []
+    shell.back_requested.connect(lambda: seen.append("back"))
+    QTest.keyClick(body.field, Qt.Key_Escape)
+    assert seen == ["back"]
+
+
+def test_enter_in_a_field_requests_save_once(shell):
+    body = _field_body()
+    shell.set_body(body)
+    seen = []
+    shell.save_requested.connect(lambda: seen.append("save"))
+    QTest.keyClick(body.field, Qt.Key_Return)
+    QTest.keyClick(body.field, Qt.Key_Enter)
+    assert seen == ["save", "save"]
+
+
+def test_enter_on_cancel_activates_cancel_not_save(shell, qapp):
+    shell.set_body(_field_body())
+    shell.show()
+    qapp.processEvents()
+    seen = []
+    shell.cancel_requested.connect(lambda: seen.append("cancel"))
+    shell.save_requested.connect(lambda: seen.append("save"))
+    shell.cancel_button.setFocus()
+    qapp.processEvents()
+    assert qapp.focusWidget() is shell.cancel_button
+    QTest.keyClick(shell.cancel_button, Qt.Key_Return)
+    assert seen == ["cancel"]
+
+
+def test_tab_order_runs_the_body_chain_then_cancel_then_save(shell, qapp):
+    body = QWidget()
+    a, b = QLineEdit(body), QPushButton("x", body)
+    body.tab_chain = lambda: [a, b]
+    shell.set_body(body)
+    shell.show()
+    qapp.processEvents()
+    a.setFocus()
+    qapp.processEvents()
+    seen = []
+    for _ in range(4):
+        seen.append(qapp.focusWidget())
+        QTest.keyClick(qapp.focusWidget(), Qt.Key_Tab)
+        qapp.processEvents()
+    assert seen == [a, b, shell.cancel_button, shell.save_button]
+
+
+# ── discipline ──────────────────────────────────────────────────────────────
+
+# A lambda passed to .connect() has no receiver QObject, so Qt can't
+# auto-disconnect it when the true receiver is torn down, and the closure
+# holds a strong ref to self (the crash this guards against). Signal
+# receivers must be bound methods.
+#
+# Scope: sheet.py, account_sheet.py, draft.py and toon_browser.py only — the
+# sheet's own construction chain that this fix touches, plus every module
+# written under the rule since. card_shelf.py, roster_card.py and view.py
+# already carry several pre-existing lambda connections (shelf signal
+# forwarding) that predate this rule and are not one-line fixes; they are a
+# separate cleanup, not part of this task, so they are deliberately left out
+# of the scan rather than papered over with a broad exemption.
+_LAMBDA_CONNECT = re.compile(r"\.connect\(\s*lambda\b")
+_SCANNED_MODULES = ("sheet.py", "account_sheet.py", "draft.py",
+                    "toon_browser.py")
+
+
+def test_no_lambda_signal_connections_in_the_grandstand_package():
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "utils", "widgets", "grandstand")
+    offenders = []
+    for name in _SCANNED_MODULES:
+        path = os.path.join(root, name)
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        for match in _LAMBDA_CONNECT.finditer(text):
+            line = text.count("\n", 0, match.start()) + 1
+            offenders.append(f"{name}:{line}")
+    assert offenders == [], (
+        "signal receivers must be bound methods, not lambdas "
+        f"(Qt can't auto-disconnect a lambda on teardown): {offenders}")

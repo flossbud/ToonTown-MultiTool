@@ -8,10 +8,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
+from PySide6.QtCore import Qt
 
 from tabs.launch_tab import LaunchTab
 from utils.credential_copy import KEYRING_WARNING_COPY
 from utils.widgets.grandstand.card_shelf import CardShelf
+from utils.widgets.grandstand.draft import MODE_ADD, MODE_EDIT, AccountDraft
 from utils.widgets.grandstand.model import RosterEntry
 from utils.widgets.grandstand.party import LaunchParty
 from utils.widgets.grandstand.view import GrandstandView
@@ -662,15 +664,19 @@ def test_blocked_credentials_guard_official_launcher_at_runner_boundary(
 
 
 def _make_grandstand_launch_tab(monkeypatch, account_ids, *, blocked,
-                                game="ttr"):
+                                game="ttr", logger=None):
     return _make_launch_tab(monkeypatch, account_ids, blocked=blocked,
-                            game=game, flagged=True)
+                            game=game, flagged=True, logger=logger)
 
 
 def _make_launch_tab(monkeypatch, account_ids, *, blocked, game="ttr",
-                     flagged):
+                     flagged, logger=None):
     """`flagged=False` builds the legacy launcher (flag unset, nothing
-    mounted) from the same accounts, for the unflagged pin tests."""
+    mounted) from the same accounts, for the unflagged pin tests.
+
+    `logger`, when given, makes self.log route only to logger.append_log —
+    matching the real Debug tab wiring, instead of the no-logger fallback
+    (self.log prints directly when self.logger is falsy)."""
     if flagged:
         monkeypatch.setenv("TTMT_GRANDSTAND", "1")
     else:
@@ -692,7 +698,8 @@ def _make_launch_tab(monkeypatch, account_ids, *, blocked, game="ttr",
     cred.get_account.side_effect = lambda index: accounts[index]
     settings = MagicMock()
     settings.get.side_effect = lambda _key, default=None: default
-    return LaunchTab(cred_manager=cred, settings_manager=settings), cred
+    return LaunchTab(cred_manager=cred, settings_manager=settings,
+                     logger=logger), cred
 
 
 def test_a_direct_launch_signal_is_refused_while_blocked(monkeypatch, qapp):
@@ -1096,5 +1103,595 @@ def test_unflagged_2fa_prompt_answers_whichever_worker_the_slot_holds(
             assert slot.message == "2FA cancelled"
     finally:
         slot.worker = None
+        tab.shutdown()
+        tab.close()
+
+
+# ── account sheet wiring (sub-project C) ────────────────────────────────────
+
+def _stub_editor(monkeypatch):
+    """Replace the legacy AccountEditor with a recorder. A real QDialog's
+    exec() would block the test in a nested event loop, and before Task 1's
+    wiring lands the gear still opens that dialog."""
+    import tabs.launch_tab as launch_tab
+
+    class EditorStub:
+        opened = []
+
+        def __init__(self, *args, **kwargs):
+            EditorStub.opened.append(kwargs)
+            self.account_saved = MagicMock()
+
+        def exec(self):
+            return 0
+
+    monkeypatch.setattr(launch_tab, "AccountEditor", EditorStub)
+    return EditorStub
+
+
+def _mutating_update(accounts):
+    """A cred_manager.update_account that edits the metadata the rig hands
+    back, so a re-render shows the change the way the real store would."""
+    def update(index, label, username, password):
+        accounts[index].label = label
+        accounts[index].username = username
+        if password is not None:
+            accounts[index].password = password
+    return update
+
+
+def _open_sheet_via_gear(tab, aid="a"):
+    tab.grandstand.shelf.card_for(aid).gear_clicked.emit(aid)
+    return tab.grandstand.account_sheet
+
+
+def test_gear_opens_the_account_sheet_prefilled_from_the_store(
+        monkeypatch, qapp, capsys):
+    _stub_editor(monkeypatch)
+    tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        sheet = _open_sheet_via_gear(tab)
+        assert tab.grandstand.in_focus_mode() is True
+        d = sheet.draft()
+        assert (d.mode, d.id, d.game) == (MODE_EDIT, "a", "ttr")
+        assert (d.label, d.username, d.password) == ("a", "a", "pw")
+        assert d.keyring_has_password is True and d.keyring_readable is True
+        assert sheet.password_input.text() == "pw"
+        # Running-code stamp: the live validator greps for this exact line.
+        assert "[Grandstand] sheet: account a" in capsys.readouterr().out
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_sheet_save_writes_through_update_account_and_updates_the_card(
+        monkeypatch, qapp):
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a", "b"], blocked=False)
+    cred.update_account.side_effect = _mutating_update(
+        cred.get_accounts_metadata.return_value)
+    try:
+        sheet = _open_sheet_via_gear(tab, "b")
+        sheet.label_input.setText("Gag alt")
+        tab.grandstand.sheet.save_button.click()
+        cred.update_account.assert_called_once_with(
+            1, label="Gag alt", username="b", password="pw")
+        assert tab.grandstand.in_focus_mode() is False
+        assert tab.grandstand.shelf.card_for("b").entry().label == "Gag alt"
+        assert tab.grandstand.shelf.card_for("b").name_text() == "Gag alt"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_a_blank_password_keeps_the_stored_one(monkeypatch, qapp):
+    """Today's semantics: update_account(password=None) preserves the keyring
+    entry, so a label change never demands retyping the password."""
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        sheet = _open_sheet_via_gear(tab)
+        sheet.password_input.setText("")
+        tab.grandstand.sheet.save_button.click()
+        cred.update_account.assert_called_once_with(
+            0, label="a", username="a", password=None)
+        assert tab.grandstand.in_focus_mode() is False
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_saving_a_whitespace_password_never_overwrites_the_stored_one(
+        monkeypatch, qapp):
+    """validate() strips, so "   " is a savable draft. If the save site did
+    not strip too it would write three spaces over a good keyring entry."""
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        sheet = _open_sheet_via_gear(tab)
+        assert tab.grandstand.in_focus_mode() is True
+        sheet.password_input.setText("   ")
+        tab.grandstand.sheet.save_button.click()
+        cred.update_account.assert_called_once_with(
+            0, label="a", username="a", password=None)
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_sheet_save_refuses_a_blank_username(monkeypatch, qapp):
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        sheet = _open_sheet_via_gear(tab)
+        sheet.username_input.setText("   ")
+        tab.grandstand.sheet.save_button.click()
+        cred.update_account.assert_not_called()
+        assert sheet.username_error.isVisibleTo(sheet) is True
+        assert sheet.username_error.text() == "Username is required"
+        assert tab.grandstand.in_focus_mode() is True
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_back_drops_the_draft_without_writing(monkeypatch, qapp):
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        sheet = _open_sheet_via_gear(tab)
+        assert tab.grandstand.in_focus_mode() is True     # the sheet is open,
+        sheet.label_input.setText("changed")              # so the edit lands
+        tab.grandstand.sheet.back_button.click()
+        cred.update_account.assert_not_called()
+        assert tab.grandstand.in_focus_mode() is False
+        assert tab.grandstand.shelf.card_for("a").entry().label == "a"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_an_unreadable_keyring_opens_the_sheet_with_an_empty_password(
+        monkeypatch, qapp):
+    """Spec §4: keyring unavailable -> empty field, keyring_has_password
+    False, keyring_readable False, and a blank Save keeps what is stored."""
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    cred.keyring_available = False
+    try:
+        sheet = _open_sheet_via_gear(tab)
+        d = sheet.draft()
+        assert d.password == "" and d.keyring_has_password is False
+        assert d.keyring_readable is False
+        assert sheet.password_helper.isVisibleTo(sheet) is True
+        assert sheet.password_helper.text() == "Stored password can't be read right now"
+        tab.grandstand.sheet.save_button.click()
+        cred.update_account.assert_called_once_with(
+            0, label="a", username="a", password=None)
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_the_pencil_still_opens_todays_editor(monkeypatch, qapp):
+    """Sub-project B owns the appearance surface; until then the pencil is
+    untouched and the sheet's cross-link routes to the same place."""
+    EditorStub = _stub_editor(monkeypatch)
+    tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        tab.grandstand.shelf.card_for("a").edit_clicked.emit("a")
+        assert len(EditorStub.opened) == 1
+        assert EditorStub.opened[0]["mode"] == "edit"
+        assert tab.grandstand.in_focus_mode() is False
+        _open_sheet_via_gear(tab)
+        assert tab.grandstand.in_focus_mode() is True    # the gear did NOT
+        assert len(EditorStub.opened) == 1                # open the editor
+        tab.grandstand.sheet.header.cross_link.click()
+        assert len(EditorStub.opened) == 2
+        assert EditorStub.opened[1]["mode"] == "edit"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_the_cross_link_hands_the_dialog_what_was_typed(monkeypatch, qapp):
+    """Whole-branch review I4: the cross-link drops the draft on its way out,
+    so unless the typed values ride along they vanish with no warning — the
+    dialog would open on the stored account and the user would retype."""
+    EditorStub = _stub_editor(monkeypatch)
+    tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        sheet = _open_sheet_via_gear(tab)
+        sheet.label_input.setText("Gag grind alt")
+        sheet.username_input.setText("floss2")
+        sheet.password_input.setText("typed-pw")
+        tab.grandstand.sheet.header.cross_link.click()
+        assert len(EditorStub.opened) == 1
+        opened = EditorStub.opened[0]
+        assert opened["initial_label"] == "Gag grind alt"
+        assert opened["initial_username"] == "floss2"
+        assert opened["initial_password"] == "typed-pw"
+        assert opened["mode"] == "edit" and opened["game"] == "ttr"
+        assert tab.grandstand.in_focus_mode() is False     # the draft still goes
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_the_cross_link_closes_the_sheet_before_the_legacy_editor_opens(
+        monkeypatch, qapp):
+    """The dialog edits the sheet's own three fields. Left open behind it,
+    the sheet would still hold the pre-dialog label, and a Save afterwards
+    would write that stale label back over what the dialog just saved."""
+    EditorStub = _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        _open_sheet_via_gear(tab)
+        assert tab.grandstand.in_focus_mode() is True
+        tab.grandstand.sheet.header.cross_link.click()
+        assert len(EditorStub.opened) == 1                # the dialog ran
+        assert tab.grandstand.in_focus_mode() is False    # over the roster
+        # Nothing is left behind that could still write: the draft is gone,
+        # so the footer's Save is inert.
+        tab.grandstand.sheet.save_button.click()
+        cred.update_account.assert_not_called()
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_unflagged_tab_never_reaches_the_sheet_handler(monkeypatch, qapp):
+    """Every LaunchTab change is gated by _grandstand_mounted()."""
+    tab, cred = _make_launch_tab(monkeypatch, ["a"], blocked=False, flagged=False)
+    try:
+        assert tab._grandstand_mounted() is False
+        draft = AccountDraft(id="a", game="ttr", mode=MODE_EDIT, label="x",
+                             username="a", password="pw", keyring_has_password=True)
+        tab._on_account_save("ttr", draft)
+        cred.update_account.assert_not_called()
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+# ── add mode (sub-project C, Task 3) ────────────────────────────────────────
+
+def _mutating_add(accounts):
+    """A cred_manager.add_account that appends to the rig's metadata list
+    and reports success, the way the real store does."""
+    def add(label, username, password, game):
+        accounts.append(SimpleNamespace(
+            id=f"n{len(accounts)}", game=game, label=label, username=username,
+            password=password, launcher_token=""))
+        return True
+    return add
+
+
+def test_add_account_opens_the_sheet_in_add_mode(monkeypatch, qapp, capsys):
+    _stub_editor(monkeypatch)
+    tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        tab.grandstand.shelf.add_tile.click()
+        assert tab.grandstand.in_focus_mode() is True
+        sheet = tab.grandstand.account_sheet
+        d = sheet.draft()
+        assert (d.mode, d.id, d.game) == (MODE_ADD, "", "ttr")
+        assert (d.label, d.username, d.password) == ("", "", "")
+        assert sheet.danger_field.isVisibleTo(sheet) is False
+        assert "[Grandstand] sheet: account add" in capsys.readouterr().out
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_add_mode_save_calls_add_account_and_shows_the_new_card(monkeypatch, qapp):
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    cred.add_account.side_effect = _mutating_add(cred.get_accounts_metadata.return_value)
+    try:
+        tab.grandstand.shelf.add_tile.click()
+        sheet = tab.grandstand.account_sheet
+        sheet.label_input.setText("Alt")
+        sheet.username_input.setText("newbie")
+        sheet.password_input.setText("secret")
+        tab.grandstand.sheet.save_button.click()
+        cred.add_account.assert_called_once_with(
+            label="Alt", username="newbie", password="secret", game="ttr")
+        assert tab.grandstand.in_focus_mode() is False
+        assert [c.account_id() for c in tab.grandstand.shelf.cards()] == ["a", "n1"]
+        assert tab.grandstand.shelf.card_for("n1").name_text() == "Alt"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_add_mode_requires_username_and_password(monkeypatch, qapp):
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        tab.grandstand.shelf.add_tile.click()
+        tab.grandstand.sheet.save_button.click()
+        cred.add_account.assert_not_called()
+        assert tab.grandstand.in_focus_mode() is True
+        assert tab.grandstand.account_sheet.errors() == {
+            "username": "Username is required",
+            "password": "Password is required"}
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_a_refused_add_keeps_the_sheet_open(monkeypatch, qapp, capsys):
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    cred.add_account.return_value = False
+    try:
+        tab.grandstand.shelf.add_tile.click()
+        sheet = tab.grandstand.account_sheet
+        sheet.username_input.setText("newbie")
+        sheet.password_input.setText("secret")
+        tab.grandstand.sheet.save_button.click()
+        cred.add_account.assert_called_once()
+        assert tab.grandstand.in_focus_mode() is True
+        assert sheet.draft().username == "newbie"
+        assert [c.account_id() for c in tab.grandstand.shelf.cards()] == ["a"]
+        assert "[Launch] Could not add TTR account." in capsys.readouterr().out
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_the_ceiling_keeps_the_sheet_closed(monkeypatch, qapp):
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(
+        monkeypatch, [f"a{i}" for i in range(16)], blocked=False)
+    try:
+        tab.grandstand.shelf.add_tile.click()
+        assert tab.grandstand.in_focus_mode() is False
+        cred.add_account.assert_not_called()
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_unflagged_add_still_opens_todays_editor(monkeypatch, qapp):
+    EditorStub = _stub_editor(monkeypatch)
+    tab, _cred = _make_launch_tab(monkeypatch, ["a"], blocked=False, flagged=False)
+    try:
+        tab._on_add_account("ttr")
+        assert len(EditorStub.opened) == 1
+        assert EditorStub.opened[0]["mode"] == "add"
+        assert EditorStub.opened[0]["game"] == "ttr"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+# ── remove (sub-project C, Task 4) ──────────────────────────────────────────
+
+def _confirm(monkeypatch, accepted: bool):
+    import tabs.launch_tab as launch_tab
+
+    class Dialog:
+        DialogCode = SimpleNamespace(Accepted=1, Rejected=0)
+        shown = []
+
+        def __init__(self, *args, **kwargs):
+            Dialog.shown.append(kwargs)
+
+        def exec(self):
+            return self.DialogCode.Accepted if accepted else self.DialogCode.Rejected
+
+    monkeypatch.setattr(launch_tab, "ConfirmDialog", Dialog)
+    return Dialog
+
+
+def _mutating_delete(accounts):
+    def delete(index):
+        removed = accounts.pop(index)
+        return removed.id, ""
+    return delete
+
+
+def test_remove_confirms_then_deletes_and_closes_the_sheet(monkeypatch, qapp):
+    _stub_editor(monkeypatch)
+    dialog = _confirm(monkeypatch, accepted=True)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a", "b"], blocked=False)
+    cred.delete_account.side_effect = _mutating_delete(
+        cred.get_accounts_metadata.return_value)
+    try:
+        sheet = _open_sheet_via_gear(tab, "a")
+        sheet.remove_button.click()
+        assert len(dialog.shown) == 1
+        assert dialog.shown[0]["title"] == "Delete a?"
+        cred.delete_account.assert_called_once_with(0)
+        assert tab.grandstand.in_focus_mode() is False
+        assert [c.account_id() for c in tab.grandstand.shelf.cards()] == ["b"]
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_a_declined_confirm_keeps_the_sheet_and_the_account(monkeypatch, qapp):
+    _stub_editor(monkeypatch)
+    _confirm(monkeypatch, accepted=False)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        sheet = _open_sheet_via_gear(tab, "a")
+        sheet.label_input.setText("kept")
+        sheet.remove_button.click()
+        cred.delete_account.assert_not_called()
+        assert tab.grandstand.in_focus_mode() is True
+        assert sheet.draft().label == "kept"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_an_account_removed_underneath_closes_the_open_sheet(monkeypatch, qapp):
+    """Manage, another tab: the roster re-renders without the account and
+    the sheet for it must not survive (spec §4)."""
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a", "b"], blocked=False)
+    try:
+        _open_sheet_via_gear(tab, "a")
+        cred.get_accounts_metadata.return_value.pop(0)
+        tab._reconcile_slots()
+        tab._render_grandstand("ttr")
+        assert tab.grandstand.in_focus_mode() is False
+        assert tab.grandstand.account_sheet.is_open() is False
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_unflagged_tab_never_reaches_the_remove_handler(monkeypatch, qapp):
+    _confirm(monkeypatch, accepted=True)
+    tab, cred = _make_launch_tab(monkeypatch, ["a"], blocked=False, flagged=False)
+    try:
+        tab._on_account_remove("ttr", "a")
+        cred.delete_account.assert_not_called()
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+# ── toon chosen (sub-project C, Task 6) ─────────────────────────────────────
+
+def test_toon_chosen_sets_the_primary_and_rebuilds_card_hero_and_sheet(
+        monkeypatch, qapp):
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QTest
+    from utils.widgets.grandstand.roster_card import CARD_H, CARD_W
+
+    _stub_editor(monkeypatch)
+    tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        tab._recent_toons = _recent_toons_store()
+        tab._recent_toons.record("a", "Flossbud", "ttr", "7400", species="cat")
+        tab._recent_toons.record("a", "Pepper", "ttr", "7401", species="dog")
+        tab._render_current_view("ttr")
+        assert tab.grandstand.shelf.card_for("a").name_text() == "Pepper"   # newest
+        tab.grandstand.shelf.card_for("a").clicked.emit("a")
+        before = tab.grandstand.hero.crew_area.slot_for("a")
+
+        sheet = _open_sheet_via_gear(tab)
+        assert sheet.frow_name_text() == "Pepper"
+        sheet.choose_button.click()
+        assert tab.grandstand.browser_open() is True
+        card = tab.grandstand.browser.card_for("Flossbud")
+        QTest.mouseClick(card, Qt.LeftButton, pos=QPoint(CARD_W // 2, CARD_H // 2))
+
+        assert tab._recent_toons.primary_name("a") == "Flossbud"
+        assert tab.grandstand.browser_open() is False
+        assert tab.grandstand.in_focus_mode() is True
+        assert sheet.frow_name_text() == "Flossbud"
+        assert sheet.preview.name_text() == "Flossbud"
+        assert tab.grandstand.shelf.card_for("a").name_text() == "Flossbud"
+        assert tab.grandstand.shelf.card_for("a").footer_text() == "Primary"
+        after = tab.grandstand.hero.crew_area.slot_for("a")
+        assert after is not before and after.toon_name == "Flossbud"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def _renamed_toon_store():
+    """The user's real shape: one toon renamed, so two records share a DNA,
+    and the stored primary still names the one unique_toons merges away."""
+    store = _recent_toons_store()
+    store.record("a", "Blue Cat", "ttr", "7400", species="cat")
+    store.record("a", "Katsuro", "ttr", "7400", species="cat")   # newest first
+    store.set_primary("a", "Blue Cat")
+    return store
+
+
+def test_opening_the_sheet_heals_a_primary_a_rename_merged_away(
+        monkeypatch, qapp, capsys):
+    """Whole-branch review I1: RecentToonsStore.get resolves the primary from
+    the raw list, the sheet and the browser from the deduped one, so the card
+    said "Blue Cat" while the frow, the preview and the browser's check all
+    said "Katsuro" — and the browser's checked card is inert, so the new UI
+    could not repair it. LaunchTab is the only writer, so it heals the store."""
+    _stub_editor(monkeypatch)
+    tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        tab._recent_toons = _renamed_toon_store()
+        tab._render_current_view("ttr")
+        assert tab.grandstand.shelf.card_for("a").name_text() == "Blue Cat"
+        capsys.readouterr()
+
+        sheet = _open_sheet_via_gear(tab)
+        assert tab._recent_toons.primary_name("a") == "Katsuro"
+        assert sheet.frow_name_text() == "Katsuro"
+        assert sheet.preview.name_text() == "Katsuro"
+        assert tab.grandstand.shelf.card_for("a").name_text() == "Katsuro"
+        sheet.choose_button.click()
+        assert tab.grandstand.browser.current_card().toon_name() == "Katsuro"
+        assert ("[Launch] TTR account 1: primary toon renamed to Katsuro."
+                in capsys.readouterr().out)
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_the_repair_line_reaches_stdout_even_with_a_real_debug_logger(
+        monkeypatch, qapp, capsys):
+    """M2 (re-review): with a real logger attached, self.log routes only to
+    logger.append_log — the Debug tab drops it unless logging is switched
+    on, so this must print plainly too, the way the Grandstand sheet stamps
+    and utils/toon_renders.py do. (The I1 test above passes a bare LaunchTab,
+    whose self.log falls back to print() on its own when logger is None —
+    that fallback would mask a dropped print here, so this test pins a
+    logger explicitly.)"""
+    _stub_editor(monkeypatch)
+    tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False,
+                                             logger=MagicMock())
+    try:
+        tab._recent_toons = _renamed_toon_store()
+        tab._render_current_view("ttr")
+        capsys.readouterr()
+
+        sheet = _open_sheet_via_gear(tab)
+        sheet.choose_button.click()
+        assert ("[Launch] TTR account 1: primary toon renamed to Katsuro."
+                in capsys.readouterr().out)
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_a_primary_that_still_exists_is_never_rewritten(monkeypatch, qapp):
+    """The control: the repair is for a ghost only. A healthy primary must
+    not be touched, or every sheet open would write to the store."""
+    _stub_editor(monkeypatch)
+    tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        tab._recent_toons = _recent_toons_store()
+        tab._recent_toons.record("a", "Flossbud", "ttr", "7400", species="cat")
+        tab._recent_toons.record("a", "Pepper", "ttr", "7401", species="dog")
+        tab._recent_toons.set_primary("a", "Flossbud")
+        writes = []
+        real = tab._recent_toons.set_primary
+        tab._recent_toons.set_primary = lambda aid, name: (
+            writes.append((aid, name)), real(aid, name))[1]
+
+        sheet = _open_sheet_via_gear(tab)
+        assert writes == []
+        assert tab._recent_toons.primary_name("a") == "Flossbud"
+        assert sheet.frow_name_text() == "Flossbud"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_unflagged_tab_never_reaches_the_toon_handler(monkeypatch, qapp):
+    tab, _cred = _make_launch_tab(monkeypatch, ["a"], blocked=False, flagged=False)
+    try:
+        tab._recent_toons = _recent_toons_store()
+        tab._recent_toons.record("a", "Flossbud", "ttr", "7400")
+        tab._on_toon_chosen("ttr", "a", "Flossbud")
+        assert tab._recent_toons.primary_name("a") is None
+    finally:
         tab.shutdown()
         tab.close()

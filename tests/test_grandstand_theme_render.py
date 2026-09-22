@@ -18,14 +18,19 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from tests._render_fixtures import complete_set
 from utils import theme_manager
+from utils.recent_toons import ToonRecord
 from utils.widgets.grandstand import palette as gp
-from utils.widgets.grandstand.card_shelf import CardShelf
+from utils.widgets.grandstand.account_sheet import PREVIEW_COL_W, AccountSheet
+from utils.widgets.grandstand.card_shelf import CardShelf, SHELF_GAP
+from utils.widgets.grandstand.draft import MODE_EDIT, AccountDraft
 from utils.widgets.grandstand.game_selector import GameSelector
 from utils.widgets.grandstand.hero_stage import COPY_LEFT, HERO_RADIUS, HeroStage
 from utils.widgets.grandstand.model import RosterEntry
 from utils.widgets.grandstand.roster_card import (
     CARD_H, CARD_W, PORTRAIT, RosterCard,
 )
+from utils.widgets.grandstand.sheet import SheetShell
+from utils.widgets.grandstand.toon_browser import FIGURE_H, FIGURE_TOP, ToonBrowser
 
 
 def _distance(a, b):
@@ -333,3 +338,137 @@ def test_the_hero_art_does_not_fill_the_corners(themed_app):
     inside = img.pixelColor(HERO_RADIUS + 2, HERO_RADIUS + 2)
     assert inside.alpha() == 255, f"{theme}: inside the outline is not opaque"
     hero.close()
+
+
+# ── sub-project C: the sheet and the browser under the real stylesheet ──────
+
+def _toon(name, dna):
+    return ToonRecord(name, "ttr", dna, 137, None, "cat", None)
+
+
+def _sheet(theme):
+    shell = SheetShell()
+    body = AccountSheet(shell)
+    shell.set_body(body)
+    shell.apply_theme(theme == "dark")
+    draft = AccountDraft(id="a", game="ttr", mode=MODE_EDIT, label="La",
+                         username="ua", password="pw", keyring_has_password=True)
+    body.open(draft, [_toon("Ta", "7400")], "Ta", _entry("a"))
+    shell.set_header("Account · La", "Toontown Rewritten · changes apply to this account only")
+    shell.set_cross_link("✏ Customize appearance")
+    shell.set_note("1 toon discovered")
+    return shell, body
+
+
+def _browser(theme, toons):
+    browser = ToonBrowser()
+    browser.apply_theme(theme == "dark")
+    browser.open("ttr", "a", "La", toons, "Ta")
+    return browser
+
+
+def test_sheet_containers_do_not_paint_the_app_background(themed_app, render_cache):
+    """The header, the preview column and the space around the body are
+    plain containers and labels: under the real stylesheet each must show the
+    sheet surface, not a square of page colour (bg_app is #1a1a1a dark and
+    #f8fafc light; the surface is #252525 / #ffffff — both discriminable)."""
+    _qapp, theme = themed_app
+    shell, body = _sheet(theme)
+    img = _render(shell, 818, 520)
+    surface = gp.sheet_surface(theme == "dark")["bg"]
+    origin = body.preview.mapTo(shell, QPoint(0, 0))
+    fields_origin = body.fields.mapTo(shell, QPoint(0, 0))
+    label_block = body.label_field.geometry()          # relative to `fields`
+    probes = {
+        # left of the card, inside the 184 px preview column
+        "inside the preview column": (origin.x() - 9, origin.y() + 20),
+        # the 26 px gap between the column and the fields (the body itself)
+        "column gap": (origin.x() + CARD_W + (PREVIEW_COL_W - CARD_W) // 2 + 13,
+                       origin.y() + 20),
+        # the 16 px gap between the two grid columns (the fields container)
+        "fields column gap": (fields_origin.x() + label_block.right() + 8,
+                              fields_origin.y() + label_block.top() + 30),
+        "below the body": (origin.x() + CARD_W // 2, origin.y() + CARD_H + 40),
+        "header": (shell.width() // 2, 16),
+    }
+    for area, (x, y) in probes.items():
+        probe = img.pixelColor(x, y)
+        assert probe != Qt.magenta
+        assert _distance(probe, surface) < 6, (
+            f"{theme}: sheet {area} painted {probe.name()} over surface "
+            f"{surface.name()} at ({x},{y})")
+    shell.close()
+
+
+def test_sheet_preview_shows_the_disk_render_under_the_real_stylesheet(
+        themed_app, render_cache):
+    _qapp, theme = themed_app
+    _facade, store, _pf = render_cache
+    expected = QColor("#ff0000")
+    complete_set(store, "ttr", "Ta", "7400", expected.name())
+    shell, body = _sheet(theme)
+    img = _render(shell, 818, 520)
+    origin = body.preview.mapTo(shell, QPoint(0, 0))
+    x, y = origin.x() + CARD_W // 2, origin.y() + 12 + PORTRAIT // 2
+    face = img.pixelColor(x, y)
+    assert _distance(face, expected) < 4, (
+        f"{theme}: preview portrait painted {face.name()}, not the disk render")
+    assert body.frow_portrait.pixmap() is not None
+    shell.close()
+
+
+def test_browser_containers_do_not_paint_the_app_background(themed_app, render_cache):
+    _qapp, theme = themed_app
+    browser = _browser(theme, [_toon("Ta", "7400"), _toon("Tb", "7401")])
+    img = _render(browser, 818, 320)
+    surface = gp.sheet_surface(theme == "dark")["bg"]
+    first = browser.cards()[0]
+    origin = first.mapTo(browser, QPoint(0, 0))
+    probes = {
+        "gap between cards": (origin.x() + CARD_W + SHELF_GAP // 2,
+                              origin.y() + CARD_H // 2),
+        "header": (browser.width() // 2, 16),
+        "strip margin": (origin.x() + CARD_W // 2, origin.y() - 8),
+    }
+    for area, (x, y) in probes.items():
+        probe = img.pixelColor(x, y)
+        assert probe != Qt.magenta
+        assert _distance(probe, surface) < 6, (
+            f"{theme}: browser {area} painted {probe.name()} over surface "
+            f"{surface.name()} at ({x},{y})")
+    browser.close()
+
+
+def test_browser_empty_state_does_not_paint_the_app_background(themed_app, render_cache):
+    _qapp, theme = themed_app
+    browser = _browser(theme, [])
+    img = _render(browser, 818, 320)
+    surface = gp.sheet_surface(theme == "dark")["bg"]
+    origin = browser.empty_title.mapTo(browser, QPoint(0, 0))
+    x, y = origin.x() - 12, origin.y() + browser.empty_title.height() // 2
+    probe = img.pixelColor(x, y)
+    assert _distance(probe, surface) < 6, (
+        f"{theme}: empty state painted {probe.name()} over {surface.name()}")
+    browser.close()
+
+
+def test_browser_card_shows_the_waving_render_under_the_real_stylesheet(
+        themed_app, render_cache):
+    _qapp, theme = themed_app
+    _facade, store, _pf = render_cache
+    expected = QColor("#00ff00")
+    complete_set(store, "ttr", "Ta", "7400", expected.name())
+    browser = _browser(theme, [_toon("Ta", "7400")])
+    img = _render(browser, 818, 320)
+    card = browser.card_for("Ta")
+    origin = card.mapTo(browser, QPoint(0, 0))
+    # An 8x8 PNG scales to 124x124 and sits at the BOTTOM of the 132 box
+    # (rows 18..141): probe 4 px above the box's floor, which a top-anchored
+    # figure (rows 10..133) would leave to the card wash.
+    x = origin.x() + CARD_W // 2
+    y = origin.y() + FIGURE_TOP + FIGURE_H - 4
+    face = img.pixelColor(x, y)
+    assert _distance(face, expected) < 4, (
+        f"{theme}: figure painted {face.name()}, not the disk render")
+    assert card.portrait_pixmap() is not None
+    browser.close()
