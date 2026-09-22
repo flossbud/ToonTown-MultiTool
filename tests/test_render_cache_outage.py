@@ -136,11 +136,13 @@ def test_the_breaker_stops_the_hammering(world, qapp):
         facade.discovered("ttr", name, f"dna-{name}")
     _drain(qapp, pf)
     # 4 toons x 13 poses = 52 wanted. Only BREAKER_THRESHOLD attempts were
-    # made before the breaker opened, and nothing was dropped.
+    # made before the breaker opened, and nothing was dropped: each outfit's
+    # canary is queued, the other 48 poses wait on those canaries.
     from utils.render_prefetcher import BREAKER_THRESHOLD
     assert pf.breaker_open is True
     assert origin.calls == BREAKER_THRESHOLD
-    assert pf.pending_count == 52
+    assert pf.pending_count == 4
+    assert len(pf._canaries) == 4
 
 
 def test_the_day_of_2026_09_21_a_partial_flat_cache_and_a_cold_origin(world, qapp, tmp_path):

@@ -440,6 +440,24 @@ def test_previous_look_is_shown_with_the_tooltip(render_cache, qapp):
     assert c.toolTip() == PREVIOUS_LOOK_TOOLTIP
 
 
+def test_a_persisting_silhouette_says_the_origin_has_not_drawn_the_toon(render_cache, qapp):
+    """Roboroni, 2026-09-22: the toon was discovered and asked for, the origin
+    produced nothing. A mute silhouette looked like a bug; the card says what
+    is happening. Once anything of the outfit lands the note goes."""
+    from utils.toon_renders import AWAITING_RENDER_TOOLTIP
+    facade, store, pf = render_cache
+    c = RosterCard()
+    c.set_entry(_entry())
+    assert c.toolTip() == ""                            # never discovered: nothing to say
+    store.note_dna("ttr", "Flossbud", "7400")           # the hook reported the outfit
+    c.set_entry(_entry())
+    assert c.portrait_pixmap() is None
+    assert c.toolTip() == AWAITING_RENDER_TOOLTIP.format(name="Flossbud")
+    complete_set(store, "ttr", "Flossbud", "7400", "#00ff00")
+    pf.set_promoted.emit("ttr", "Flossbud")
+    assert c.portrait_pixmap() is not None and c.toolTip() == ""
+
+
 def test_card_repaints_when_its_own_pose_lands(render_cache, qapp):
     facade, store, pf = render_cache
     store.note_dna("ttr", "Flossbud", "7400")

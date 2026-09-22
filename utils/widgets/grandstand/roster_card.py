@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from utils.shared_widgets import PulsingDot
-from utils.toon_renders import PREVIOUS_LOOK_TOOLTIP, ToonRenders
+from utils.toon_renders import AWAITING_RENDER_TOOLTIP, PREVIOUS_LOOK_TOOLTIP, ToonRenders
 from utils.toon_silhouette import paint_race_silhouette
 from utils.widgets.account_tile import summarize_error
 from utils.widgets.grandstand import palette as gp
@@ -353,7 +353,16 @@ class RosterCard(QFrame):
 
     def _show_portrait(self, hit: Optional[tuple[QPixmap, str]]) -> None:
         self._pixmap, self._tier = hit if hit is not None else (None, None)
-        self.setToolTip(PREVIOUS_LOOK_TOOLTIP if self._tier == "previous" else "")
+        self.setToolTip(self._portrait_tooltip())
+
+    def _portrait_tooltip(self) -> str:
+        if self._tier == "previous":
+            return PREVIOUS_LOOK_TOOLTIP
+        e = self._entry
+        if self._pixmap is None and self._wants_render() and e is not None \
+                and self._renders.awaiting_render(e.game, e.toon_name):
+            return AWAITING_RENDER_TOOLTIP.format(name=e.toon_name)
+        return ""
 
     def _load_portrait(self) -> None:
         """Clear-or-replace: the set-entry and promotion path."""

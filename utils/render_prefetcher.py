@@ -26,6 +26,10 @@ PRIORITY_SWEEP = 2
 # that closes the breaker is far more likely to be a pose nobody has asked
 # the origin for yet (it may be warm at the edge) than one that just hung.
 PRIORITY_RETRY = 3
+# The one pose sent for an outfit nobody has ever rendered (unless a consumer
+# already asked for another). The origin either draws the outfit or it does
+# not; one request finds out, twelve more would only hang the same way.
+CANARY_POSE = "head"
 BREAKER_THRESHOLD = 3
 BACKOFF_S = (30, 60, 120, 300)
 
@@ -59,6 +63,9 @@ class RenderPrefetcher(QObject):
         # On-screen needs for toons whose DNA is not known yet (a card mounts
         # before the hook reports the toon). Honoured at discovery.
         self._pending_wants: set[tuple[str, str, str]] = set()
+        # Outfits waiting on their canary: (game, name, dna) -> the priority
+        # the deferred poses get once the canary lands.
+        self._canaries: dict[tuple[str, str, str], int] = {}
         self._probe = QTimer(self)
         self._probe.setSingleShot(True)
         self._probe.timeout.connect(self.fire_probe_now)
@@ -123,7 +130,15 @@ class RenderPrefetcher(QObject):
         # Each enqueue pumps, so the poses a consumer is already waiting for
         # must go in first, not merely at a higher priority.
         missing = self._store.missing_poses(game, name, dna)
+        if not missing:
+            return
         wanted = [p for p in missing if (game, name, p) in self._pending_wants]
+        if len(missing) == len(self._store.poses):
+            # Never rendered: nothing landed, nothing refused. Send the canary
+            # (every wanted pose counts as one) and hold the rest back.
+            canary = wanted or [CANARY_POSE if CANARY_POSE in missing else missing[0]]
+            self._canaries[(game, name, dna)] = priority
+            missing = canary
         for pose in wanted + [p for p in missing if p not in wanted]:
             if pose in wanted:
                 self._pending_wants.discard((game, name, pose))
@@ -141,6 +156,8 @@ class RenderPrefetcher(QObject):
         live = self._live(game, name)
         for key in [k for k in self._queue if k[0] == game and k[1] == name and k[2] not in live]:
             del self._queue[key]
+        for key in [k for k in self._canaries if k[0] == game and k[1] == name and k[2] not in live]:
+            del self._canaries[key]
 
     def _enqueue(self, key: _Key, priority: int) -> None:
         if key in self._in_flight:
@@ -232,6 +249,10 @@ class RenderPrefetcher(QObject):
                         self._close_breaker()
                     self.render_landed.emit(game, name, pose)
                     self._promote(game, name)
+                    deferred = self._canaries.pop((game, name, dna), None)
+                    if deferred is not None:
+                        # The origin draws this outfit: release the rest.
+                        self._enqueue_missing(game, name, dna, deferred)
                     self._pump()
                     return
                 err = DownloadError("server", None, "body was not a valid PNG")
@@ -239,6 +260,11 @@ class RenderPrefetcher(QObject):
         if err.kind not in BREAKER_KINDS:          # a 4xx: the server refused this pose
             if not stale:
                 self._store.mark_failed(game, name, dna, pose)
+                deferred = self._canaries.pop((game, name, dna), None)
+                if deferred is not None:
+                    # A refusal is an answer: the origin knows this outfit,
+                    # it just will not draw this pose. Try the others.
+                    self._enqueue_missing(game, name, dna, deferred)
                 # A refused pose counts towards completeness (the origin will
                 # never render it), so this may be the result that completes
                 # the set -- or the one that proves the whole outfit is dead.
