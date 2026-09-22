@@ -12,6 +12,7 @@ import pytest
 from tabs.launch_tab import LaunchTab
 from utils.credential_copy import KEYRING_WARNING_COPY
 from utils.widgets.grandstand.card_shelf import CardShelf
+from utils.widgets.grandstand.draft import MODE_ADD, MODE_EDIT, AccountDraft
 from utils.widgets.grandstand.model import RosterEntry
 from utils.widgets.grandstand.party import LaunchParty
 from utils.widgets.grandstand.view import GrandstandView
@@ -1096,5 +1097,185 @@ def test_unflagged_2fa_prompt_answers_whichever_worker_the_slot_holds(
             assert slot.message == "2FA cancelled"
     finally:
         slot.worker = None
+        tab.shutdown()
+        tab.close()
+
+
+# ── account sheet wiring (sub-project C) ────────────────────────────────────
+
+def _stub_editor(monkeypatch):
+    """Replace the legacy AccountEditor with a recorder. A real QDialog's
+    exec() would block the test in a nested event loop, and before Task 1's
+    wiring lands the gear still opens that dialog."""
+    import tabs.launch_tab as launch_tab
+
+    class EditorStub:
+        opened = []
+
+        def __init__(self, *args, **kwargs):
+            EditorStub.opened.append(kwargs)
+            self.account_saved = MagicMock()
+
+        def exec(self):
+            return 0
+
+    monkeypatch.setattr(launch_tab, "AccountEditor", EditorStub)
+    return EditorStub
+
+
+def _mutating_update(accounts):
+    """A cred_manager.update_account that edits the metadata the rig hands
+    back, so a re-render shows the change the way the real store would."""
+    def update(index, label, username, password):
+        accounts[index].label = label
+        accounts[index].username = username
+        if password is not None:
+            accounts[index].password = password
+    return update
+
+
+def _open_sheet_via_gear(tab, aid="a"):
+    tab.grandstand.shelf.card_for(aid).gear_clicked.emit(aid)
+    return tab.grandstand.account_sheet
+
+
+def test_gear_opens_the_account_sheet_prefilled_from_the_store(
+        monkeypatch, qapp, capsys):
+    _stub_editor(monkeypatch)
+    tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        sheet = _open_sheet_via_gear(tab)
+        assert tab.grandstand.in_focus_mode() is True
+        d = sheet.draft()
+        assert (d.mode, d.id, d.game) == (MODE_EDIT, "a", "ttr")
+        assert (d.label, d.username, d.password) == ("a", "a", "pw")
+        assert d.keyring_has_password is True and d.keyring_readable is True
+        assert sheet.password_input.text() == "pw"
+        # Running-code stamp: the live validator greps for this exact line.
+        assert "[Grandstand] sheet: account a" in capsys.readouterr().out
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_sheet_save_writes_through_update_account_and_updates_the_card(
+        monkeypatch, qapp):
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a", "b"], blocked=False)
+    cred.update_account.side_effect = _mutating_update(
+        cred.get_accounts_metadata.return_value)
+    try:
+        sheet = _open_sheet_via_gear(tab, "b")
+        sheet.label_input.setText("Gag alt")
+        tab.grandstand.sheet.save_button.click()
+        cred.update_account.assert_called_once_with(
+            1, label="Gag alt", username="b", password="pw")
+        assert tab.grandstand.in_focus_mode() is False
+        assert tab.grandstand.shelf.card_for("b").entry().label == "Gag alt"
+        assert tab.grandstand.shelf.card_for("b").name_text() == "Gag alt"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_a_blank_password_keeps_the_stored_one(monkeypatch, qapp):
+    """Today's semantics: update_account(password=None) preserves the keyring
+    entry, so a label change never demands retyping the password."""
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        sheet = _open_sheet_via_gear(tab)
+        sheet.password_input.setText("")
+        tab.grandstand.sheet.save_button.click()
+        cred.update_account.assert_called_once_with(
+            0, label="a", username="a", password=None)
+        assert tab.grandstand.in_focus_mode() is False
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_sheet_save_refuses_a_blank_username(monkeypatch, qapp):
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        sheet = _open_sheet_via_gear(tab)
+        sheet.username_input.setText("   ")
+        tab.grandstand.sheet.save_button.click()
+        cred.update_account.assert_not_called()
+        assert tab.grandstand.in_focus_mode() is True
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_back_drops_the_draft_without_writing(monkeypatch, qapp):
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        sheet = _open_sheet_via_gear(tab)
+        sheet.label_input.setText("changed")
+        tab.grandstand.sheet.back_button.click()
+        cred.update_account.assert_not_called()
+        assert tab.grandstand.in_focus_mode() is False
+        assert tab.grandstand.shelf.card_for("a").entry().label == "a"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_an_unreadable_keyring_opens_the_sheet_with_an_empty_password(
+        monkeypatch, qapp):
+    """Spec §4: keyring unavailable -> empty field, keyring_has_password
+    False, keyring_readable False, and a blank Save keeps what is stored."""
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    cred.keyring_available = False
+    try:
+        sheet = _open_sheet_via_gear(tab)
+        d = sheet.draft()
+        assert d.password == "" and d.keyring_has_password is False
+        assert d.keyring_readable is False
+        assert sheet.password_helper.isVisibleTo(sheet) is True
+        assert sheet.password_helper.text() == "Stored password can't be read right now"
+        tab.grandstand.sheet.save_button.click()
+        cred.update_account.assert_called_once_with(
+            0, label="a", username="a", password=None)
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_the_pencil_still_opens_todays_editor(monkeypatch, qapp):
+    """Sub-project B owns the appearance surface; until then the pencil is
+    untouched and the sheet's cross-link routes to the same place."""
+    EditorStub = _stub_editor(monkeypatch)
+    tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        tab.grandstand.shelf.card_for("a").edit_clicked.emit("a")
+        assert len(EditorStub.opened) == 1
+        assert EditorStub.opened[0]["mode"] == "edit"
+        assert tab.grandstand.in_focus_mode() is False
+        _open_sheet_via_gear(tab)
+        assert tab.grandstand.in_focus_mode() is True    # the gear did NOT
+        assert len(EditorStub.opened) == 1                # open the editor
+        tab.grandstand.sheet.header.cross_link.click()
+        assert len(EditorStub.opened) == 2
+        assert EditorStub.opened[1]["mode"] == "edit"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_unflagged_tab_never_reaches_the_sheet_handler(monkeypatch, qapp):
+    """Every LaunchTab change is gated by _grandstand_mounted()."""
+    tab, cred = _make_launch_tab(monkeypatch, ["a"], blocked=False, flagged=False)
+    try:
+        assert tab._grandstand_mounted() is False
+        draft = AccountDraft(id="a", game="ttr", mode=MODE_EDIT, label="x",
+                             username="a", password="pw", keyring_has_password=True)
+        tab._on_account_save("ttr", draft)
+        cred.update_account.assert_not_called()
+    finally:
         tab.shutdown()
         tab.close()

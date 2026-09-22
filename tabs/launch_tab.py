@@ -64,6 +64,7 @@ from utils.widgets.confirm_dialog import ConfirmDialog
 from utils.widgets.error_modal import ErrorModal
 from utils.widgets.grandstand.party import LaunchParty
 from utils.widgets.grandstand.view import GrandstandView, grandstand_enabled
+from utils.widgets.grandstand.draft import MODE_ADD, MODE_EDIT, AccountDraft
 from utils.launch_tab_demo_mode import get_demo_fixtures
 
 
@@ -1186,6 +1187,9 @@ class LaunchTab(QWidget):
         self.grandstand.retry_requested.connect(self._on_launch)
         self.grandstand.launch_requested.connect(self._on_launch)
         self.grandstand.party_launch_requested.connect(self._on_party_launch)
+        # Sub-project C: the sheet's intents. Every handler re-checks
+        # _grandstand_mounted() so the legacy path is byte-for-byte.
+        self.grandstand.account_save_requested.connect(self._on_account_save)
         self._layout.addWidget(self.grandstand, 1)
         # The legacy sections remain parented for external callers, but without
         # a layout Qt shows them at (0, 0) over Grandstand when their parent is
@@ -1242,10 +1246,56 @@ class LaunchTab(QWidget):
         self.grandstand.set_main_toon_names(game, names)
 
     def _on_grandstand_edit(self, game: str, account_id: str, surface: str) -> None:
-        """Pencil and gear both open today's account editor. `surface` is
-        carried through unused so sub-projects B and C only have to change this
-        method, not the widget that emits it."""
+        """The gear opens the account sheet (sub-project C). The pencil — and
+        the sheet's cross-link, which routes here with surface="appearance" —
+        keeps today's editor until sub-project B lands the Appearance surface
+        in the sheet shell."""
+        if surface == "account" and self._grandstand_mounted():
+            self._open_account_sheet(game, account_id)
+            return
         self._on_tile_edit(game, account_id)
+
+    def _open_account_sheet(self, game: str, account_id: str) -> None:
+        """Build the edit draft from the store (spec §3 "Open (edit)") and
+        enter focus mode. Password semantics are _on_tile_edit's: prefilled
+        from the keyring when it can be read, blank otherwise."""
+        global_idx = self._global_index_of(account_id)
+        if global_idx is None:
+            return
+        acct = self.cred_manager.get_account(global_idx)
+        if acct is None:
+            return
+        readable = bool(getattr(self.cred_manager, "keyring_available", True))
+        password = (getattr(acct, "password", "") or "") if readable else ""
+        draft = AccountDraft(
+            id=account_id, game=game, mode=MODE_EDIT,
+            label=acct.label or "", username=acct.username or "",
+            password=password, keyring_has_password=bool(password),
+            keyring_readable=readable)
+        self.grandstand.open_account_sheet(
+            game, draft, self._recent_toons.list(account_id),
+            self._recent_toons.primary_name(account_id))
+
+    def _on_account_save(self, game: str, draft) -> None:
+        """Sheet Save (spec §3). Mirrors _on_tile_edit's _save closure line for
+        line; that closure stays untouched for the unflagged launcher."""
+        if not self._grandstand_mounted():
+            return
+        global_idx = self._global_index_of(draft.id)
+        if global_idx is None:
+            self.grandstand.close_sheet()     # removed underneath: nothing to write
+            return
+        # Empty password means "keep current"; None preserves the stored one.
+        pw = draft.password if draft.password else None
+        self.cred_manager.update_account(
+            global_idx, label=draft.label, username=draft.username, password=pw,
+        )
+        self._reconcile_slots()
+        self._render_current_view(game)
+        self.refresh_theme()
+        game_label = "TTR" if game == "ttr" else "CC"
+        self.log(f"[Launch] {game_label} account {self._position_of(game, draft.id)} updated.")
+        self.grandstand.close_sheet()
 
     # ── Layout mode ────────────────────────────────────────────────────────
 
