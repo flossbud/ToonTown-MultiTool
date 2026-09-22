@@ -11,15 +11,22 @@ import dataclasses
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QToolButton, QVBoxLayout, QWidget,
 )
 
+from utils.toon_customization_resolve import resolve_accent
+from utils.toon_renders import AWAITING_RENDER_TOOLTIP, ToonRenders
+from utils.toon_silhouette import paint_race_silhouette
 from utils.widgets.grandstand import palette as gp
-from utils.widgets.grandstand.draft import MODE_ADD, AccountDraft, shown_record
-from utils.widgets.grandstand.model import RosterEntry, roster_entry
+from utils.widgets.grandstand.draft import (
+    MODE_ADD, AccountDraft, shown_record, unique_toons,
+)
+from utils.widgets.grandstand.model import (
+    CARD_POSE, PORTRAIT_RENDER, RosterEntry, portrait_mode, roster_entry,
+)
 from utils.widgets.grandstand.roster_card import RosterCard
 
 # Focus-mode measurements (handoff §4.4).
@@ -125,6 +132,92 @@ class _PasswordEdit(QLineEdit):
         self.eye.move(self.width() - EYE_SIZE - 8, (self.height() - EYE_SIZE) // 2)
 
 
+class _FrowPortrait(QWidget):
+    """The 44 px portrait in the toon row: the primary toon's `head` from the
+    render cache, else its race silhouette. A cache consumer like the card:
+    reads on set, repaints on its own landing, never writes."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFixedSize(FROW_PORTRAIT, FROW_PORTRAIT)
+        self._game = "ttr"
+        self._rec = None
+        self._pixmap = None
+        self._is_dark = True
+        self._renders = ToonRenders.instance()
+        self._renders.render_landed.connect(self._on_render_landed)
+        self._renders.set_promoted.connect(self._on_set_promoted)
+
+    def set_toon(self, game: str, rec) -> None:
+        self._game, self._rec = game, rec
+        self._load()
+
+    def pixmap(self):
+        return self._pixmap
+
+    def _wants_render(self) -> bool:
+        r = self._rec
+        return (r is not None and bool(r.toon_name)
+                and portrait_mode(self._game, bool(r.dna)) == PORTRAIT_RENDER)
+
+    def _read(self):
+        if not self._wants_render():
+            return None
+        hit = self._renders.pixmap_for(self._game, self._rec.toon_name, CARD_POSE)
+        return hit[0] if hit is not None else None
+
+    def _load(self) -> None:
+        self._pixmap = self._read()
+        tip = ""
+        if (self._pixmap is None and self._wants_render()
+                and self._renders.awaiting_render(self._game, self._rec.toon_name)):
+            tip = AWAITING_RENDER_TOOLTIP.format(name=self._rec.toon_name)
+        self.setToolTip(tip)
+        self.update()
+
+    def _on_render_landed(self, game: str, name: str, pose: str) -> None:
+        r = self._rec
+        if r is None or pose != CARD_POSE or game != self._game or name != r.toon_name:
+            return
+        pm = self._read()
+        if pm is None:
+            return                      # a landing never clears
+        self._pixmap = pm
+        self.setToolTip("")
+        self.update()
+
+    def _on_set_promoted(self, game: str, name: str) -> None:
+        r = self._rec
+        if r is None or game != self._game or name != r.toon_name:
+            return
+        self._load()
+
+    def apply_theme(self, is_dark: bool) -> None:
+        self._is_dark = is_dark
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        d = gp.frow(self._is_dark)
+        p.setPen(Qt.NoPen)
+        p.setBrush(d["portrait_bg"])
+        p.drawEllipse(self.rect())
+        r = self._rec
+        if r is None:
+            p.end()
+            return
+        accent = resolve_accent({"accent": r.accent},
+                                QColor(gp.game_accent(self._game))).name()
+        box = self.rect().adjusted(4, 4, -4, -4)
+        if self._pixmap is not None and not self._pixmap.isNull():
+            p.drawPixmap(box, self._pixmap)
+        else:
+            paint_race_silhouette(p, box, r.species, accent)
+        p.end()
+
+
 class AccountSheet(QWidget):
     changed = Signal()
     choose_toon_requested = Signal()
@@ -203,7 +296,8 @@ class AccountSheet(QWidget):
         frow_row = QHBoxLayout(self.frow)
         frow_row.setContentsMargins(10, 0, 10, 0)
         frow_row.setSpacing(10)
-        # Task 5 inserts the 44 px portrait at index 0 of this row.
+        self.frow_portrait = _FrowPortrait(self.frow)
+        frow_row.addWidget(self.frow_portrait, 0, Qt.AlignVCenter)
         names = QVBoxLayout()
         names.setContentsMargins(0, 0, 0, 0)
         names.setSpacing(1)
@@ -326,13 +420,15 @@ class AccountSheet(QWidget):
         return self._draft
 
     def set_toons(self, toons: list, primary_name) -> None:
-        """The account's records, newest first (Task 5 adds the rename
-        merge and the portrait)."""
-        self._toons = list(toons)
+        """The account's records, newest first; rename ghosts collapse here
+        (spec §3) so the count and the row agree with the browser."""
+        self._toons = unique_toons(list(toons))
         self._primary = primary_name
         rec = self.primary_record()
         self.frow_name.setText(rec.toon_name if rec is not None else FROW_NO_TOON)
         self.frow_sub.setText(frow_sub_for(len(self._toons)))
+        game = self._draft.game if self._draft is not None else "ttr"
+        self.frow_portrait.set_toon(game, rec)
         self._rebuild_preview()
 
     def primary_record(self):
@@ -489,6 +585,7 @@ class AccountSheet(QWidget):
             " background: transparent;")
         self.frow_sub.setStyleSheet(
             f"color: {f['sub'].name()}; font-size: 11px; background: transparent;")
+        self.frow_portrait.apply_theme(is_dark)
         lb = gp.link_button(is_dark)
         self.choose_button.setStyleSheet(
             "QPushButton {"

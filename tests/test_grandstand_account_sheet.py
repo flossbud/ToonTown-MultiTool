@@ -1,6 +1,7 @@
 """Account settings body: fields <-> draft, the real-card preview, the toon
 row, copy and measurements (handoff §4.4)."""
 import os
+import os as _os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
@@ -10,7 +11,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QLineEdit
 
-from tests._render_fixtures import complete_set
+from tests._render_fixtures import complete_set, real_png
+from utils.toon_renders import AWAITING_RENDER_TOOLTIP
 from utils.recent_toons import ToonRecord
 from utils.widgets.grandstand import palette as gp
 from utils.widgets.grandstand.account_sheet import (
@@ -344,3 +346,108 @@ def test_add_mode_hides_the_danger_zone_and_shows_a_nameless_card(sheet):
     _open(sheet)
     assert sheet.danger_field.isVisibleTo(sheet) is True
     assert sheet.choose_button.isEnabled() is True
+
+
+# ── the toon row's portrait + the rename merge (spec §3, handoff §4.4) ──────
+
+def _pixel(pm):
+    return pm.toImage().pixelColor(1, 1)
+
+
+def test_frow_merges_rename_ghosts_in_the_count(sheet):
+    """Katsuro is Blue Cat renamed: one toon, counted once, newest name."""
+    _open(sheet, toons=[_rec("Katsuro", "7400"), _rec("Blue Cat", "7400"),
+                        _rec("Pepper", "7401")], primary=None)
+    assert sheet.toon_count() == 2
+    assert sheet.frow_sub_text() == "2 discovered"
+    assert sheet.frow_name_text() == "Katsuro"
+    assert sheet.preview.name_text() == "Katsuro"
+
+
+def test_cc_records_never_merge_in_the_row(sheet):
+    _open(sheet, draft=_draft(game="cc"),
+          toons=[_rec("Hiro", "", "cc", "bear"), _rec("Bonzo", "", "cc", "dog")],
+          primary="Bonzo")
+    assert sheet.toon_count() == 2
+    assert sheet.frow_name_text() == "Bonzo"
+
+
+def test_frow_portrait_is_44px_and_reads_the_head_from_the_cache(sheet, render_cache):
+    _facade, store, _pf = render_cache
+    complete_set(store, "ttr", "Flossbud", "7400", "#ff0000")
+    _open(sheet)
+    p = sheet.frow_portrait
+    assert (p.width(), p.height()) == (FROW_PORTRAIT, FROW_PORTRAIT) == (44, 44)
+    assert p.pixmap() is not None
+    assert _pixel(p.pixmap()) == QColor("#ff0000")
+    assert p.toolTip() == ""
+
+
+def test_frow_portrait_follows_the_primary(sheet, render_cache):
+    _facade, store, _pf = render_cache
+    complete_set(store, "ttr", "Flossbud", "7400", "#ff0000")
+    complete_set(store, "ttr", "Pepper", "7401", "#00ff00")
+    _open(sheet, toons=[_rec("Pepper", "7401"), _rec("Flossbud", "7400")],
+          primary="Flossbud")
+    assert _pixel(sheet.frow_portrait.pixmap()) == QColor("#ff0000")
+    sheet.set_toons([_rec("Pepper", "7401"), _rec("Flossbud", "7400")], "Pepper")
+    assert _pixel(sheet.frow_portrait.pixmap()) == QColor("#00ff00")
+    assert sheet.frow_name_text() == "Pepper"
+    assert sheet.preview.name_text() == "Pepper"
+
+
+def test_a_cold_frow_portrait_says_the_origin_has_not_drawn_it(sheet, render_cache):
+    _facade, store, pf = render_cache
+    store.note_dna("ttr", "Flossbud", "7400")
+    _open(sheet)
+    p = sheet.frow_portrait
+    assert p.pixmap() is None
+    assert p.toolTip() == AWAITING_RENDER_TOOLTIP.format(name="Flossbud")
+    complete_set(store, "ttr", "Flossbud", "7400", "#00ff00")
+    pf.render_landed.emit("ttr", "Flossbud", "portrait")      # not the head
+    assert p.pixmap() is None
+    pf.render_landed.emit("ttr", "Flossbud", CARD_POSE)
+    assert p.pixmap() is not None
+    assert p.toolTip() == ""
+
+
+def test_a_landing_that_is_not_yet_servable_keeps_the_frow_picture(sheet, render_cache):
+    """Mirror of the roster card's rule: a landing only ever adds a file;
+    when the store cannot serve it yet the picture on screen stays."""
+    facade, store, pf = render_cache
+    complete_set(store, "ttr", "Flossbud", "7400", "#ff0000")
+    _open(sheet)
+    p = sheet.frow_portrait
+    assert _pixel(p.pixmap()) == QColor("#ff0000")
+    _os.remove(store.path_for("ttr", "Flossbud", "7400", CARD_POSE))
+    store.note_dna("ttr", "Flossbud", "dna2")
+    real_png(store.path_for("ttr", "Flossbud", "dna2", CARD_POSE), "#00ff00")
+    assert store.mark_landed("ttr", "Flossbud", "dna2", CARD_POSE)
+    assert facade.pixmap_for("ttr", "Flossbud", CARD_POSE) is None
+    pf.render_landed.emit("ttr", "Flossbud", CARD_POSE)
+    assert p.pixmap() is not None, "a landing cleared the portrait"
+    assert _pixel(p.pixmap()) == QColor("#ff0000")
+    complete_set(store, "ttr", "Flossbud", "dna2", "#00ff00")
+    pf.set_promoted.emit("ttr", "Flossbud")
+    assert _pixel(p.pixmap()) == QColor("#00ff00")
+
+
+def test_cc_frow_portrait_never_consults_the_cache(sheet, render_cache, monkeypatch):
+    facade, store, _pf = render_cache
+    complete_set(store, "cc", "Hiro", "7400")
+    asked = []
+    monkeypatch.setattr(facade, "pixmap_for", lambda *a: asked.append(a))
+    _open(sheet, draft=_draft(game="cc"), toons=[_rec("Hiro", "7400", "cc", "bear")],
+          primary="Hiro")
+    assert asked == []
+    assert sheet.frow_portrait.pixmap() is None
+
+
+def test_frow_portrait_paints_without_raising(sheet, render_cache, qapp):
+    """Silhouette path (no render) and empty path (no toon) both paint."""
+    _open(sheet)
+    sheet.show()
+    qapp.processEvents()
+    sheet.frow_portrait.repaint()
+    _open(sheet, toons=[], primary=None)
+    sheet.frow_portrait.repaint()

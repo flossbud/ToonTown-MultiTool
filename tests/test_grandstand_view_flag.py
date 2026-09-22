@@ -465,3 +465,14 @@ def test_pruning_leaves_an_add_mode_sheet_alone(roster):
         "ttr", _draft(mode=MODE_ADD, label="", username="", password=""), [], None)
     roster.set_accounts("ttr", [])
     assert roster.in_focus_mode() is True
+
+
+def test_the_note_counts_merged_toons(roster):
+    from types import SimpleNamespace
+    ghosts = [SimpleNamespace(toon_name="Katsuro", dna="7400", game="ttr",
+                              species="cat", accent=None, laff=None),
+              SimpleNamespace(toon_name="Blue Cat", dna="7400", game="ttr",
+                              species="cat", accent=None, laff=None)]
+    roster.open_account_sheet("ttr", _draft(), ghosts, None)
+    assert roster.sheet.note_text() == "1 toon discovered"
+    assert roster.account_sheet.frow_name_text() == "Katsuro"
