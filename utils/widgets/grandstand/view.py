@@ -13,11 +13,16 @@ import os
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QSizePolicy, QStackedWidget, QVBoxLayout,
+    QWidget,
 )
 
 from utils.credential_copy import KEYRING_WARNING_COPY, MACOS_VAULT_COPY
 from utils.widgets.grandstand import palette as gp
+from utils.widgets.grandstand.account_sheet import (
+    CROSS_LINK, note_for, subtitle_for, title_for,
+)
+from utils.widgets.grandstand.draft import MODE_ADD, AccountDraft
 
 # Band geometry (handoff §4.1). The stack is fixed above the shelf; the shelf
 # takes what is left of the 688px content area.
@@ -30,6 +35,16 @@ ADVISORY_STACK_GAP = 8
 # Bumped by each milestone so a live validator can tell which build is running.
 MILESTONE = 1
 STAMP_PREFIX = "[Grandstand] view active"
+
+# Running-code stamp for sub-project C, printed on every sheet-surface open:
+# "[Grandstand] sheet: account <id>" / "... account add" / "... toon-browser <id>".
+SHEET_STAMP_PREFIX = "[Grandstand] sheet:"
+
+# Body pages and the shelf's slot (spec §2).
+PAGE_ROSTER = 0
+PAGE_SHEET = 1
+SLOT_SHELF = 0
+SLOT_BROWSER = 1
 
 _FLAG = "TTMT_GRANDSTAND"
 
@@ -86,6 +101,11 @@ class GrandstandView(QWidget):
     manage_requested = Signal(str)
     official_launcher_requested = Signal(str)
 
+    # Sub-project C: the view emits intents; LaunchTab owns every write.
+    account_save_requested = Signal(str, object)      # game, AccountDraft
+    account_remove_requested = Signal(str, str)       # game, account_id
+    toon_chosen = Signal(str, str, str)               # game, account_id, toon
+
     def __init__(self, party, log=None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._log = log or (lambda _msg: None)
@@ -97,6 +117,17 @@ class GrandstandView(QWidget):
         self._credential_kind = "ok"
         self._entries: dict[str, list] = {"ttr": [], "cc": []}
         self._main_names: dict[str, dict] = {"ttr": {}, "cc": {}}
+        # Focus-mode state (spec §2): the sheet's game and the account's raw
+        # toon records, kept so the browser can reopen the same sheet.
+        self._sheet_game: str | None = None
+        self._sheet_toons: list = []
+        self._sheet_primary: str | None = None
+        self._browser_account: str | None = None
+        self._browser_return_to = "settings"
+        # The last live launch state per (game, account): a RosterEntry only
+        # carries the state at render time, and the sheet's preview must open
+        # showing what the card shows now.
+        self._live_states: dict[tuple[str, str], tuple] = {}
 
         self.setObjectName("grandstand_view")
 
@@ -114,24 +145,54 @@ class GrandstandView(QWidget):
         adv.addWidget(self.advisory_label)
         root.addWidget(self.advisory)
 
+        # Page 0 is the roster stack, page 1 the focus-mode sheet (spec §2).
+        # Both are plain containers under the app's global QWidget rule, so
+        # each opts out of painting the page colour over its children.
+        self.pages = QStackedWidget(self)
+        self.pages.setObjectName("gs_pages")
+        self.pages.setStyleSheet("#gs_pages { background: transparent; }")
+        root.addWidget(self.pages, 1)
+
+        self.roster_page = QWidget(self.pages)
+        self.roster_page.setObjectName("gs_roster_page")
+        self.roster_page.setStyleSheet("#gs_roster_page { background: transparent; }")
+        stack = QVBoxLayout(self.roster_page)
+        stack.setContentsMargins(0, 0, 0, 0)
+        stack.setSpacing(STACK_GAP)
+
         from utils.widgets.grandstand.game_selector import GameSelector
-        self.selector = GameSelector(self)
+        self.selector = GameSelector(self.roster_page)
         self.selector.setFixedHeight(SELECTOR_H)
         self.selector.set_active(self._party.active_game())
         self.selector.game_clicked.connect(self._on_game_clicked)
-        root.addWidget(self.selector)
+        stack.addWidget(self.selector)
 
         from utils.widgets.grandstand.hero_stage import HeroStage
-        self.hero = HeroStage(self)
+        self.hero = HeroStage(self.roster_page)
         self.hero.setFixedHeight(HERO_H)
         self.hero.set_game(self._party.active_game())
         self.hero.play_clicked.connect(self._on_play)
         self.hero.official_clicked.connect(self._emit_official_launcher_intent)
-        root.addWidget(self.hero)
+        stack.addWidget(self.hero)
 
+        # The shelf's slot: the shelf now, the toon browser beside it from
+        # Task 6 (handoff §4.7 — the shelf swaps in place, the stage stays put).
+        self.shelf_stack = QStackedWidget(self.roster_page)
+        self.shelf_stack.setObjectName("gs_shelf_stack")
+        self.shelf_stack.setStyleSheet("#gs_shelf_stack { background: transparent; }")
         from utils.widgets.grandstand.card_shelf import CardShelf
-        self.shelf = CardShelf(self)
-        root.addWidget(self.shelf, 1)         # the only stretching band
+        self.shelf = CardShelf(self.shelf_stack)
+        self.shelf_stack.addWidget(self.shelf)
+        stack.addWidget(self.shelf_stack, 1)          # the only stretching band
+        self.pages.addWidget(self.roster_page)
+
+        from utils.widgets.grandstand.sheet import SheetShell
+        from utils.widgets.grandstand.account_sheet import AccountSheet
+        self.sheet = SheetShell(self.pages)
+        self.account_sheet = AccountSheet(self.sheet)
+        self.sheet.set_body(self.account_sheet)
+        self.pages.addWidget(self.sheet)
+        self.pages.setCurrentIndex(PAGE_ROSTER)
 
         self.shelf.card_clicked.connect(self._on_card_clicked)
         self.shelf.star_clicked.connect(self._on_star_clicked)
@@ -157,6 +218,11 @@ class GrandstandView(QWidget):
             lambda: self.manage_requested.emit(self._party.active_game()))
         self.shelf.clear_selection_clicked.connect(self._on_clear_selection)
         self.shelf.clear_main_clicked.connect(self._on_clear_main)
+
+        self.sheet.back_requested.connect(self.close_sheet)
+        self.sheet.cancel_requested.connect(self.close_sheet)
+        self.sheet.save_requested.connect(self._on_sheet_save)
+        self.sheet.cross_link_requested.connect(self._on_sheet_cross_link)
 
         self.apply_theme(self._is_dark)
 
@@ -194,17 +260,35 @@ class GrandstandView(QWidget):
 
     def set_accounts(self, game: str, entries: list) -> None:
         self._entries[game] = list(entries)
+        # Fresh entries carry LaunchTab's effective state; anything remembered
+        # from before this render is older than they are.
+        self._live_states = {k: v for k, v in self._live_states.items()
+                             if k[0] != game}
         self.selector.set_counts(len(self._entries["ttr"]), len(self._entries["cc"]))
         if game == self._party.active_game():
             self.shelf.set_entries(self._entries[game])
             self.refresh(game)
+            self._reconcile_focus(game)
+
+    def _reconcile_focus(self, game: str) -> None:
+        """An open sheet follows its account: a surviving one feeds the
+        preview its fresh state and accent (Task 4 adds: a vanished one
+        closes the sheet)."""
+        aid = self.account_sheet.account_id()
+        if not aid:
+            return                                   # closed, or add mode
+        self.account_sheet.set_base_entry(self.entry_for(game, aid))
 
     def set_account_state(self, game: str, account_id: str, state: str,
                           message: str = "", raw: str = "") -> None:
-        """Route one account's live launch state to its card. Unknown ids are
-        ignored — a state can arrive for an account already deleted."""
+        """Route one account's live launch state to its card — and to the
+        sheet's preview while that account is open (spec §4). Unknown ids
+        are ignored: a state can arrive for an account already deleted."""
+        self._live_states[(game, account_id)] = (state, message, raw)
         if game == self._party.active_game():
             self.shelf.set_state(account_id, state, message, raw)
+            if self.account_sheet.account_id() == account_id:
+                self.account_sheet.set_account_state(state, message, raw)
 
     def set_credential_state(self, kind: str, reason: str = "",
                              action_text: str = "", on_action=None) -> None:
@@ -218,7 +302,7 @@ class GrandstandView(QWidget):
         self._credential_kind = kind
         if kind == "blocked":
             self.advisory.setVisible(False)
-            self.layout().setSpacing(STACK_GAP)
+            self._set_stack_gap(STACK_GAP)
             fallback = MACOS_VAULT_COPY["denied"].hero_reason()
             self.hero.set_blocked(reason or fallback, action_text, on_action)
             return
@@ -230,10 +314,16 @@ class GrandstandView(QWidget):
             self.advisory_label.set_copy(strip, tooltip)
             # The strip creates a fourth band. Tighten all three gaps by 2px
             # so the natural stack remains inside the fixed 688px content area.
-            self.layout().setSpacing(ADVISORY_STACK_GAP)
+            self._set_stack_gap(ADVISORY_STACK_GAP)
         else:
             self.advisory.setVisible(False)
-            self.layout().setSpacing(STACK_GAP)
+            self._set_stack_gap(STACK_GAP)
+
+    def _set_stack_gap(self, gap: int) -> None:
+        """The advisory strip's tighter gap applies between every band: the
+        root gap (strip -> pages) and the roster page's own gaps."""
+        self.layout().setSpacing(gap)
+        self.roster_page.layout().setSpacing(gap)
 
     def apply_theme(self, is_dark: bool) -> None:
         self._is_dark = is_dark
@@ -248,10 +338,15 @@ class GrandstandView(QWidget):
         self.hero.apply_theme(is_dark)
         self.hero.crew_area.apply_theme(is_dark)
         self.shelf.apply_theme(is_dark)
+        self.sheet.apply_theme(is_dark)               # forwards to the body
 
     def _on_game_clicked(self, game: str) -> None:
         if game == self._party.active_game():
             return
+        # The selector lives on page 0, so this cannot happen from the UI
+        # while a sheet is open; a programmatic switch drops the draft first.
+        if self.in_focus_mode():
+            self.close_sheet()
         self._party.set_active_game(game)
         self.selector.set_active(game)
         self.hero.set_game(game)
@@ -330,3 +425,68 @@ class GrandstandView(QWidget):
         order = self._party.launch_order(game)
         if order:
             self.party_launch_requested.emit(game, order)
+
+    # ── focus mode: the account sheet (spec §2, §3) ────────────────────────
+
+    def in_focus_mode(self) -> bool:
+        return self.pages.currentIndex() == PAGE_SHEET
+
+    def browser_open(self) -> bool:
+        return self.shelf_stack.currentIndex() == SLOT_BROWSER
+
+    def open_account_sheet(self, game: str, draft: AccountDraft, toons: list,
+                           primary_name) -> None:
+        """Enter focus mode on the account surface. `toons` is the account's
+        raw record list, newest first; the sheet collapses rename ghosts."""
+        if self.browser_open():
+            self.shelf_stack.setCurrentIndex(SLOT_SHELF)
+        self._sheet_game = game
+        self._sheet_toons = list(toons)
+        self._sheet_primary = primary_name
+        self._log(f"{SHEET_STAMP_PREFIX} account {draft.id or 'add'}")
+        base = self.entry_for(game, draft.id) if draft.id else None
+        self.account_sheet.open(draft, self._sheet_toons, primary_name, base)
+        live = self._live_states.get((game, draft.id)) if draft.id else None
+        if live is not None:
+            self.account_sheet.set_account_state(*live)
+        self.sheet.set_header(title_for(draft), subtitle_for(draft))
+        self.sheet.set_cross_link("" if draft.mode == MODE_ADD else CROSS_LINK)
+        self.sheet.set_note(note_for(self.account_sheet.toon_count()))
+        self._go_to_page(PAGE_SHEET)
+        self.account_sheet.focus_first()
+
+    def close_sheet(self) -> None:
+        """Leave focus mode. The draft is dropped; nothing is written."""
+        if self.browser_open():
+            self.shelf_stack.setCurrentIndex(SLOT_SHELF)
+        self._browser_account = None
+        if self.in_focus_mode():
+            self._go_to_page(PAGE_ROSTER)
+        self.account_sheet.clear()
+        self._sheet_game = None
+        self._sheet_toons = []
+        self._sheet_primary = None
+
+    def _go_to_page(self, index: int) -> None:
+        """Plain switch for now; Task 7 adds the handoff's collapse."""
+        self.pages.setCurrentIndex(index)
+
+    def _on_sheet_save(self) -> None:
+        """Validate, then hand the draft to the owner. The view never writes
+        and never closes on its own — LaunchTab calls close_sheet() after
+        the write (spec §3)."""
+        draft = self.account_sheet.draft()
+        if draft is None or self._sheet_game is None:
+            return
+        errors = draft.validate()
+        if errors:
+            return                        # Task 2 renders them inline
+        self.account_save_requested.emit(self._sheet_game, draft)
+
+    def _on_sheet_cross_link(self) -> None:
+        """One cross-link, pointing at the surface you are not on (handoff
+        §4.5). Until sub-project B it routes exactly where the pencil does."""
+        draft = self.account_sheet.draft()
+        if draft is None or self._sheet_game is None or not draft.id:
+            return
+        self.edit_requested.emit(self._sheet_game, draft.id, "appearance")

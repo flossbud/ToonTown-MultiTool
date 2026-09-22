@@ -7,10 +7,12 @@ os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 import pytest
 from unittest.mock import MagicMock
 
+from utils.widgets.grandstand.draft import MODE_ADD, MODE_EDIT, AccountDraft
+from utils.widgets.grandstand.model import RosterEntry
 from utils.widgets.grandstand.party import LaunchParty
 from utils.widgets.grandstand.view import (
-    HERO_H, MILESTONE, SELECTOR_H, STAMP_PREFIX, GrandstandView,
-    grandstand_enabled,
+    HERO_H, MILESTONE, PAGE_ROSTER, PAGE_SHEET, SELECTOR_H, SHEET_STAMP_PREFIX,
+    STAMP_PREFIX, GrandstandView, grandstand_enabled,
 )
 
 
@@ -70,7 +72,9 @@ def test_declares_every_signal_the_spec_names(qapp):
                  "launch_requested", "party_launch_requested", "edit_requested",
                  "cancel_requested", "quit_requested", "enter_2fa_requested",
                  "retry_requested", "add_account_requested", "manage_requested",
-                 "official_launcher_requested"):
+                 "official_launcher_requested",
+                 "account_save_requested", "account_remove_requested",
+                 "toon_chosen"):
         assert hasattr(v, name), f"missing signal {name}"
 
 
@@ -242,3 +246,138 @@ def test_layout_mode_keeps_the_old_launcher_when_flag_is_off(qapp, monkeypatch):
         assert tab._layout_mode == "full"
     finally:
         tab.shutdown()
+
+
+# ── focus mode: the account sheet (sub-project C) ───────────────────────────
+
+def _entry(aid, state="idle"):
+    return RosterEntry(account_id=aid, game="ttr", label=f"L{aid}",
+                       username=f"u{aid}", toon_name="Flossbud", species="cat",
+                       dna="7400", accent="#4a8fe7", footer="Primary",
+                       portrait_mode="render", state=state, message="",
+                       raw_error="")
+
+
+def _draft(aid="a", mode=MODE_EDIT, **kw):
+    base = dict(id=aid if mode == MODE_EDIT else "", game="ttr", mode=mode,
+                label=f"L{aid}", username=f"u{aid}", password="pw",
+                keyring_has_password=True)
+    base.update(kw)
+    return AccountDraft(**base)
+
+
+@pytest.fixture
+def roster(qapp):
+    lines = []
+    v = GrandstandView(LaunchParty(None), log=lines.append)
+    v.set_accounts("ttr", [_entry("a"), _entry("b")])
+    v.lines = lines
+    yield v
+    v.close()
+    v.deleteLater()
+    qapp.processEvents()
+
+
+def test_open_account_sheet_enters_focus_mode_and_stamps(roster):
+    assert roster.in_focus_mode() is False
+    roster.open_account_sheet("ttr", _draft(), [], None)
+    assert roster.in_focus_mode() is True
+    assert roster.pages.currentIndex() == PAGE_SHEET
+    assert roster.account_sheet.is_open() is True
+    assert roster.sheet.header.title_text() == "Account · La"
+    assert roster.sheet.header.subtitle_text() == (
+        "Toontown Rewritten · changes apply to this account only")
+    assert roster.sheet.note_text() == "No toons discovered yet"
+    assert roster.lines[-1] == f"{SHEET_STAMP_PREFIX} account a"
+    assert roster.lines[-1] == "[Grandstand] sheet: account a"
+
+
+def test_the_sheet_takes_the_roster_entry_as_its_preview_base(roster):
+    roster.set_account_state("ttr", "a", "running")
+    roster.open_account_sheet("ttr", _draft(), [], None)
+    assert roster.account_sheet.preview.state() == "running"
+
+
+def test_launch_state_reaches_the_open_sheets_preview(roster):
+    roster.open_account_sheet("ttr", _draft(), [], None)
+    roster.set_account_state("ttr", "a", "need_2fa")
+    assert roster.account_sheet.preview.state() == "need_2fa"
+    roster.set_account_state("ttr", "b", "failed", "nope")   # someone else's
+    assert roster.account_sheet.preview.state() == "need_2fa"
+
+
+def test_close_sheet_returns_to_the_roster_and_drops_the_draft(roster):
+    roster.open_account_sheet("ttr", _draft(), [], None)
+    roster.account_sheet.label_input.setText("edited")
+    roster.close_sheet()
+    assert roster.in_focus_mode() is False
+    assert roster.pages.currentIndex() == PAGE_ROSTER
+    assert roster.account_sheet.is_open() is False
+    assert roster.account_sheet.draft() is None
+
+
+def test_back_and_cancel_close_without_emitting(roster):
+    seen = []
+    roster.account_save_requested.connect(lambda g, d: seen.append(d))
+    for button in (roster.sheet.back_button, roster.sheet.cancel_button):
+        roster.open_account_sheet("ttr", _draft(), [], None)
+        roster.account_sheet.label_input.setText("edited")
+        button.click()
+        assert roster.in_focus_mode() is False
+    assert seen == []
+
+
+def test_save_with_a_clean_draft_emits_the_intent_and_stays_open(roster):
+    """The view never writes and never closes on its own: LaunchTab performs
+    the write and calls close_sheet() afterwards (spec §3)."""
+    seen = []
+    roster.account_save_requested.connect(lambda g, d: seen.append((g, d)))
+    roster.open_account_sheet("ttr", _draft(), [], None)
+    roster.account_sheet.label_input.setText("Main")
+    roster.sheet.save_button.click()
+    assert len(seen) == 1
+    game, draft = seen[0]
+    assert game == "ttr"
+    assert (draft.id, draft.label, draft.username, draft.password) == (
+        "a", "Main", "ua", "pw")
+    assert roster.in_focus_mode() is True
+
+
+def test_save_with_errors_does_not_emit(roster):
+    seen = []
+    roster.account_save_requested.connect(lambda g, d: seen.append(d))
+    roster.open_account_sheet("ttr", _draft(), [], None)
+    roster.account_sheet.username_input.setText("")
+    roster.sheet.save_button.click()
+    assert seen == []
+    assert roster.in_focus_mode() is True
+
+
+def test_the_cross_link_routes_to_the_appearance_editor(roster):
+    """Until sub-project B the cross-link does what the pencil does."""
+    seen = []
+    roster.edit_requested.connect(lambda g, a, s: seen.append((g, a, s)))
+    roster.open_account_sheet("ttr", _draft(), [], None)
+    assert roster.sheet.header.cross_link_text() == "✏ Customize appearance"
+    roster.sheet.header.cross_link.click()
+    assert seen == [("ttr", "a", "appearance")]
+
+
+def test_a_game_click_in_focus_mode_closes_the_sheet_first(roster):
+    roster.open_account_sheet("ttr", _draft(), [], None)
+    roster.selector.game_clicked.emit("cc")
+    assert roster.in_focus_mode() is False
+    assert roster.active_game() == "cc"
+
+
+def test_the_sheet_page_never_outgrows_the_content_band(roster, qapp):
+    """QStackedWidget's minimum is the max over ALL pages, current or not."""
+    roster.resize(880, 688)
+    roster.show()
+    qapp.processEvents()
+    assert roster.minimumSizeHint().height() <= 688
+    roster.open_account_sheet("ttr", _draft(), [], None)
+    qapp.processEvents()
+    assert roster.minimumSizeHint().height() <= 688
+    assert roster.sheet.isVisible() is True
+    assert roster.roster_page.isVisible() is False
