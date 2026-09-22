@@ -139,6 +139,7 @@ class AccountSheet(QWidget):
         self._primary: Optional[str] = None
         self._base: Optional[RosterEntry] = None
         self._section_labels: list[QLabel] = []
+        self._errors: dict[str, str] = {}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -242,8 +243,11 @@ class AccountSheet(QWidget):
         grid.setRowStretch(3, 1)
         row.addWidget(self.fields, 1, Qt.AlignTop)
 
-        for edit in (self.label_input, self.username_input, self.password_input):
-            edit.textChanged.connect(self._on_field_changed)
+        for key, edit in (("label", self.label_input),
+                          ("username", self.username_input),
+                          ("password", self.password_input)):
+            edit.textChanged.connect(
+                lambda _text, key=key: self._on_field_changed(key))
 
         self.apply_theme(True)
 
@@ -295,6 +299,8 @@ class AccountSheet(QWidget):
         self.danger_field.setVisible(not add)
         self.remove_button.setText(f"{TRASH_GLYPH}  {remove_label_for(draft)}")
         self.choose_button.setEnabled(not add)
+        self._errors = {}
+        self._render_errors()
         self.set_toons(toons, primary_name)
 
     def clear(self) -> None:
@@ -302,10 +308,12 @@ class AccountSheet(QWidget):
         self._base = None
         self._toons = []
         self._primary = None
+        self._errors = {}
         for edit in (self.label_input, self.username_input, self.password_input):
             edit.blockSignals(True)
             edit.clear()
             edit.blockSignals(False)
+        self._render_errors()
 
     def is_open(self) -> bool:
         return self._draft is not None
@@ -344,6 +352,30 @@ class AccountSheet(QWidget):
                 self._base, state=state, message=message or "", raw_error=raw or "")
         self.preview.set_state(state, message, raw)
 
+    # ── validation feedback (spec §4) ────────────────────────────────────────
+
+    def show_errors(self, errors: dict) -> None:
+        """Field -> message from AccountDraft.validate(). Invalid border and
+        10 px / 600 message in the error red (handoff §4.4)."""
+        self._errors = dict(errors)
+        self._render_errors()
+
+    def clear_errors(self) -> None:
+        self._errors = {}
+        self._render_errors()
+
+    def errors(self) -> dict:
+        return dict(self._errors)
+
+    def _render_errors(self) -> None:
+        for key, edit, label in (("username", self.username_input, self.username_error),
+                                 ("password", self.password_input, self.password_error)):
+            message = self._errors.get(key, "")
+            label.setText(message)
+            label.setVisible(bool(message))
+            self._restyle_input(edit, invalid=bool(message))
+        self._restyle_input(self.label_input, invalid=False)
+
     # ── readouts (test surface) ────────────────────────────────────────────
 
     def preview_entry(self):
@@ -368,13 +400,19 @@ class AccountSheet(QWidget):
 
     # ── draft ──────────────────────────────────────────────────────────────
 
-    def _on_field_changed(self, _text: str) -> None:
+    def _on_field_changed(self, key: str) -> None:
         d = self._draft
         if d is None:
             return
         d.label = self.label_input.text()
         d.username = self.username_input.text()
         d.password = self.password_input.text()
+        # An edit clears that field's own error (AccountEditor's semantics);
+        # the next Save re-validates the whole draft.
+        if key in self._errors:
+            del self._errors[key]
+            self._render_errors()
+        self._rebuild_preview()
         self.changed.emit()
 
     def _rebuild_preview(self) -> None:
@@ -424,8 +462,7 @@ class AccountSheet(QWidget):
                 " background: transparent;")
         self.password_helper.setStyleSheet(
             f"color: {ink['sub'].name()}; font-size: 10px; background: transparent;")
-        for edit in (self.label_input, self.username_input, self.password_input):
-            self._restyle_input(edit, invalid=False)
+        self._render_errors()               # restyles every input, errors kept
         eye_rest = gp.sheet_ink(is_dark)["sub"].name()
         eye_on = gp.sheet_input(False, is_dark)["focus_border"].name()
         self.password_input.eye.setStyleSheet(

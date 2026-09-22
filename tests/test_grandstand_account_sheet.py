@@ -7,10 +7,12 @@ os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QLineEdit
 
 from tests._render_fixtures import complete_set
 from utils.recent_toons import ToonRecord
+from utils.widgets.grandstand import palette as gp
 from utils.widgets.grandstand.account_sheet import (
     ADD_TITLE, CAPTION, CHOOSE_TOON, COL_GAP, CROSS_LINK, DANGER_FIELD,
     EYE_GLYPH, EYE_SIZE, FROW_FIELD, FROW_H, FROW_NO_TOON, FROW_PORTRAIT,
@@ -18,7 +20,9 @@ from utils.widgets.grandstand.account_sheet import (
     PASSWORD_FIELD, PREVIEW_COL_W, TRASH_GLYPH, USERNAME_FIELD, AccountSheet,
     frow_sub_for, note_for, remove_label_for, subtitle_for, title_for,
 )
-from utils.widgets.grandstand.draft import MODE_ADD, MODE_EDIT, AccountDraft
+from utils.widgets.grandstand.draft import (
+    MODE_ADD, MODE_EDIT, PASSWORD_REQUIRED, USERNAME_REQUIRED, AccountDraft,
+)
 from utils.widgets.grandstand.model import CARD_POSE, RosterEntry
 from utils.widgets.grandstand.roster_card import CARD_H, CARD_W, RosterCard
 
@@ -242,3 +246,83 @@ def test_an_unknown_game_code_subtitles_rather_than_raising():
         "XX · changes apply to this account only")
     assert subtitle_for(_draft(game="")) == (
         " · changes apply to this account only")
+
+
+# ── live preview (spec §3) ──────────────────────────────────────────────────
+
+def test_preview_follows_the_label_and_username_as_typed(sheet):
+    _open(sheet, toons=[], primary=None)        # no toon: the card shows the label
+    sheet.label_input.setText("Main")
+    assert sheet.preview.name_text() == "Main"
+    assert sheet.preview_entry().label == "Main"
+    sheet.username_input.setText("floss")
+    assert sheet.preview.user_text() == "floss"
+    sheet.label_input.setText("")
+    assert sheet.preview.name_text() == "floss"      # display_name falls back
+
+
+def test_preview_keeps_the_toon_name_while_the_label_changes(sheet):
+    _open(sheet)
+    sheet.label_input.setText("Main")
+    assert sheet.preview.name_text() == "Flossbud"
+    assert sheet.preview_entry().label == "Main"
+
+
+def test_a_state_change_survives_a_later_edit(sheet):
+    _open(sheet, base=_entry())
+    sheet.set_account_state("running")
+    sheet.label_input.setText("Main")
+    assert sheet.preview.state() == "running"
+    assert sheet.preview.footer_text() == "Running"
+
+
+# ── inline errors (spec §4, handoff §4.4) ───────────────────────────────────
+
+def _red(is_dark=True):
+    return gp.sheet_input(True, is_dark)["error"].name(QColor.HexArgb)
+
+
+def test_show_errors_paints_the_message_and_the_red_border(sheet):
+    _open(sheet)
+    sheet.show_errors({"username": USERNAME_REQUIRED, "password": PASSWORD_REQUIRED})
+    assert sheet.username_error.isVisibleTo(sheet) is True
+    assert sheet.username_error.text() == "Username is required"
+    assert sheet.password_error.isVisibleTo(sheet) is True
+    assert sheet.password_error.text() == "Password is required"
+    assert _red() in sheet.username_input.styleSheet()
+    assert _red() in sheet.password_input.styleSheet()
+    assert _red() not in sheet.label_input.styleSheet()
+    assert sheet.errors() == {"username": USERNAME_REQUIRED,
+                              "password": PASSWORD_REQUIRED}
+
+
+def test_editing_a_field_clears_only_its_error(sheet):
+    _open(sheet)
+    sheet.show_errors({"username": USERNAME_REQUIRED, "password": PASSWORD_REQUIRED})
+    sheet.username_input.setText("floss")
+    assert sheet.username_error.isVisibleTo(sheet) is False
+    assert sheet.password_error.isVisibleTo(sheet) is True
+    assert sheet.errors() == {"password": PASSWORD_REQUIRED}
+    assert _red() not in sheet.username_input.styleSheet()
+    assert _red() in sheet.password_input.styleSheet()
+
+
+def test_clear_errors_and_reopen_reset(sheet):
+    _open(sheet)
+    sheet.show_errors({"username": USERNAME_REQUIRED})
+    sheet.clear_errors()
+    assert sheet.errors() == {}
+    assert sheet.username_error.isVisibleTo(sheet) is False
+    assert _red() not in sheet.username_input.styleSheet()
+    sheet.show_errors({"username": USERNAME_REQUIRED})
+    _open(sheet)
+    assert sheet.errors() == {}
+    assert sheet.username_error.isVisibleTo(sheet) is False
+
+
+def test_a_theme_change_keeps_the_error_border(sheet):
+    _open(sheet)
+    sheet.show_errors({"username": USERNAME_REQUIRED})
+    sheet.apply_theme(False)
+    assert _red(False) in sheet.username_input.styleSheet()
+    assert sheet.username_error.isVisibleTo(sheet) is True

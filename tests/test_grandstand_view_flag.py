@@ -399,3 +399,17 @@ def test_the_sheet_page_never_outgrows_the_content_band(roster, qapp):
     assert roster.minimumSizeHint().height() <= 688
     assert roster.sheet.isVisible() is True
     assert roster.roster_page.isVisible() is False
+
+
+def test_save_with_errors_renders_them_inline(roster):
+    roster.open_account_sheet("ttr", _draft(), [], None)
+    roster.account_sheet.username_input.setText("")
+    roster.sheet.save_button.click()
+    assert roster.account_sheet.username_error.text() == "Username is required"
+    assert roster.account_sheet.errors() == {"username": "Username is required"}
+    seen = []
+    roster.account_save_requested.connect(lambda g, d: seen.append(d))
+    roster.account_sheet.username_input.setText("ua")
+    roster.sheet.save_button.click()
+    assert len(seen) == 1
+    assert roster.account_sheet.errors() == {}

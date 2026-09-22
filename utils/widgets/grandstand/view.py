@@ -473,15 +473,17 @@ class GrandstandView(QWidget):
         self.pages.setCurrentIndex(index)
 
     def _on_sheet_save(self) -> None:
-        """Validate, then hand the draft to the owner. The view never writes
-        and never closes on its own — LaunchTab calls close_sheet() after
-        the write (spec §3)."""
+        """Validate, then hand the draft to the owner. Errors repaint inline
+        and the sheet stays open; the view never writes and never closes on
+        its own — LaunchTab calls close_sheet() after the write (spec §3)."""
         draft = self.account_sheet.draft()
         if draft is None or self._sheet_game is None:
             return
         errors = draft.validate()
         if errors:
-            return                        # Task 2 renders them inline
+            self.account_sheet.show_errors(errors)
+            return
+        self.account_sheet.clear_errors()
         # A snapshot, not the live draft: the sheet stays open across the
         # emit, so the consumer must not observe edits made afterwards.
         self.account_save_requested.emit(

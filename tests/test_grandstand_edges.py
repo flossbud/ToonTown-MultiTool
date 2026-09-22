@@ -1221,6 +1221,8 @@ def test_sheet_save_refuses_a_blank_username(monkeypatch, qapp):
         sheet.username_input.setText("   ")
         tab.grandstand.sheet.save_button.click()
         cred.update_account.assert_not_called()
+        assert sheet.username_error.isVisibleTo(sheet) is True
+        assert sheet.username_error.text() == "Username is required"
         assert tab.grandstand.in_focus_mode() is True
     finally:
         tab.shutdown()
