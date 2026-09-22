@@ -190,6 +190,41 @@ def test_focus_current_lands_on_the_checked_card(browser, qapp):
     assert qapp.focusWidget() is browser.card_for("Pepper Fizzlebounce")
 
 
+# ── radio keyboard (spec §4, handoff §4.7 role="radio") ─────────────────────
+
+def test_cards_are_radio_like_with_the_keyboard(browser, qapp):
+    _open(browser, primary="Flossbud")
+    browser.show()
+    qapp.processEvents()
+    browser.focus_current()
+    first, second, third = browser.cards()
+    assert qapp.focusWidget() is first
+    QTest.keyClick(first, Qt.Key_Right)
+    assert qapp.focusWidget() is second
+    QTest.keyClick(second, Qt.Key_Down)
+    assert qapp.focusWidget() is third
+    QTest.keyClick(third, Qt.Key_Right)                 # wraps
+    assert qapp.focusWidget() is first
+    QTest.keyClick(first, Qt.Key_Left)                  # wraps the other way
+    assert qapp.focusWidget() is third
+    QTest.keyClick(third, Qt.Key_Up)
+    assert qapp.focusWidget() is second
+    seen = []
+    browser.toon_picked.connect(seen.append)
+    QTest.keyClick(second, Qt.Key_Space)
+    QTest.keyClick(third, Qt.Key_Return)
+    QTest.keyClick(first, Qt.Key_Space)                 # checked: inert
+    assert seen == ["Pepper Fizzlebounce", "Sir Wackyhopper"]
+
+
+def test_escape_in_the_browser_is_back(browser):
+    _open(browser)
+    seen = []
+    browser.back_requested.connect(lambda: seen.append("back"))
+    QTest.keyClick(browser.cards()[0], Qt.Key_Escape)
+    assert seen == ["back"]
+
+
 def test_the_strip_floor_grows_for_its_own_scrollbar(browser, qapp):
     """F1 (Task 6 review): CardShelf connects rangeChanged to _fit_strip
     (card_shelf.py:159) so the bar's height joins the floor once it appears;

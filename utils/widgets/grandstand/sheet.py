@@ -221,6 +221,27 @@ class SheetShell(QFrame):
         for first, second in zip(chain, chain[1:]):
             QWidget.setTabOrder(first, second)
 
+    # ── keyboard (spec §4) ───────────────────────────────────────────────────
+
+    def keyPressEvent(self, event) -> None:
+        """Esc = Back; Enter in a field = Save. A QLineEdit ignores both keys
+        after its own handling, so they reach the shell from any field. Enter
+        on a button activates that button — Enter on Cancel must not save."""
+        key = event.key()
+        if key == Qt.Key_Escape:
+            self.back_requested.emit()
+            event.accept()
+            return
+        if key in (Qt.Key_Return, Qt.Key_Enter):
+            focused = QApplication.focusWidget()
+            if isinstance(focused, QAbstractButton) and self.isAncestorOf(focused):
+                focused.click()
+            else:
+                self.save_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     # ── theme ──────────────────────────────────────────────────────────────
 
     def apply_theme(self, is_dark: bool) -> None:

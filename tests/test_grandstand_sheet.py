@@ -7,6 +7,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("TTMT_NO_VENV_REEXEC", "1")
 
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLineEdit, QPushButton, QWidget
 
 from utils.widgets.grandstand.sheet import (
@@ -115,6 +117,65 @@ def test_theme_reaches_the_body(shell):
     shell.set_body(body)                 # hosting applies the current theme
     shell.apply_theme(False)
     assert body.seen == [True, False]
+
+
+# ── keyboard (spec §4: Esc = Back, Enter in a field = Save) ─────────────────
+
+def _field_body():
+    body = QWidget()
+    body.field = QLineEdit(body)
+    body.tab_chain = lambda: [body.field]
+    return body
+
+
+def test_escape_from_a_field_requests_back(shell):
+    body = _field_body()
+    shell.set_body(body)
+    seen = []
+    shell.back_requested.connect(lambda: seen.append("back"))
+    QTest.keyClick(body.field, Qt.Key_Escape)
+    assert seen == ["back"]
+
+
+def test_enter_in_a_field_requests_save_once(shell):
+    body = _field_body()
+    shell.set_body(body)
+    seen = []
+    shell.save_requested.connect(lambda: seen.append("save"))
+    QTest.keyClick(body.field, Qt.Key_Return)
+    QTest.keyClick(body.field, Qt.Key_Enter)
+    assert seen == ["save", "save"]
+
+
+def test_enter_on_cancel_activates_cancel_not_save(shell, qapp):
+    shell.set_body(_field_body())
+    shell.show()
+    qapp.processEvents()
+    seen = []
+    shell.cancel_requested.connect(lambda: seen.append("cancel"))
+    shell.save_requested.connect(lambda: seen.append("save"))
+    shell.cancel_button.setFocus()
+    qapp.processEvents()
+    assert qapp.focusWidget() is shell.cancel_button
+    QTest.keyClick(shell.cancel_button, Qt.Key_Return)
+    assert seen == ["cancel"]
+
+
+def test_tab_order_runs_the_body_chain_then_cancel_then_save(shell, qapp):
+    body = QWidget()
+    a, b = QLineEdit(body), QPushButton("x", body)
+    body.tab_chain = lambda: [a, b]
+    shell.set_body(body)
+    shell.show()
+    qapp.processEvents()
+    a.setFocus()
+    qapp.processEvents()
+    seen = []
+    for _ in range(4):
+        seen.append(qapp.focusWidget())
+        QTest.keyClick(qapp.focusWidget(), Qt.Key_Tab)
+        qapp.processEvents()
+    assert seen == [a, b, shell.cancel_button, shell.save_button]
 
 
 # ── discipline ──────────────────────────────────────────────────────────────

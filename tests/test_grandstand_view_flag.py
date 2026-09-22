@@ -698,3 +698,38 @@ def test_a_hidden_view_switches_without_animating(roster, monkeypatch):
     roster.open_account_sheet("ttr", _draft(), [], None)     # never shown
     assert roster.pages.currentIndex() == PAGE_SHEET
     assert roster._transition is None
+
+
+def test_fields_tab_in_visual_order_then_cancel_then_save(shown, qapp, monkeypatch):
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    shown.open_account_sheet("ttr", _draft(), [], None)
+    qapp.processEvents()
+    s = shown.account_sheet
+    expected = [s.label_input, s.username_input, s.password_input,
+                s.password_input.eye, s.choose_button, s.remove_button,
+                shown.sheet.cancel_button, shown.sheet.save_button]
+    assert qapp.focusWidget() is s.label_input            # open focuses Label
+    seen = []
+    for _ in expected:
+        seen.append(qapp.focusWidget())
+        QTest.keyClick(qapp.focusWidget(), Qt.Key_Tab)
+        qapp.processEvents()
+    assert seen == expected
+
+
+def test_escape_in_the_sheet_is_back(shown, monkeypatch):
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    shown.open_account_sheet("ttr", _draft(), [], None)
+    shown.account_sheet.label_input.setText("edited")
+    QTest.keyClick(shown.account_sheet.label_input, Qt.Key_Escape)
+    assert shown.in_focus_mode() is False
+    assert shown.account_sheet.is_open() is False
+
+
+def test_enter_in_a_field_saves(shown, monkeypatch):
+    monkeypatch.setattr(motion, "is_reduced", lambda: True)
+    seen = []
+    shown.account_save_requested.connect(lambda g, d: seen.append(d))
+    shown.open_account_sheet("ttr", _draft(), [], None)
+    QTest.keyClick(shown.account_sheet.username_input, Qt.Key_Return)
+    assert len(seen) == 1

@@ -66,7 +66,7 @@ def _transparent(widget: QWidget, name: str) -> None:
 
 class _ToonCard(QFrame):
     """One toon, radio-like: the current toon is checked and inert, every
-    other card picks on click (Task 7 adds Enter/Space and arrow keys)."""
+    other card picks on click (Enter/Space pick, arrows move)."""
 
     picked = Signal(str)
     move_focus = Signal(int)        # -1 / +1, emitted by Task 7's keys
@@ -173,6 +173,23 @@ class _ToonCard(QFrame):
                 event.position().toPoint()):
             self._pick()
         super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        """Radio semantics (spec §4): Enter/Space pick, arrows move focus."""
+        key = event.key()
+        if key in (Qt.Key_Space, Qt.Key_Return, Qt.Key_Enter):
+            self._pick()
+            event.accept()
+            return
+        if key in (Qt.Key_Left, Qt.Key_Up):
+            self.move_focus.emit(-1)
+            event.accept()
+            return
+        if key in (Qt.Key_Right, Qt.Key_Down):
+            self.move_focus.emit(1)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     # ── paint ──────────────────────────────────────────────────────────────
 
@@ -357,6 +374,14 @@ class ToonBrowser(QFrame):
         bar = self.scroll.horizontalScrollBar()
         bar_h = bar.sizeHint().height() if bar.maximum() > bar.minimum() else 0
         self.scroll.setMinimumHeight(self._strip.minimumSizeHint().height() + bar_h)
+
+    def keyPressEvent(self, event) -> None:
+        """Esc = Back, from a card or the panel itself."""
+        if event.key() == Qt.Key_Escape:
+            self.back_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     # ── theme ──────────────────────────────────────────────────────────────
 
