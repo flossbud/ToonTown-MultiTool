@@ -395,6 +395,16 @@ class ToonBrowser(QFrame):
             return
         super().keyPressEvent(event)
 
+    def focusInEvent(self, event) -> None:
+        """StrongFocus lets an empty browser take focus at all (Esc must
+        reach keyPressEvent with no card to hold it). With cards present,
+        the panel itself is never where focus should sit — a background
+        click must not strand the arrow keys and Enter off the checked
+        card, so hand focus straight back to it."""
+        if self._cards:
+            self.focus_current()
+        super().focusInEvent(event)
+
     # ── theme ──────────────────────────────────────────────────────────────
 
     def apply_theme(self, is_dark: bool) -> None:

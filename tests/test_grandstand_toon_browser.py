@@ -225,6 +225,24 @@ def test_escape_in_the_browser_is_back(browser):
     assert seen == ["back"]
 
 
+def test_background_click_hands_focus_back_to_the_checked_card(browser, qapp):
+    """M1 (re-review): StrongFocus (toon_browser.py) lets an empty browser
+    take focus at all, but with cards present a click on the panel's own
+    background must not strand focus there — the checked card keeps the
+    arrow keys and Enter."""
+    browser.resize(300, 200)
+    browser.show()
+    _open(browser, primary="Pepper Fizzlebounce")
+    qapp.processEvents()
+    browser.focus_current()
+    checked = browser.card_for("Pepper Fizzlebounce")
+    assert qapp.focusWidget() is checked
+    QTest.mouseClick(browser, Qt.LeftButton, pos=QPoint(4, 4))   # panel bg
+    assert qapp.focusWidget() is checked
+    QTest.keyClick(qapp.focusWidget(), Qt.Key_Right)
+    assert qapp.focusWidget() is browser.card_for("Sir Wackyhopper")
+
+
 def test_the_strip_floor_grows_for_its_own_scrollbar(browser, qapp):
     """F1 (Task 6 review): CardShelf connects rangeChanged to _fit_strip
     (card_shelf.py:159) so the bar's height joins the floor once it appears;

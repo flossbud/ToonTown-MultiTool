@@ -130,7 +130,12 @@ class GrandstandView(QWidget):
         super().__init__(parent)
         self._log = log or (lambda _msg: None)
         # First statement with any observable effect: the running-code stamp.
-        self._log(f"{STAMP_PREFIX} — {_FLAG}=1 (milestone {MILESTONE})")
+        # LaunchTab.log routes to the Debug tab, which drops everything that
+        # is not [Credentials] unless logging is switched on, so print it
+        # plainly too — the way the sheet stamps and utils/toon_renders.py do.
+        startup_stamp = f"{STAMP_PREFIX} — {_FLAG}=1 (milestone {MILESTONE})"
+        self._log(startup_stamp)
+        print(startup_stamp)
 
         self._party = party
         self._is_dark = True

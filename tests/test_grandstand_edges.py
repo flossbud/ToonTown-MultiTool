@@ -664,15 +664,19 @@ def test_blocked_credentials_guard_official_launcher_at_runner_boundary(
 
 
 def _make_grandstand_launch_tab(monkeypatch, account_ids, *, blocked,
-                                game="ttr"):
+                                game="ttr", logger=None):
     return _make_launch_tab(monkeypatch, account_ids, blocked=blocked,
-                            game=game, flagged=True)
+                            game=game, flagged=True, logger=logger)
 
 
 def _make_launch_tab(monkeypatch, account_ids, *, blocked, game="ttr",
-                     flagged):
+                     flagged, logger=None):
     """`flagged=False` builds the legacy launcher (flag unset, nothing
-    mounted) from the same accounts, for the unflagged pin tests."""
+    mounted) from the same accounts, for the unflagged pin tests.
+
+    `logger`, when given, makes self.log route only to logger.append_log —
+    matching the real Debug tab wiring, instead of the no-logger fallback
+    (self.log prints directly when self.logger is falsy)."""
     if flagged:
         monkeypatch.setenv("TTMT_GRANDSTAND", "1")
     else:
@@ -694,7 +698,8 @@ def _make_launch_tab(monkeypatch, account_ids, *, blocked, game="ttr",
     cred.get_account.side_effect = lambda index: accounts[index]
     settings = MagicMock()
     settings.get.side_effect = lambda _key, default=None: default
-    return LaunchTab(cred_manager=cred, settings_manager=settings), cred
+    return LaunchTab(cred_manager=cred, settings_manager=settings,
+                     logger=logger), cred
 
 
 def test_a_direct_launch_signal_is_refused_while_blocked(monkeypatch, qapp):
@@ -1623,6 +1628,32 @@ def test_opening_the_sheet_heals_a_primary_a_rename_merged_away(
         assert tab.grandstand.shelf.card_for("a").name_text() == "Katsuro"
         sheet.choose_button.click()
         assert tab.grandstand.browser.current_card().toon_name() == "Katsuro"
+        assert ("[Launch] TTR account 1: primary toon renamed to Katsuro."
+                in capsys.readouterr().out)
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_the_repair_line_reaches_stdout_even_with_a_real_debug_logger(
+        monkeypatch, qapp, capsys):
+    """M2 (re-review): with a real logger attached, self.log routes only to
+    logger.append_log — the Debug tab drops it unless logging is switched
+    on, so this must print plainly too, the way the Grandstand sheet stamps
+    and utils/toon_renders.py do. (The I1 test above passes a bare LaunchTab,
+    whose self.log falls back to print() on its own when logger is None —
+    that fallback would mask a dropped print here, so this test pins a
+    logger explicitly.)"""
+    _stub_editor(monkeypatch)
+    tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False,
+                                             logger=MagicMock())
+    try:
+        tab._recent_toons = _renamed_toon_store()
+        tab._render_current_view("ttr")
+        capsys.readouterr()
+
+        sheet = _open_sheet_via_gear(tab)
+        sheet.choose_button.click()
         assert ("[Launch] TTR account 1: primary toon renamed to Katsuro."
                 in capsys.readouterr().out)
     finally:

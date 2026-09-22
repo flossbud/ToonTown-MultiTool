@@ -1356,8 +1356,14 @@ class LaunchTab(QWidget):
             return False
         self._recent_toons.set_primary(account_id, survivor.toon_name)
         game_label = "TTR" if game == "ttr" else "CC"
-        self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)}:"
-                 f" primary toon renamed to {survivor.toon_name}.")
+        # self.log routes to the Debug tab, which drops this unless logging
+        # is switched on, so print it plainly too — the way the Grandstand
+        # sheet stamps and utils/toon_renders.py do.
+        repair_line = (f"[Launch] {game_label} account "
+                       f"{self._position_of(game, account_id)}:"
+                       f" primary toon renamed to {survivor.toon_name}.")
+        self.log(repair_line)
+        print(repair_line)
         return True
 
     def _open_add_sheet(self, game: str) -> None:

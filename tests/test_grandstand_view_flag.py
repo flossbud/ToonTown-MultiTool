@@ -45,6 +45,16 @@ def test_init_emits_the_startup_stamp(qapp):
     assert lines[0] == "[Grandstand] view active — TTMT_GRANDSTAND=1 (milestone 1)"
 
 
+def test_init_emits_the_startup_stamp_to_stdout_too(qapp, capsys):
+    """M2 (re-review): self._log alone only reaches the Debug tab, which
+    drops it unless logging is switched on, so live validation could never
+    confirm the flagged path from a plain startup. Printed plainly, like
+    the sheet stamps and utils/toon_renders.py."""
+    GrandstandView(LaunchParty(None))   # default log: a no-op lambda
+    out = capsys.readouterr().out
+    assert "[Grandstand] view active — TTMT_GRANDSTAND=1 (milestone 1)" in out
+
+
 def test_stack_fits_the_content_band(qapp):
     """main.py: 860 - HEADER_H(112) - NAV_BAND_H(60) = 688, no scrolling."""
     v = GrandstandView(LaunchParty(None))
@@ -574,8 +584,9 @@ def test_esc_backs_out_of_a_toonless_browser(roster, qapp):
     assert roster.browser.is_empty_state() is True
     assert qapp.focusWidget() is roster.browser
     # And the panel can be focused in its own right, so focus that wanders off
-    # can come back: with NoFocus neither a click nor Tab can return to an
-    # empty surface, and it is a dead end again.
+    # can come back: with NoFocus a click could not return to an empty
+    # surface, and it would be a dead end again. (This pins the click path
+    # only; Tab-focus is StrongFocus's job, not asserted here.)
     roster.browser.clearFocus()
     QTest.mouseClick(roster.browser, Qt.LeftButton, pos=QPoint(5, 5))
     assert qapp.focusWidget() is roster.browser
