@@ -12,11 +12,11 @@ from PySide6.QtWidgets import QLineEdit
 from tests._render_fixtures import complete_set
 from utils.recent_toons import ToonRecord
 from utils.widgets.grandstand.account_sheet import (
-    CAPTION, CHOOSE_TOON, COL_GAP, CROSS_LINK, DANGER_FIELD, EYE_SIZE,
-    FROW_FIELD, FROW_H, FROW_NO_TOON, FROW_PORTRAIT, FROW_SUB_NONE, INPUT_H,
-    LABEL_FIELD, LABEL_PLACEHOLDER, LINKBTN_H, PASSWORD_FIELD, PREVIEW_COL_W,
-    USERNAME_FIELD, AccountSheet, frow_sub_for, note_for, remove_label_for,
-    subtitle_for, title_for,
+    ADD_TITLE, CAPTION, CHOOSE_TOON, COL_GAP, CROSS_LINK, DANGER_FIELD,
+    EYE_GLYPH, EYE_SIZE, FROW_FIELD, FROW_H, FROW_NO_TOON, FROW_PORTRAIT,
+    FROW_SUB_NONE, INPUT_H, LABEL_FIELD, LABEL_PLACEHOLDER, LINKBTN_H,
+    PASSWORD_FIELD, PREVIEW_COL_W, TRASH_GLYPH, USERNAME_FIELD, AccountSheet,
+    frow_sub_for, note_for, remove_label_for, subtitle_for, title_for,
 )
 from utils.widgets.grandstand.draft import MODE_ADD, MODE_EDIT, AccountDraft
 from utils.widgets.grandstand.model import CARD_POSE, RosterEntry
@@ -145,6 +145,11 @@ def test_field_labels_are_the_handoff_copy(sheet):
                      "TOON THIS ACCOUNT SHOWS", "DANGER ZONE"]
     assert sheet.choose_button.text() == CHOOSE_TOON == "Choose toon"
     assert CROSS_LINK == "✏ Customize appearance"
+    assert ADD_TITLE == "Add account"
+    assert title_for(_draft(MODE_ADD)) == ADD_TITLE
+    assert TRASH_GLYPH == "🗑"
+    assert EYE_GLYPH == "👁"
+    assert sheet.password_input.eye.text() == EYE_GLYPH
 
 
 def test_password_is_masked_with_a_22px_eye_toggle(sheet):
@@ -209,6 +214,7 @@ def test_choose_toon_and_remove_emit(sheet):
 
 def test_remove_button_names_the_account(sheet):
     _open(sheet)
+    assert sheet.remove_button.text().startswith(TRASH_GLYPH)
     assert sheet.remove_button.text().endswith("Remove Gag alt from the launcher")
     _open(sheet, draft=_draft(label=""))
     assert sheet.remove_button.text().endswith("Remove flossbud from the launcher")
@@ -227,3 +233,12 @@ def test_copy_helpers_are_the_handoff_strings():
     assert frow_sub_for(3) == "3 discovered"
     assert frow_sub_for(0) == "play once to discover"
     assert remove_label_for(d) == "Remove Gag alt from the launcher"
+
+
+def test_an_unknown_game_code_subtitles_rather_than_raising():
+    """GAME_NAMES is keyed by the two codes the launcher ships; a third would
+    have taken the header out with a KeyError."""
+    assert subtitle_for(_draft(game="xx")) == (
+        "XX · changes apply to this account only")
+    assert subtitle_for(_draft(game="")) == (
+        " · changes apply to this account only")

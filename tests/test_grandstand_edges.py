@@ -1195,6 +1195,24 @@ def test_a_blank_password_keeps_the_stored_one(monkeypatch, qapp):
         tab.close()
 
 
+def test_saving_a_whitespace_password_never_overwrites_the_stored_one(
+        monkeypatch, qapp):
+    """validate() strips, so "   " is a savable draft. If the save site did
+    not strip too it would write three spaces over a good keyring entry."""
+    _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        sheet = _open_sheet_via_gear(tab)
+        assert tab.grandstand.in_focus_mode() is True
+        sheet.password_input.setText("   ")
+        tab.grandstand.sheet.save_button.click()
+        cred.update_account.assert_called_once_with(
+            0, label="a", username="a", password=None)
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
 def test_sheet_save_refuses_a_blank_username(monkeypatch, qapp):
     _stub_editor(monkeypatch)
     tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
@@ -1214,7 +1232,8 @@ def test_back_drops_the_draft_without_writing(monkeypatch, qapp):
     tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
     try:
         sheet = _open_sheet_via_gear(tab)
-        sheet.label_input.setText("changed")
+        assert tab.grandstand.in_focus_mode() is True     # the sheet is open,
+        sheet.label_input.setText("changed")              # so the edit lands
         tab.grandstand.sheet.back_button.click()
         cred.update_account.assert_not_called()
         assert tab.grandstand.in_focus_mode() is False
@@ -1262,6 +1281,28 @@ def test_the_pencil_still_opens_todays_editor(monkeypatch, qapp):
         tab.grandstand.sheet.header.cross_link.click()
         assert len(EditorStub.opened) == 2
         assert EditorStub.opened[1]["mode"] == "edit"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_the_cross_link_closes_the_sheet_before_the_legacy_editor_opens(
+        monkeypatch, qapp):
+    """The dialog edits the sheet's own three fields. Left open behind it,
+    the sheet would still hold the pre-dialog label, and a Save afterwards
+    would write that stale label back over what the dialog just saved."""
+    EditorStub = _stub_editor(monkeypatch)
+    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    try:
+        _open_sheet_via_gear(tab)
+        assert tab.grandstand.in_focus_mode() is True
+        tab.grandstand.sheet.header.cross_link.click()
+        assert len(EditorStub.opened) == 1                # the dialog ran
+        assert tab.grandstand.in_focus_mode() is False    # over the roster
+        # Nothing is left behind that could still write: the draft is gone,
+        # so the footer's Save is inert.
+        tab.grandstand.sheet.save_button.click()
+        cred.update_account.assert_not_called()
     finally:
         tab.shutdown()
         tab.close()

@@ -343,6 +343,24 @@ def test_save_with_a_clean_draft_emits_the_intent_and_stays_open(roster):
     assert roster.in_focus_mode() is True
 
 
+def test_the_saved_draft_is_a_snapshot_not_the_live_one(roster):
+    """The sheet stays open across the emit and its fields keep writing into
+    the live draft, so the object handed to the owner must be a copy — or a
+    consumer that holds it (a confirm dialog, a queued write) would read
+    edits made after the Save it was told about."""
+    seen = []
+    roster.account_save_requested.connect(lambda g, d: seen.append(d))
+    roster.open_account_sheet("ttr", _draft(), [], None)
+    roster.account_sheet.label_input.setText("Main")
+    roster.sheet.save_button.click()
+    recorded = seen[0]
+    assert recorded is not roster.account_sheet.draft()
+    assert recorded.label == "Main"
+    roster.account_sheet.label_input.setText("edited after the save")
+    assert roster.account_sheet.draft().label == "edited after the save"
+    assert recorded.label == "Main"
+
+
 def test_save_with_errors_does_not_emit(roster):
     seen = []
     roster.account_save_requested.connect(lambda g, d: seen.append(d))

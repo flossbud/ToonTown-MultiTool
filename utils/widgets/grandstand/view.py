@@ -8,6 +8,7 @@ Built only when TTMT_GRANDSTAND=1 until the cut-over task removes the flag.
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 
 from PySide6.QtCore import Qt, Signal
@@ -481,7 +482,10 @@ class GrandstandView(QWidget):
         errors = draft.validate()
         if errors:
             return                        # Task 2 renders them inline
-        self.account_save_requested.emit(self._sheet_game, draft)
+        # A snapshot, not the live draft: the sheet stays open across the
+        # emit, so the consumer must not observe edits made afterwards.
+        self.account_save_requested.emit(
+            self._sheet_game, dataclasses.replace(draft))
 
     def _on_sheet_cross_link(self) -> None:
         """One cross-link, pointing at the surface you are not on (handoff

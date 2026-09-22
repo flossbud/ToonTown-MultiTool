@@ -1253,6 +1253,12 @@ class LaunchTab(QWidget):
         if surface == "account" and self._grandstand_mounted():
             self._open_account_sheet(game, account_id)
             return
+        # The cross-link is the only way in here with the sheet open, and the
+        # dialog it opens edits the sheet's own three fields. Drop the draft
+        # first: a Save behind the dialog would write the stale label back
+        # over whatever the dialog just saved.
+        if self._grandstand_mounted() and self.grandstand.in_focus_mode():
+            self.grandstand.close_sheet()
         self._on_tile_edit(game, account_id)
 
     def _open_account_sheet(self, game: str, account_id: str) -> None:
@@ -1285,8 +1291,9 @@ class LaunchTab(QWidget):
         if global_idx is None:
             self.grandstand.close_sheet()     # removed underneath: nothing to write
             return
-        # Empty password means "keep current"; None preserves the stored one.
-        pw = draft.password if draft.password else None
+        # Blank or whitespace-only means "keep current"; None preserves the
+        # stored one. The rule lives in AccountDraft.password_for_save().
+        pw = draft.password_for_save()
         self.cred_manager.update_account(
             global_idx, label=draft.label, username=draft.username, password=pw,
         )

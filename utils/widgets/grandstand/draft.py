@@ -43,6 +43,13 @@ class AccountDraft:
             return True
         return self.keyring_readable and not self.keyring_has_password
 
+    def password_for_save(self) -> str | None:
+        """The password to write, or None to keep whatever is stored. Blank
+        *or whitespace-only* means keep: a field holding nothing but spaces
+        is not a new password, and writing it would destroy a good keyring
+        entry. validate() strips the same way, so the two agree."""
+        return self.password.strip() or None
+
     def validate(self) -> dict[str, str]:
         """Field -> message. Empty when the draft may be saved."""
         errors: dict[str, str] = {}

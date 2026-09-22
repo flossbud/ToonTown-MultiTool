@@ -62,7 +62,10 @@ def title_for(draft: AccountDraft) -> str:
 
 
 def subtitle_for(draft: AccountDraft) -> str:
-    return f"{GAME_NAMES[draft.game]} · changes apply to this account only"
+    """An unknown game code falls back to the code itself, upper-cased: a
+    header line is not worth a KeyError."""
+    game = GAME_NAMES.get(draft.game) or (draft.game or "").upper()
+    return f"{game} · changes apply to this account only"
 
 
 def note_for(count: int) -> str:

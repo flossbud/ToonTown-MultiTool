@@ -75,6 +75,17 @@ def test_username_is_always_required():
     assert _draft(username="").validate() == {"username": USERNAME_REQUIRED}
 
 
+def test_a_whitespace_password_means_keep_the_stored_one():
+    """validate() strips, so "   " passes it. The save site must not then
+    write those spaces over a good keyring entry: only password_for_save()
+    decides what is written, and blank-after-strip means keep."""
+    assert _draft(password="   ").password_for_save() is None
+    assert _draft(password="").password_for_save() is None
+    assert _draft(password="\t\n ").password_for_save() is None
+    assert _draft(password="  pw  ").password_for_save() == "pw"
+    assert _draft(password="pw").password_for_save() == "pw"
+
+
 def test_display_name_prefers_the_label():
     assert _draft().display_name == "Gag alt"
     assert _draft(label="").display_name == "flossbud"
@@ -218,12 +229,41 @@ def test_browser_empty_ink():
     assert d["body"] == QColor("#888888")            # --text-muted
 
 
+# Every sheet token, with the keys whose light branch must NOT be the dark
+# one. Two tokens are deliberately theme-independent and are listed apart:
+# the danger reds (danger_button's docstring) and the blue Save fill.
+THEMED_SHEET_TOKENS = (
+    (gp.sheet_surface, (), ("bg", "border")),
+    (gp.sheet_ink, (), ("title", "sub")),
+    (gp.sheet_input, (False,), ("bg", "border")),
+    (gp.frow, (), ("bg", "border")),
+    (gp.link_button, (), ("border", "ink")),
+    (gp.sheet_chrome_button, (False,), ("bg", "border")),
+    (gp.sheet_footer_button, (False, False), ("border", "ink")),
+    (gp.browser_empty_ink, (), ("title", "body")),
+)
+UNTHEMED_SHEET_TOKENS = (
+    (gp.danger_button, (False,)),
+    (gp.danger_button, (True,)),
+    (gp.sheet_footer_button, (True, False)),
+    (gp.sheet_footer_button, (True, True)),
+)
+
+
 def test_every_sheet_token_accepts_both_themes():
-    for fn, args in ((gp.sheet_surface, ()), (gp.sheet_ink, ()),
-                     (gp.sheet_input, (False,)), (gp.frow, ()),
-                     (gp.link_button, ()), (gp.danger_button, (False,)),
-                     (gp.sheet_chrome_button, (False,)),
-                     (gp.sheet_footer_button, (True, False)),
-                     (gp.browser_empty_ink, ())):
-        for is_dark in (True, False):
-            assert fn(*args, is_dark) is not None
+    """Both branches must return real colours for every key — and the light
+    branch must actually be a light branch. `is not None` would pass on a
+    light theme that simply returned the dark dict."""
+    for fn, args, differing in THEMED_SHEET_TOKENS:
+        dark, light = fn(*args, True), fn(*args, False)
+        assert set(dark) == set(light), fn.__name__
+        for key, colour in list(dark.items()) + list(light.items()):
+            assert colour.isValid(), f"{fn.__name__}[{key}]"
+        for key in differing:
+            assert dark[key] != light[key], f"{fn.__name__}[{key}] is theme-blind"
+
+
+def test_the_theme_independent_sheet_tokens_are_deliberate():
+    """Danger red and the blue Save fill are the same in both themes."""
+    for fn, args in UNTHEMED_SHEET_TOKENS:
+        assert fn(*args, True) == fn(*args, False), fn.__name__
