@@ -160,7 +160,9 @@ class GameRegistry:
                 import win32process
                 hwnd = int(wid)
                 _, pid = win32process.GetWindowThreadProcessId(hwnd)
-                return pid
+                # 0 is what Windows reports for a window that no longer
+                # exists; it is never a real owner.
+                return pid or None
             elif sys.platform == "darwin":
                 from utils import macos_discovery
                 return macos_discovery.get_window_pid(wid)
@@ -308,5 +310,13 @@ class GameRegistry:
                 logger.debug("Process name lookup failed for PID %d: %s", pid, e)
             else:
                 logger.warning("Process name lookup failed for PID %d: %s", pid, e)
+            return None
+        except Exception as e:
+            # pywin32 raises pywintypes.error, which is NOT an OSError, when
+            # OpenProcess fails (the window just closed, or the process is
+            # protected). This lookup runs on the input thread every loop
+            # iteration; letting it escape killed that thread while the
+            # keyboard hook kept withholding the game's keys.
+            logger.debug("Process name lookup failed for PID %d: %s", pid, e)
             return None
         return os.path.basename(exe).lower()

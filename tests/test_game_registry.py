@@ -241,3 +241,47 @@ class TestWineHelperCmdline:
             GameRegistry, "_tag_from_wine_cmdline", return_value=None
         ):
             assert reg.classify_window_for_filtering("0x6a00001") == (None, True)
+
+
+class TestWin32ProcessLookupNeverRaises:
+    """pywin32 reports a failed OpenProcess with pywintypes.error, which is
+    not an OSError. The lookup runs on the input thread every loop iteration,
+    so an escaping error kills that thread while the keyboard hook keeps
+    withholding the game's keys: every toon goes dead until a restart."""
+
+    class _PyWinError(Exception):
+        """Same shape as pywintypes.error: a plain Exception subclass."""
+
+    def _fake_win32(self, monkeypatch, *, pid_for_hwnd, open_error):
+        from types import SimpleNamespace
+
+        def _open(access, inherit, pid):
+            raise open_error
+
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setitem(sys.modules, "win32api", SimpleNamespace(
+            OpenProcess=_open, CloseHandle=lambda h: None))
+        monkeypatch.setitem(sys.modules, "win32process", SimpleNamespace(
+            GetWindowThreadProcessId=lambda hwnd: (0, pid_for_hwnd),
+            GetModuleFileNameEx=lambda h, m: r"C:\x\TTREngine64.exe"))
+        monkeypatch.setitem(sys.modules, "win32con", SimpleNamespace(
+            PROCESS_QUERY_LIMITED_INFORMATION=0x1000))
+
+    def test_failed_openprocess_returns_none(self, monkeypatch):
+        self._fake_win32(monkeypatch, pid_for_hwnd=4242, open_error=self._PyWinError(
+            87, "OpenProcess", "The parameter is incorrect."))
+        assert GameRegistry._get_process_name(4242) is None
+
+    def test_window_of_unopenable_process_is_not_a_game(self, monkeypatch):
+        self._fake_win32(monkeypatch, pid_for_hwnd=4242, open_error=self._PyWinError(
+            5, "OpenProcess", "Access is denied."))
+        reg = GameRegistry.instance()
+        assert reg.get_game_for_window("198280") is None
+        assert reg.classify_window_for_filtering("198280") == (None, False)
+
+    def test_closed_window_has_no_pid(self, monkeypatch):
+        """Windows reports PID 0 for a window that no longer exists."""
+        self._fake_win32(monkeypatch, pid_for_hwnd=0, open_error=self._PyWinError(
+            87, "OpenProcess", "The parameter is incorrect."))
+        assert GameRegistry._get_pid_for_window("198280") is None
+        assert GameRegistry.instance().get_game_for_window("198280") is None
