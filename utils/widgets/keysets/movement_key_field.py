@@ -100,6 +100,13 @@ class MovementKeyField(QLineEdit):
         for _qt_name in _kd.qt_key_names
     }
 
+    # X keysyms (XK_Shift_L .. XK_Alt_R) for the side-specific modifiers.
+    _X11_SIDE_KEYSYMS: dict[int, str] = {
+        0xFFE1: "Shift_L",   0xFFE2: "Shift_R",
+        0xFFE3: "Control_L", 0xFFE4: "Control_R",
+        0xFFE9: "Alt_L",     0xFFEA: "Alt_R",
+    }
+
     @staticmethod
     def _vk_is_down(vk: int) -> bool:
         """Windows-only helper: check if a virtual key is currently pressed."""
@@ -165,6 +172,16 @@ class MovementKeyField(QLineEdit):
                 if sc in (0x138, 312):
                     return "Alt_R"
                 return "Alt_L"
+
+        if sys.platform.startswith("linux"):
+            # Qt's xcb and Wayland plugins report the X keysym as the native
+            # virtual key, and the keysym is side-specific. Without this
+            # every right-hand modifier was stored as its left twin, so a
+            # set could never bind R Ctrl / R Shift / R Alt on Linux.
+            vk = int(event.nativeVirtualKey()) if hasattr(event, "nativeVirtualKey") else 0
+            side = MovementKeyField._X11_SIDE_KEYSYMS.get(vk)
+            if side is not None:
+                return side
 
         # Cross-platform fallback when side info is unavailable.
         if k == Qt.Key_Control:
