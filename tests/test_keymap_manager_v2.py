@@ -394,3 +394,44 @@ class TestCanonicalizeStoredKeys:
         assert mgr.get_default("ttr")["action"] == "\\"
         saved = json.loads(path.read_text())
         assert saved["ttr"][0]["action"] == "\\"
+
+
+class TestClientModifierTwin:
+    """The Default set mirrors the client, and TTR binds modifiers
+    generically ('control' = either Ctrl). The side that is not stored is
+    still the client's key."""
+
+    def _km(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+        from utils.keymap_manager import KeymapManager
+        km = KeymapManager()
+        km.update_set_key("ttr", 0, "jump", "Control_L")
+        km.add_set("ttr")
+        km.update_set_key("ttr", 1, "jump", "space")
+        return km
+
+    def test_other_side_resolves_in_the_default_set_only(self, tmp_path, monkeypatch):
+        km = self._km(tmp_path, monkeypatch)
+        assert km.get_action_in_set("ttr", 0, "Control_R") == "jump"
+        assert km.get_action_in_set("ttr", 1, "Control_R") is None
+
+    def test_other_side_counts_as_a_bound_key(self, tmp_path, monkeypatch):
+        km = self._km(tmp_path, monkeypatch)
+        assert "Control_R" in km.get_keys_for_game("ttr")
+
+    def test_explicit_binding_disables_the_alias(self, tmp_path, monkeypatch):
+        km = self._km(tmp_path, monkeypatch)
+        km.update_set_key("ttr", 1, "jump", "Control_R")
+        assert km.get_action_in_set("ttr", 0, "Control_R") is None
+        assert km.get_action_in_set("ttr", 1, "Control_R") == "jump"
+
+    def test_no_alias_when_the_default_set_does_not_use_that_modifier(self, tmp_path, monkeypatch):
+        km = self._km(tmp_path, monkeypatch)
+        km.update_set_key("ttr", 0, "jump", "space")
+        assert km.get_action_in_set("ttr", 0, "Control_R") is None
+        assert "Control_R" not in km.get_keys_for_game("ttr")
+
+    def test_corporate_clash_is_not_aliased(self, tmp_path, monkeypatch):
+        km = self._km(tmp_path, monkeypatch)
+        km.update_set_key("cc", 0, "jump", "Control_L")
+        assert km.get_action_in_set("cc", 0, "Control_R") is None
