@@ -607,3 +607,70 @@ class TestRobustness:
         fsm.on_keydown("w", 11.0, c)             # user just plays
         fsm.on_tick(11.0 + CFG.t_demote + 0.05, c)
         assert not fsm.in_capture
+
+
+# ── Bound modifiers ──────────────────────────────────────────────────────────
+
+class TestBoundModifiers:
+    """A modifier a keyset binds is a game control. Outside a capture it must
+    classify as MOVEMENT so the per-toon router handles it; the MODIFIER
+    branch broadcasts the raw key to every background window and never to
+    the focused one."""
+
+    @pytest.mark.parametrize("key", [
+        "Control_L", "Control_R", "Shift_L", "Shift_R", "Alt_L", "Alt_R",
+    ])
+    def test_bound_modifier_routes_in_route(self, key):
+        fsm = ChatFsm()
+        d = fsm.on_keydown(key, 10.0, ctx(bound=WASD | {key}))
+        assert d.kind is KeyClass.MOVEMENT
+        assert fsm.state is ChatState.ROUTE
+
+    @pytest.mark.parametrize("key", ["Control_L", "Control_R", "Shift_R"])
+    def test_unbound_modifier_stays_modifier(self, key):
+        fsm = ChatFsm()
+        d = fsm.on_keydown(key, 10.0, ctx(bound=frozenset({"w", "space"})))
+        assert d.kind is KeyClass.MODIFIER
+
+    def test_left_and_right_are_independent(self):
+        """Binding one side must not drag the other side into the router."""
+        fsm, c = ChatFsm(), ctx(bound=WASD | {"Control_R"})
+        assert fsm.on_keydown("Control_R", 10.0, c).kind is KeyClass.MOVEMENT
+        assert fsm.on_keydown("Control_L", 10.1, c).kind is KeyClass.MODIFIER
+
+    def test_bound_modifier_routes_in_grace(self):
+        fsm, c = ChatFsm(), ctx(bound=WASD | {"Control_R"})
+        fsm.on_keydown("Return", 10.0, c)            # open
+        fsm.on_keydown("Return", 10.5, c)            # close -> GRACE
+        assert fsm.state is ChatState.GRACE
+        assert fsm.on_keydown("Control_R", 10.6, c).kind is KeyClass.MOVEMENT
+
+    @pytest.mark.parametrize("soft", [False, True])
+    def test_bound_modifier_is_plain_modifier_in_capture(self, soft):
+        """Shifted typing: with the chat box open a bound Shift is a
+        modifier again, never a routed action."""
+        fsm, c = ChatFsm(), ctx(bound=WASD | {"Shift_L"})
+        if soft:
+            tap(fsm, "o", 10.0, c)
+            tap(fsm, "k", 10.2, c)
+            assert fsm.state is ChatState.CAPTURE_SOFT
+        else:
+            fsm.on_keydown("Return", 10.0, c)
+            assert fsm.state is ChatState.CAPTURE
+        assert fsm.on_keydown("Shift_L", 10.4, c).kind is KeyClass.MODIFIER
+
+    def test_bound_alt_still_completes_group_chat_chord(self):
+        """Alt_L is bound (book) in the stock TTR set; alt+Return must still
+        match the groupChat chord after Alt routed as movement."""
+        chords = ((frozenset({"alt"}), "Return"),)
+        fsm, c = ChatFsm(), ctx(bound=WASD, chords=chords)
+        assert fsm.on_keydown("Alt_L", 9.9, c).kind is KeyClass.MOVEMENT
+        assert fsm.on_keydown("Return", 10.0, c).kind is KeyClass.CHORD_OPEN
+
+    def test_bound_modifier_release_clears_chord_tracking(self):
+        chords = ((frozenset({"alt"}), "Return"),)
+        fsm, c = ChatFsm(), ctx(bound=WASD, chords=chords)
+        fsm.on_keydown("Alt_L", 9.9, c)
+        fsm.on_keyup("Alt_L", 10.0, c)
+        # alt is up: a bare Return no longer matches the alt-only chord.
+        assert fsm.on_keydown("Return", 10.1, c).kind is not KeyClass.CHORD_OPEN

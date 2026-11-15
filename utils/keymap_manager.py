@@ -28,6 +28,19 @@ from utils import logical_actions
 
 GAMES = ("ttr", "cc")
 
+# Left/right pairs of the side-specific modifier keys.
+_MODIFIER_TWIN = {
+    "Control_L": "Control_R", "Control_R": "Control_L",
+    "Shift_L": "Shift_R", "Shift_R": "Shift_L",
+    "Alt_L": "Alt_R", "Alt_R": "Alt_L",
+}
+
+# Games whose client binds modifiers generically (either side triggers the
+# binding). Verified for TTR: a stock install's settings.json has
+# `jump: control`, and the client jumps on left AND right Ctrl. Not verified
+# for Corporate Clash, so it is left out.
+_GENERIC_MODIFIER_GAMES = ("ttr",)
+
 
 def _seed_default_set(game: str) -> dict:
     """Build a fresh Default set for a game from the registry."""
@@ -206,6 +219,30 @@ class KeymapManager:
         with self._lock:
             return len(self._sets.get(game, []))
 
+    def _client_twin_locked(self, game: str, key: str) -> str | None:
+        """The Default-set key that `key` stands in for, or None.
+
+        The Default set mirrors the game client's own bindings, and the
+        client binds modifiers generically: TTR's `jump: control` fires for
+        either Ctrl key, but it is stored here as Control_L. So the other
+        side (Control_R) is the client's key too. Unless some set binds that
+        side explicitly, it is treated as the stored twin; otherwise it
+        would be an unknown key that reaches every toon untranslated.
+        Caller holds self._lock.
+        """
+        twin = _MODIFIER_TWIN.get(key)
+        if twin is None or game not in _GENERIC_MODIFIER_GAMES:
+            return None
+        sets = self._sets.get(game, [])
+        if not sets:
+            return None
+        actions = logical_actions.actions_for(game)
+        if not any(sets[0].get(a) == twin for a in actions):
+            return None
+        if any(s.get(a) == key for s in sets for a in actions):
+            return None          # bound in its own right: no aliasing
+        return twin
+
     def get_action_in_set(self, game: str, set_index: int, key: str) -> str | None:
         with self._lock:
             sets = self._sets.get(game, [])
@@ -215,6 +252,12 @@ class KeymapManager:
             for action in logical_actions.actions_for(game):
                 if s.get(action) == key:
                     return action
+            if set_index == 0:
+                twin = self._client_twin_locked(game, key)
+                if twin is not None:
+                    for action in logical_actions.actions_for(game):
+                        if s.get(action) == twin:
+                            return action
             return None
 
     def get_key_for_action(self, game: str, set_index: int, action: str) -> str | None:
@@ -254,6 +297,12 @@ class KeymapManager:
                     k = s.get(action)
                     if k:
                         keys.add(k)
+            # The other side of a generically-bound client modifier is the
+            # client's key as well (see _client_twin_locked): it must be
+            # withheld from the focused window and routed like its twin.
+            for side in _MODIFIER_TWIN:
+                if side not in keys and self._client_twin_locked(game, side) is not None:
+                    keys.add(side)
             return frozenset(keys)
 
     def get_default_keys(self, game: str) -> frozenset:

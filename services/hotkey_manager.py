@@ -510,6 +510,17 @@ class HotkeyManager(QObject):
             if mapped is not None:
                 return mapped
         if hasattr(key, 'char') and key.char:
+            # win32 ONLY: while Ctrl is physically down, pynput translates a
+            # letter through ToUnicodeEx and reports the C0 control char
+            # (Ctrl+W = '\x17'), on the press AND on the release. With Ctrl
+            # bound as jump that turned every movement letter pressed or
+            # released mid-jump into an unroutable key: the press was lost,
+            # and a release stranded the toon walking. The virtual-key code
+            # is the letter regardless of modifier state, so prefer it.
+            if (sys.platform == "win32" and vk is not None
+                    and len(key.char) == 1 and ord(key.char) < 32
+                    and 0x41 <= int(vk) <= 0x5A):
+                return chr(int(vk) + 32)
             return key.char.lower() if key.char.isalpha() else key.char
         name = getattr(key, 'name', None)
         if name:

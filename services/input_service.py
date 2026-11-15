@@ -1793,10 +1793,10 @@ class InputService(QObject):
             self._bg_chat_open.clear()
             try:
                 _ctx = self._fsm_ctx(frozenset())
-                stamp = (f"[chat] ChatFSM ACTIVE v1 open_chords={_ctx.open_chords} "
-                         f"mode_b={_ctx.mode_b}")
+                stamp = (f"[chat] ChatFSM ACTIVE v3 (bound modifiers route per-toon; client modifier twins) "
+                         f"open_chords={_ctx.open_chords} mode_b={_ctx.mode_b}")
             except Exception:
-                stamp = "[chat] ChatFSM ACTIVE v1"
+                stamp = "[chat] ChatFSM ACTIVE v3 (bound modifiers route per-toon; client modifier twins)"
             _itrace("chat", stamp)
             self.input_log.emit(stamp)
 

@@ -216,9 +216,20 @@ class ChatFsm:
 
     def on_keydown(self, key: str, now: float, ctx: ChatCtx) -> KeyDecision:
         if key in MODIFIER_KEYS:
+            # Tracked by family either way, so a bound Alt still completes
+            # the alt+Return group-chat chord.
             name = _MOD_NAME.get(key)
             if name:
                 self._mods_down[name] = self._mods_down.get(name, 0) + 1
+            # A modifier that a keyset binds is a game control (jump on
+            # Control_R, book on Alt_L): outside a capture it must reach the
+            # per-toon router like any other bound key. The MODIFIER branch
+            # sends the raw key to every background window and nothing to the
+            # focused one, so it can neither separate two toons nor move the
+            # focused toon when the OS hook withheld the key. Inside a capture
+            # it stays a plain modifier so shifted typing works.
+            if key in ctx.bound_keys and not self.in_capture:
+                return KeyDecision(KeyClass.MOVEMENT)
             return KeyDecision(KeyClass.MODIFIER)
 
         self._down[key] = now
