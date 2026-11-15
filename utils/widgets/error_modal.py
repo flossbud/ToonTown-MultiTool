@@ -12,6 +12,10 @@ from PySide6.QtWidgets import (
 )
 
 from utils.clipboard import copy_text
+from utils.theme_manager import is_dark_palette
+from utils.widgets.modal_colors import (
+    SECTION_OBJECT_NAME, modal_colors, surface_stylesheet,
+)
 
 
 _GAME_NAMES = {"ttr": "Toontown Rewritten", "cc": "Corporate Clash"}
@@ -24,6 +28,7 @@ class ErrorModal(QDialog):
         self.setWindowTitle(f"Launch failed: {account_name}")
         self.setModal(True)
         self.setFixedWidth(480)
+        col = modal_colors(is_dark_palette())
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -38,18 +43,23 @@ class ErrorModal(QDialog):
         outer.addWidget(accent)
 
         hdr = QFrame()
+        hdr.setObjectName(SECTION_OBJECT_NAME)
         hdr_lay = QVBoxLayout(hdr)
         hdr_lay.setContentsMargins(18, 14, 18, 10)
         hdr_lay.setSpacing(2)
         self.title_label = QLabel(f"Launch failed: {account_name}")
-        self.title_label.setStyleSheet("color: #fff; font-weight: 700; font-size: 14px;")
+        self.title_label.setStyleSheet(
+            f"background: transparent; color: {col['title']};"
+            " font-weight: 700; font-size: 14px;")
         hdr_lay.addWidget(self.title_label)
-        sub = QLabel(f"{_GAME_NAMES.get(game, game.upper())} · {datetime.now():%Y-%m-%d %H:%M}")
-        sub.setStyleSheet("color: #8a9bb8; font-size: 11px;")
+        self.subline = sub = QLabel(f"{_GAME_NAMES.get(game, game.upper())} · {datetime.now():%Y-%m-%d %H:%M}")
+        sub.setStyleSheet(
+            f"background: transparent; color: {col['muted']}; font-size: 11px;")
         hdr_lay.addWidget(sub)
         outer.addWidget(hdr)
 
         body = QFrame()
+        body.setObjectName(SECTION_OBJECT_NAME)
         body_lay = QVBoxLayout(body)
         body_lay.setContentsMargins(18, 4, 18, 16)
         body_lay.setSpacing(10)
@@ -58,9 +68,9 @@ class ErrorModal(QDialog):
         self.body_text.setReadOnly(True)
         self.body_text.setMaximumHeight(200)
         self.body_text.setStyleSheet(
-            "QPlainTextEdit { background: rgba(0,0,0,0.3); border-radius: 5px;"
+            f"QPlainTextEdit {{ background: {col['detail_bg']}; border-radius: 5px;"
             " padding: 8px 10px; font-family: monospace; font-size: 11px;"
-            " color: #ffaaaa; }"
+            f" color: {col['detail_text']}; }}"
         )
         body_lay.addWidget(self.body_text)
 
@@ -77,17 +87,17 @@ class ErrorModal(QDialog):
         )
         self.copy_btn.clicked.connect(self._on_copy)
         acts.addWidget(self.copy_btn)
-        close_btn = QPushButton("Close")
+        self.close_btn = close_btn = QPushButton("Close")
         close_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: 1px solid rgba(255,255,255,0.15);"
-            " color: #cfd6e6; border-radius: 5px; padding: 6px 14px; font-size: 12px; }"
+            f"QPushButton {{ background: transparent; border: 1px solid {col['cancel_border']};"
+            f" color: {col['cancel_text']}; border-radius: 5px; padding: 6px 14px; font-size: 12px; }}"
         )
         close_btn.clicked.connect(self.accept)
         acts.addWidget(close_btn)
         body_lay.addLayout(acts)
 
         outer.addWidget(body)
-        self.setStyleSheet("QDialog { background: #1a2236; }")
+        self.setStyleSheet(surface_stylesheet(col))
 
     def _on_copy(self) -> None:
         self.copy_btn.setText("Copied" if copy_text(self._raw) else "Copy failed")
