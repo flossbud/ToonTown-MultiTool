@@ -8,6 +8,9 @@ from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
 )
 
+from utils.theme_manager import is_dark_palette
+from utils.widgets.modal_colors import modal_colors, surface_stylesheet
+
 _BODY = (
     "One of your games is running as administrator, so Windows is blocking "
     "ToonTown MultiTool from sending it movement. To control your toons "
@@ -30,28 +33,35 @@ class UipiElevationDialog(QDialog):
         self.setWindowTitle("Background toons can't move")
         self.setModal(True)
         self.setMinimumWidth(440)
+        col = modal_colors(is_dark_palette())
+        self.setStyleSheet(surface_stylesheet(col))
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(18, 16, 18, 16)
         outer.setSpacing(10)
 
         self._title = QLabel("Background toons can't move together")
-        self._title.setStyleSheet("color:#fff; font-weight:700; font-size:14px;")
+        self._title.setStyleSheet(
+            f"background:transparent; color:{col['title']};"
+            " font-weight:700; font-size:14px;")
         outer.addWidget(self._title)
 
         self._body = QLabel(_BODY)
         self._body.setWordWrap(True)
-        self._body.setStyleSheet("color:#c4d0e4; font-size:12px;")
+        self._body.setStyleSheet(
+            f"background:transparent; color:{col['body']}; font-size:12px;")
         outer.addWidget(self._body)
 
         if affected_toons:
             self._affected = QLabel("Affected: " + ", ".join(affected_toons))
-            self._affected.setStyleSheet("color:#8a9bb8; font-size:11px;")
+            self._affected.setStyleSheet(
+                f"background:transparent; color:{col['muted']}; font-size:11px;")
             outer.addWidget(self._affected)
 
         self._remediation = QLabel(_REMEDIATION)
         self._remediation.setWordWrap(True)
-        self._remediation.setStyleSheet("color:#8a9bb8; font-size:11px;")
+        self._remediation.setStyleSheet(
+            f"background:transparent; color:{col['muted']}; font-size:11px;")
         self._remediation.setVisible(False)
         outer.addWidget(self._remediation)
 

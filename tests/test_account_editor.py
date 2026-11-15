@@ -125,3 +125,39 @@ def test_enter_key_in_input_triggers_save(qapp, field):
     target.setFocus()
     QTest.keyClick(target, Qt.Key_Return)
     assert captured == [("My Toon", "user@example", "pw")]
+
+
+class TestFollowsTheme:
+    """The app stylesheet gives every widget the theme background, so the
+    modal's surface is light in light mode. Its text used to be hardcoded
+    white, which made labels and typed text nearly invisible there."""
+
+    @staticmethod
+    def _luma(css: str, prop: str) -> float:
+        import re
+        from PySide6.QtGui import QColor
+        m = re.search(rf"(?<![-\w]){prop}:\s*([^;}}]+)", css)
+        assert m, f"no {prop} in {css!r}"
+        return QColor(m.group(1).strip()).lightnessF()
+
+    @pytest.mark.parametrize("is_dark", [False, True])
+    def test_text_contrasts_with_the_surface(self, qapp, monkeypatch, is_dark):
+        import utils.widgets.account_editor as mod
+        monkeypatch.setattr(mod, "is_dark_palette", lambda: is_dark)
+        ed = mod.AccountEditor(game="ttr", mode="add")
+        surface = self._luma(ed.styleSheet(), "background")
+        assert (surface < 0.5) is is_dark
+        for widget in (ed.title_label, ed.subline, ed.username_input,
+                       ed.password_input, ed.label_input, ed.cancel_btn,
+                       ed.username_error):
+            text = self._luma(widget.styleSheet(), "color")
+            assert abs(text - surface) > 0.3, (
+                f"{widget.objectName() or type(widget).__name__}: "
+                f"text {text:.2f} on surface {surface:.2f}")
+
+    def test_light_mode_input_text_is_not_white(self, qapp, monkeypatch):
+        import utils.widgets.account_editor as mod
+        monkeypatch.setattr(mod, "is_dark_palette", lambda: False)
+        ed = mod.AccountEditor(game="cc", mode="add")
+        assert self._luma(ed.username_input.styleSheet(), "color") < 0.3
+        assert self._luma(ed.username_input.styleSheet(), "background") > 0.9

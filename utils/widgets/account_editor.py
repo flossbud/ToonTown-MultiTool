@@ -7,6 +7,11 @@ from PySide6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout,
 )
 
+from utils.theme_manager import is_dark_palette
+from utils.widgets.modal_colors import (
+    SECTION_OBJECT_NAME, modal_colors, surface_stylesheet,
+)
+
 
 _ACCENTS = {
     "ttr": ("#4A8FE7", "#88c0d0"),
@@ -14,6 +19,7 @@ _ACCENTS = {
 }
 _GAME_NAMES = {"ttr": "Toontown Rewritten", "cc": "Corporate Clash"}
 _GAME_SHORT = {"ttr": "TTR", "cc": "CC"}
+
 
 
 class AccountEditor(QDialog):
@@ -35,6 +41,7 @@ class AccountEditor(QDialog):
         self._mode = mode
 
         primary, secondary = _ACCENTS[game]
+        col = modal_colors(is_dark_palette())
         title = (
             f"Add {_GAME_SHORT[game]} Account" if mode == "add"
             else f"Edit {initial_label or initial_username or 'account'}"
@@ -58,19 +65,24 @@ class AccountEditor(QDialog):
 
         # Header
         hdr = QFrame()
+        hdr.setObjectName(SECTION_OBJECT_NAME)
         hdr_lay = QVBoxLayout(hdr)
         hdr_lay.setContentsMargins(18, 14, 18, 12)
         hdr_lay.setSpacing(2)
         self.title_label = QLabel(title)
-        self.title_label.setStyleSheet("color: #fff; font-weight: 700; font-size: 15px;")
+        self.title_label.setStyleSheet(
+            f"background: transparent; color: {col['title']};"
+            " font-weight: 700; font-size: 15px;")
         hdr_lay.addWidget(self.title_label)
         self.subline = QLabel(_GAME_NAMES[game])
-        self.subline.setStyleSheet("color: #8a9bb8; font-size: 12px;")
+        self.subline.setStyleSheet(
+            f"background: transparent; color: {col['muted']}; font-size: 12px;")
         hdr_lay.addWidget(self.subline)
         outer.addWidget(hdr)
 
         # Body
         body = QFrame()
+        body.setObjectName(SECTION_OBJECT_NAME)
         body_lay = QVBoxLayout(body)
         body_lay.setContentsMargins(18, 14, 18, 18)
         body_lay.setSpacing(10)
@@ -79,20 +91,22 @@ class AccountEditor(QDialog):
             box = QVBoxLayout()
             box.setSpacing(3)
             l = QLabel(lab_text)
-            l.setStyleSheet("color: #8a9bb8; font-size: 10px; font-weight: 600;"
+            l.setStyleSheet(f"background: transparent; color: {col['muted']};"
+                            " font-size: 10px; font-weight: 600;"
                             " text-transform: uppercase; letter-spacing: 0.05em;")
             box.addWidget(l)
             inp = QLineEdit(initial)
             if password:
                 inp.setEchoMode(QLineEdit.Password)
             inp.setStyleSheet(
-                "QLineEdit { background: rgba(255,255,255,0.04); border: 1px solid"
-                " rgba(255,255,255,0.1); border-radius: 5px; padding: 6px 9px;"
-                " color: #fff; font-size: 12px; }"
+                f"QLineEdit {{ background: {col['input_bg']}; border: 1px solid"
+                f" {col['input_border']}; border-radius: 5px; padding: 6px 9px;"
+                f" color: {col['input_text']}; font-size: 12px; }}"
             )
             box.addWidget(inp)
             err = QLabel("")
-            err.setStyleSheet("color: #ff7575; font-size: 10px; font-weight: 600;")
+            err.setStyleSheet(f"background: transparent; color: {col['error']};"
+                              " font-size: 10px; font-weight: 600;")
             err.setVisible(False)
             box.addWidget(err)
             inp.textChanged.connect(lambda _: err.setVisible(False))
@@ -110,8 +124,8 @@ class AccountEditor(QDialog):
         acts.addStretch()
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: 1px solid rgba(255,255,255,0.15);"
-            " color: #cfd6e6; border-radius: 5px; padding: 6px 14px; font-size: 12px; }"
+            f"QPushButton {{ background: transparent; border: 1px solid {col['cancel_border']};"
+            f" color: {col['cancel_text']}; border-radius: 5px; padding: 6px 14px; font-size: 12px; }}"
         )
         # Qt's default autoDefault=True on every QPushButton in a QDialog can
         # hijack Enter so pressing Return in a QLineEdit triggers Cancel
@@ -121,7 +135,7 @@ class AccountEditor(QDialog):
         acts.addWidget(self.cancel_btn)
         self.save_btn = QPushButton("Save")
         self.save_btn.setStyleSheet(
-            "QPushButton { background: #0077ff; color: white; border: none;"
+            f"QPushButton {{ background: {col['save_bg']}; color: {col['save_text']}; border: none;"
             " border-radius: 5px; padding: 6px 14px; font-size: 12px; font-weight: 600; }"
         )
         self.save_btn.setAutoDefault(True)
@@ -131,7 +145,7 @@ class AccountEditor(QDialog):
         body_lay.addLayout(acts)
 
         outer.addWidget(body)
-        self.setStyleSheet("QDialog { background: #1a2236; }")
+        self.setStyleSheet(surface_stylesheet(col))
 
     def _on_save(self) -> None:
         if self._mode == "add":

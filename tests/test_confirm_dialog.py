@@ -30,7 +30,9 @@ def test_delete_variant_no_dont_ask_again(qapp):
     assert dlg.dont_ask_again_check is None
 
 
-def test_confirm_button_label_and_color(qapp):
+def test_confirm_button_label_and_color(qapp, monkeypatch):
+    import utils.widgets.confirm_dialog as mod
+    monkeypatch.setattr(mod, "is_dark_palette", lambda: True)
     dlg = ConfirmDialog(
         title="Quit?", body="x", confirm_label="Quit", show_dont_ask_again=True,
     )
