@@ -678,7 +678,7 @@ class StripController(QObject):
                 return
             entry = self._keysets.entry_for_number(game, number)
             if entry is not None and entry[0] == set_id and not entry[2]:
-                km.update_set_key(game, number - 1, action, key)
+                km.update_set_key_by_id(game, set_id, action, key)
 
         card.bind_requested.connect(bind)
         card.layout_changed.connect(lambda kind, wid=wid: self._editor_kind_changed(wid, kind))

@@ -219,6 +219,8 @@ def log_keymaps(keymaps) -> None:
 
     wrap("update_set_key", lambda game, index, action, key:
          f"bind: {game} keyset {index + 1}, {action} = {key}")
+    wrap("update_set_key_by_id", lambda game, set_id, action, key:
+         f"bind: {game} keyset {keymaps.index_of(game, set_id) + 1}, {action} = {key}")
     wrap("add_set", lambda game, *a, **k: f"new keyset asked for {game}")
     wrap("set_hidden", lambda game, set_id, hidden:
          f"keyset {keymaps.index_of(game, set_id) + 1} of {game} "
