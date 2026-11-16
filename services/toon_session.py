@@ -1144,17 +1144,39 @@ class ToonSession(QObject):
     # ── Profiles ───────────────────────────────────────────────────────────
 
     def _autosave_active_profile(self) -> None:
-        """Persist the live state to the active profile, if one is."""
+        """Persist the live state to the active profile, if one is.
+
+        Only the slots that have a toon are written. A slot with no window
+        keeps what the profile already holds for it: a four-toon profile
+        loaded with two toons running must come back intact when the other
+        two are started.
+        """
         manager = self._profile_manager
         if self._active_profile < 0 or not manager:
             return
-        enabled = [False] * MAX_TOONS
+        try:
+            stored = manager.get_profile(self._active_profile)
+        except Exception:  # noqa: BLE001
+            stored = None
+
+        def kept(field: str, default):
+            values = list(getattr(stored, field, None) or [])[:MAX_TOONS]
+            return values + [default] * (MAX_TOONS - len(values))
+
+        enabled = kept("enabled_toons", False)
+        modes = kept("movement_modes", self._keysets.name(
+            GAME_TTR, self._keysets.lowest_visible(GAME_TTR)))
+        keep_alive = kept("keep_alive", False)
+        rapid_fire = kept("rapid_fire", False)
         for wid in self._order:
-            enabled[self._toons[wid].slot] = self._toons[wid].enabled
+            slot = self._toons[wid].slot
+            enabled[slot] = self._toons[wid].enabled
+            modes[slot] = self._slot_modes[slot]
+            keep_alive[slot] = self._slot_keep_alive[slot]
+            rapid_fire[slot] = self._slot_rapid_fire[slot]
         manager.save_profile(
-            self._active_profile, enabled, list(self._slot_modes),
-            keep_alive=list(self._slot_keep_alive),
-            rapid_fire=list(self._slot_rapid_fire),
+            self._active_profile, enabled, modes,
+            keep_alive=keep_alive, rapid_fire=rapid_fire,
         )
 
     # ── Keep-alive engine ──────────────────────────────────────────────────
