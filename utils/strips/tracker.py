@@ -78,7 +78,7 @@ class StripTracker(QObject):
 
     place = Signal(str, object)    # window id, (x, y, w, h)
     hide = Signal(str)             # moving, resized, minimized or gone
-    _sampled = Signal(object)      # {window id: rect or None}, thread -> GUI
+    _sampled = Signal(object)      # (run, membership, samples), thread -> GUI
 
     def __init__(self, geometry_fn: Callable[[str], Rect | None] | None = None,
                  interval_s: float = SAMPLE_INTERVAL_S,
@@ -92,20 +92,25 @@ class StripTracker(QObject):
         self._interval = float(interval_s)
         self._tracks: dict[str, WindowTrack] = {}
         self._wids: tuple[str, ...] = ()       # read by the sampling thread
+        self._request = (0, self._wids)        # immutable snapshot for the worker
+        self._generation = 0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._sampled.connect(self._on_sampled)
+        self._sampled.connect(self._receive_sample)
 
     # -- GUI thread ---------------------------------------------------------
 
     def set_windows(self, window_ids) -> None:
         wids = tuple(str(w) for w in window_ids)
+        if wids == self._wids:
+            return
         for wid in list(self._tracks):
             if wid not in wids:
                 del self._tracks[wid]
         for wid in wids:
             self._tracks.setdefault(wid, WindowTrack())
         self._wids = wids
+        self._request = (self._request[0] + 1, wids)
 
     def windows(self) -> tuple[str, ...]:
         return self._wids
@@ -120,17 +125,24 @@ class StripTracker(QObject):
         for wid, track in self._tracks.items():
             if window_id is None or wid == str(window_id):
                 track.reset()
+        self._request = (self._request[0] + 1, self._wids)
 
     def start(self) -> None:
-        if self._thread is not None and self._thread.is_alive():
+        if (self._thread is not None and self._thread.is_alive()
+                and not self._stop.is_set()):
             return
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="strip-tracker",
+        # Never clear the event a slow, stopped worker still holds.
+        self._stop = threading.Event()
+        self._generation += 1
+        self._thread = threading.Thread(target=self._run,
+                                        args=(self._stop, self._generation),
+                                        name="strip-tracker",
                                         daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
+        self._generation += 1
         thread, self._thread = self._thread, None
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=1.0)
@@ -153,6 +165,12 @@ class StripTracker(QObject):
             else:
                 self.hide.emit(wid)
 
+    def _receive_sample(self, result) -> None:
+        generation, revision, samples = result
+        if generation != self._generation or revision != self._request[0]:
+            return
+        self._on_sampled(samples)
+
     # -- sampling thread ----------------------------------------------------
 
     def _sample(self, wids) -> dict:
@@ -170,15 +188,15 @@ class StripTracker(QObject):
                 out[wid] = None
         return out
 
-    def _run(self) -> None:
-        while not self._stop.is_set():
-            wids = self._wids
+    def _run(self, stop: threading.Event, generation: int) -> None:
+        while not stop.is_set():
+            revision, wids = self._request
             if wids:
                 samples = self._sample(wids)
-                if self._stop.is_set():
+                if stop.is_set():
                     break
                 try:
-                    self._sampled.emit(samples)
+                    self._sampled.emit((generation, revision, samples))
                 except RuntimeError:
                     break         # the QObject is gone: the app is closing
-            self._stop.wait(self._interval)
+            stop.wait(self._interval)

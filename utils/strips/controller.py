@@ -248,6 +248,7 @@ class StripController(QObject):
         self._popovers.menu_chosen.connect(self._on_menu)
         self._keymaps_changed.connect(self._refresh_editors)
         self._wired: set[str] = set()
+        self._editor_targets: dict[str, str] = {}
         self._home_wid: str | None = None
         self._home_open = False
         self._started = False
@@ -560,6 +561,8 @@ class StripController(QObject):
             self.set_home_open(True)
 
     def _popover_closed(self, wid: str, tag: str) -> None:
+        if tag.startswith("edit:"):
+            self._editor_targets.pop(wid, None)
         if tag == "home":
             self.set_home_open(False)
 
@@ -639,20 +642,29 @@ class StripController(QObject):
         if toon is None or surface is None or km is None:
             return None
         model = build_editor_model(km, toon.game, number)
-        if model is None:
+        set_id = self._keysets.id_for(toon.game, number)
+        if model is None or set_id is None:
             return None
         card = KeysetEditor(model, self._editor_kind(), surface.strip.style_name(),
                             surface.strip.scale())
         game = toon.game
-        card.bind_requested.connect(
-            lambda action, key, game=game, number=number:
-            km.update_set_key(game, number - 1, action, key))
+        def bind(action, key):
+            # A notification may still be queued after another thread edits
+            # the library. Never write through the number the card opened on.
+            if self._popovers.open_content(wid) is not card:
+                return
+            entry = self._keysets.entry_for_number(game, number)
+            if entry is not None and entry[0] == set_id and not entry[2]:
+                km.update_set_key(game, number - 1, action, key)
+
+        card.bind_requested.connect(bind)
         card.layout_changed.connect(lambda kind, wid=wid: self._editor_kind_changed(wid, kind))
         card.close_requested.connect(lambda wid=wid: self._popovers.close(wid))
         # While the card waits for a key, Escape belongs to the capture.
         card.capture_changed.connect(self._popovers.watch.pause_escape)
         if self._popovers.open_card(wid, f"edit:{number}", L.KEYSET, number, card) is None:
             return None
+        self._editor_targets[wid] = set_id
         return card
 
     def _editor_kind_changed(self, wid: str, kind: str) -> None:
@@ -667,6 +679,11 @@ class StripController(QObject):
         """A binding changed, or the set was hidden, moved or deleted."""
         for wid in list(self._follower.surfaces()):
             tag = self._popovers.open_tag(wid)
+            if tag.startswith("set:") or tag == "add":
+                # These menus contain numbers and availability captured when
+                # opened; a library edit can replace their targets.
+                self._popovers.close(wid)
+                continue
             if not tag.startswith("edit:"):
                 continue
             card = self._popovers.open_content(wid)
@@ -675,7 +692,9 @@ class StripController(QObject):
             model = (build_editor_model(self._keymap_manager, toon.game, number)
                      if toon is not None else None)
             visible = toon is not None and number in self._keysets.visible_numbers(toon.game)
-            if model is None or not visible or not isinstance(card, KeysetEditor):
+            same_target = (toon is not None and self._keysets.id_for(toon.game, number)
+                           == self._editor_targets.get(wid))
+            if model is None or not visible or not same_target or not isinstance(card, KeysetEditor):
                 self._popovers.close(wid)
                 continue
             before = card.sizeHint()

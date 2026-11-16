@@ -69,9 +69,13 @@ class _X11Probe:
     def close(self) -> None:
         try:
             self.grab_escape(False)
-            self.d.close()
         except Exception:
             pass
+        finally:
+            try:
+                self.d.close()
+            except Exception:
+                pass
 
 
 class _PollProbe:
@@ -188,6 +192,10 @@ class PointerWatch(QObject):
             down = probe.buttons_down()
             escaped = (not self._paused) and probe.escape_pressed()
         except Exception:
+            # A dead connection cannot dismiss anything. Release it and
+            # close the popovers; their next open creates a fresh probe.
+            self.shutdown()
+            self.escape.emit()
             return
         pressed = down and not self._was_down
         self._was_down = down
