@@ -36,6 +36,7 @@ class FakeToonSession(QObject):
     running_changed = Signal(bool)
     features_changed = Signal()
     keep_alive_inhibit_status = Signal(object)
+    click_sync_state_changed = Signal()
 
     def __init__(self, toons=(), *, running: bool = False,
                  keep_alive_available: bool = True,
@@ -55,6 +56,7 @@ class FakeToonSession(QObject):
         self._toon_capture_sink = None
         self._shut_down = False
         self._active_profile = -1
+        self._click_sync_error: str | None = None
 
         # Call records, for tests that only need to know an action was asked for.
         self.refresh_count = 0
@@ -139,12 +141,22 @@ class FakeToonSession(QObject):
         return self._active_profile
 
     def click_sync_state(self, window_id: str) -> str:
-        """"active" with two or more members, "armed" alone, else "off"."""
+        """"error" for members while an error is set, "active" with two or
+        more members, "armed" alone, else "off"."""
         state = self._toons.get(window_id)
         if state is None or not state.click_sync or not self._click_sync_available:
             return "off"
+        if self._click_sync_error is not None:
+            return "error"
         members = sum(1 for t in self._toons.values() if t.click_sync)
         return "active" if members >= 2 else "armed"
+
+    def click_sync_error(self) -> str | None:
+        return self._click_sync_error
+
+    def _click_sync_snapshot(self) -> tuple:
+        return (self._click_sync_error,
+                tuple(self.click_sync_state(wid) for wid in self._toons))
 
     # ── Per-toon setters ───────────────────────────────────────────────────
 
@@ -249,11 +261,13 @@ class FakeToonSession(QObject):
             raise ValueError(f"window id {state.window_id!r} already present")
         self._toons[state.window_id] = state
         self.toons_changed.emit()
+        self.click_sync_state_changed.emit()
 
     def remove_toon(self, window_id: str) -> None:
         """A game window went away. Unknown ids are ignored."""
         if self._toons.pop(window_id, None) is not None:
             self.toons_changed.emit()
+            self.click_sync_state_changed.emit()
 
     def update_toon(self, window_id: str, **fields) -> None:
         """Something outside the setters changed a toon (API poll, re-slotting).
@@ -268,6 +282,7 @@ class FakeToonSession(QObject):
         """An app-wide flag changed. Per-toon toggles are left as they are,
         as in the app: a toon keeps its keep-alive choice while the feature
         is switched off."""
+        before = self._click_sync_snapshot()
         changed = False
         if (keep_alive_available is not None
                 and bool(keep_alive_available) != self._keep_alive_available):
@@ -279,6 +294,16 @@ class FakeToonSession(QObject):
             changed = True
         if changed:
             self.features_changed.emit()
+        if self._click_sync_snapshot() != before:
+            self.click_sync_state_changed.emit()
+
+    def set_click_sync_error(self, message: str | None) -> None:
+        """The click-sync service failed (or, with None, recovered): members
+        read "error" until it clears."""
+        if message == self._click_sync_error:
+            return
+        self._click_sync_error = message
+        self.click_sync_state_changed.emit()
 
     def set_profile(self, index: int, by_slot: dict[int, dict]) -> None:
         """Register what ``load_profile(index)`` applies: ``{slot: {field: value}}``
@@ -303,6 +328,7 @@ class FakeToonSession(QObject):
         new = replace(old, **fields)
         if new == old:
             return
+        before = self._click_sync_snapshot()
         self._toons[window_id] = new
         slot_changed = new.slot != old.slot
         other_changed = replace(new, slot=old.slot) != old
@@ -310,6 +336,8 @@ class FakeToonSession(QObject):
             self.toons_changed.emit()
         if other_changed:
             self.toon_changed.emit(window_id)
+        if self._click_sync_snapshot() != before:
+            self.click_sync_state_changed.emit()
 
     def _set_running(self, running: bool) -> None:
         if running == self._running:

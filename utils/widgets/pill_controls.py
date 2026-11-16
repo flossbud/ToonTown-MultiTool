@@ -57,6 +57,9 @@ class SegmentedPill(QWidget):
     PAD = 3
     GAP = 2
     SEG_PAD_X = 13
+    # Subclasses (the launchpad sheets' smaller pill) override these.
+    H = PILL_H
+    FONT_PX = 12
 
     def __init__(self, options: list[str], stretch: bool = False, parent=None):
         super().__init__(parent)
@@ -65,7 +68,7 @@ class SegmentedPill(QWidget):
         self._stretch = bool(stretch)
         self._t = get_v2_tokens(True)
         self._fill = V2_ACCENTS["blue"]["c"]
-        self.setFixedHeight(PILL_H)
+        self.setFixedHeight(self.H)
         self.setCursor(Qt.PointingHandCursor)
         if stretch:
             self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -87,15 +90,34 @@ class SegmentedPill(QWidget):
         self._fill = a["b"] if accent_key == "red" else a["c"]
         self.update()
 
+    def set_fill(self, color: str) -> None:
+        """Selected-segment fill as any colour (apply_theme takes an accent
+        key from V2_ACCENTS)."""
+        self._fill = color
+        self.update()
+
+    def _font(self, selected: bool) -> QFont:
+        f = QFont()
+        f.setPixelSize(self.FONT_PX)
+        f.setWeight(QFont.Bold if selected else QFont.Medium)
+        return f
+
+    def _track_colors(self):
+        """(fill, border) of the track."""
+        from utils.widgets.portrait_badge import _qcolor_from_rgba
+        return (_qcolor_from_rgba(self._t["seg_bg"]),
+                _qcolor_from_rgba(self._t["seg_border"]))
+
+    def _idle_text_color(self):
+        from utils.widgets.portrait_badge import _qcolor_from_rgba
+        return _qcolor_from_rgba(self._t["seg_idle"])
+
     def sizeHint(self):
         from PySide6.QtCore import QSize
-        f = QFont()
-        f.setPixelSize(12)
-        f.setWeight(QFont.Bold)
-        fm = QFontMetrics(f)
+        fm = QFontMetrics(self._font(True))
         w = 2 * self.PAD + self.GAP * (len(self._options) - 1) + sum(
             fm.horizontalAdvance(o) + 2 * self.SEG_PAD_X for o in self._options)
-        return QSize(w, PILL_H)
+        return QSize(w, self.H)
 
     def _seg_rects(self):
         from PySide6.QtCore import QRectF
@@ -106,17 +128,14 @@ class SegmentedPill(QWidget):
             seg_w = (inner_w - self.GAP * (n - 1)) / n
             x = float(self.PAD)
             for _ in self._options:
-                rects.append(QRectF(x, self.PAD, seg_w, PILL_H - 2 * self.PAD))
+                rects.append(QRectF(x, self.PAD, seg_w, self.H - 2 * self.PAD))
                 x += seg_w + self.GAP
         else:
-            f = QFont()
-            f.setPixelSize(12)
-            f.setWeight(QFont.Bold)
-            fm = QFontMetrics(f)
+            fm = QFontMetrics(self._font(True))
             x = float(self.PAD)
             for o in self._options:
                 w = fm.horizontalAdvance(o) + 2 * self.SEG_PAD_X
-                rects.append(QRectF(x, self.PAD, w, PILL_H - 2 * self.PAD))
+                rects.append(QRectF(x, self.PAD, w, self.H - 2 * self.PAD))
                 x += w + self.GAP
         return rects
 
@@ -144,8 +163,9 @@ class SegmentedPill(QWidget):
         p.setRenderHint(QPainter.Antialiasing, True)
         r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         radius = r.height() / 2
-        p.setPen(QPen(_qcolor_from_rgba(self._t["seg_border"]), 1))
-        p.setBrush(_qcolor_from_rgba(self._t["seg_bg"]))
+        track_fill, track_border = self._track_colors()
+        p.setPen(QPen(track_border, 1))
+        p.setBrush(track_fill)
         p.drawRoundedRect(r, radius, radius)
 
         rects = self._seg_rects()
@@ -155,12 +175,8 @@ class SegmentedPill(QWidget):
                 p.setPen(Qt.NoPen)
                 p.setBrush(QColor(self._fill))
                 p.drawRoundedRect(seg, seg.height() / 2, seg.height() / 2)
-            f = QFont()
-            f.setPixelSize(12)
-            f.setWeight(QFont.Bold if sel else QFont.Medium)
-            p.setFont(f)
-            p.setPen(QColor("#ffffff") if sel
-                     else _qcolor_from_rgba(self._t["seg_idle"]))
+            p.setFont(self._font(sel))
+            p.setPen(QColor("#ffffff") if sel else self._idle_text_color())
             p.drawText(seg, Qt.AlignCenter, opt)
         p.end()
 

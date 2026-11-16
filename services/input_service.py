@@ -885,6 +885,12 @@ class InputService(QObject):
         """
         if self.global_chat_active or self._phantom_active:
             return False
+        if self._routing_suspended:
+            # Nothing is re-delivered while suspended, so nothing may be
+            # withheld: this holds from the instant routing is suspended, also
+            # on a grabber that removes its grabs a moment later on its own
+            # thread.
+            return False
         try:
             active = self.window_manager.get_active_window()
         except Exception:
