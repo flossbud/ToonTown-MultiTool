@@ -1,4 +1,5 @@
-"""The launchpad window (TTMT_NEXT_UI=1): what it builds, what it does not,
+"""The launchpad window (the default; TTMT_NEXT_UI=0 selects the classic
+window): what it builds, what it does not,
 and how its header, sheets and services are wired.
 
 These build the real window offscreen. They are construction checks; how it
@@ -98,33 +99,35 @@ def window(isolated, monkeypatch, qapp):
 # ── The switch ─────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("value, expected", [
-    ("1", True), (" 1 ", True), ("", False), ("0", False), ("true", False), ("2", False),
+    ("1", True), (" 1 ", True), ("", True), ("true", True), ("2", True),
+    ("0", False), (" 0 ", False),
 ])
-def test_only_an_explicit_one_selects_the_launchpad(value, expected):
+def test_only_an_explicit_zero_selects_the_classic_window(value, expected):
     from utils.launchpad_window import next_ui_enabled
     assert next_ui_enabled({"TTMT_NEXT_UI": value}) is expected
-    assert next_ui_enabled({}) is False
+    assert next_ui_enabled({}) is True
 
 
-def test_main_picks_the_classic_window_without_the_flag(monkeypatch):
-    import main
-    monkeypatch.delenv("TTMT_NEXT_UI", raising=False)
-    assert main._main_window_class() is main.MultiToonTool
-    monkeypatch.setenv("TTMT_NEXT_UI", "0")
-    assert main._main_window_class() is main.MultiToonTool
-
-
-def test_main_picks_the_launchpad_with_the_flag(monkeypatch):
+def test_main_picks_the_launchpad_by_default(monkeypatch):
     import main
     from utils.launchpad_window import LaunchpadWindow
+    monkeypatch.delenv("TTMT_NEXT_UI", raising=False)
+    assert main._main_window_class() is LaunchpadWindow
     monkeypatch.setenv("TTMT_NEXT_UI", "1")
     assert main._main_window_class() is LaunchpadWindow
 
 
-def test_the_classic_window_is_what_it_was(isolated, monkeypatch, qapp):
-    """Flag unset: the same class, with its Multitoon tab and nav band."""
+def test_main_picks_the_classic_window_with_the_escape_hatch(monkeypatch, capsys):
     import main
-    monkeypatch.delenv("TTMT_NEXT_UI", raising=False)
+    monkeypatch.setenv("TTMT_NEXT_UI", "0")
+    assert main._main_window_class() is main.MultiToonTool
+    assert "[NextUI] classic window (TTMT_NEXT_UI=0)" in capsys.readouterr().out
+
+
+def test_the_classic_window_is_what_it_was(isolated, monkeypatch, qapp):
+    """TTMT_NEXT_UI=0: the same class, with its Multitoon tab and nav band."""
+    import main
+    monkeypatch.setenv("TTMT_NEXT_UI", "0")
     monkeypatch.delenv("TTMT_GRANDSTAND", raising=False)
     monkeypatch.setattr(main, "_quit_app_after_main_window_close", lambda: None)
     win = main._main_window_class()()
@@ -153,7 +156,7 @@ def test_stamps_are_printed_once(isolated, capsys, qapp):
     win = LaunchpadWindow()
     try:
         out = capsys.readouterr().out
-        assert STAMP == "[NextUI] launchpad window + float strips (TTMT_NEXT_UI=1)"
+        assert STAMP == "[NextUI] launchpad window + float strips (default; TTMT_NEXT_UI=0 selects the classic window)"
         assert out.count(STAMP) == 1
         assert out.count("[ToonSession] core active") == 1
         # The strips print theirs once per process; see the self-check test.
@@ -164,21 +167,22 @@ def test_stamps_are_printed_once(isolated, capsys, qapp):
 
 def test_a_real_start_prints_each_stamp_exactly_once(tmp_path):
     """The running-code proof a live check begins with: `main.py --self-check`
-    in a fresh interpreter, with the flag."""
+    in a fresh interpreter, with the flag unset (the default)."""
     import subprocess
     import sys
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     (tmp_path / "home").mkdir()
-    env = dict(os.environ, TTMT_NEXT_UI="1", QT_QPA_PLATFORM="offscreen",
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen",
                TTMT_NO_VENV_REEXEC="1", TTMT_CONFIG_DIR=str(tmp_path / "config"),
                HOME=str(tmp_path / "home"))
     env.pop("TTMT_GRANDSTAND", None)
+    env.pop("TTMT_NEXT_UI", None)
     proc = subprocess.run([sys.executable, "main.py", "--self-check"], cwd=root,
                           env=env, capture_output=True, text=True, timeout=120)
     out = proc.stdout + proc.stderr
     assert proc.returncode == 0, out[-2000:]
     assert "self-check OK" in out
-    assert out.count("[NextUI] launchpad window + float strips (TTMT_NEXT_UI=1)") == 1
+    assert out.count("[NextUI] launchpad window + float strips (default; TTMT_NEXT_UI=0 selects the classic window)") == 1
     assert out.count("[ToonSession] core active") == 1
     assert out.count("[Strips] attach=") == 1
     assert "Traceback" not in out

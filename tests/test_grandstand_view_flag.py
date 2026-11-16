@@ -54,6 +54,7 @@ def test_grandstand_is_the_shipped_default(monkeypatch,
 
 
 def test_the_stamp_says_default_when_nothing_selected_it(qapp, monkeypatch, capsys):
+    monkeypatch.setenv("TTMT_NEXT_UI", "0")          # the classic window
     monkeypatch.delenv("TTMT_GRANDSTAND", raising=False)
     GrandstandView(LaunchParty(None))
     assert ("[Grandstand] view active — default, TTMT_GRANDSTAND=0 restores the "
@@ -70,6 +71,7 @@ def test_init_emits_the_startup_stamp(qapp, monkeypatch):
     """Running-code proof: never let the operator validate without evidence
     of which path is live. A human greps this exact line during live
     validation, so it is pinned verbatim, not by prefix."""
+    monkeypatch.setenv("TTMT_NEXT_UI", "0")          # the classic window
     monkeypatch.setenv("TTMT_GRANDSTAND", "1")
     lines = []
     GrandstandView(LaunchParty(None), log=lines.append)
@@ -84,6 +86,7 @@ def test_init_emits_the_startup_stamp_to_stdout_too(qapp, capsys, monkeypatch):
     drops it unless logging is switched on, so live validation could never
     confirm the flagged path from a plain startup. Printed plainly, like
     the sheet stamps and utils/toon_renders.py."""
+    monkeypatch.setenv("TTMT_NEXT_UI", "0")          # the classic window
     monkeypatch.setenv("TTMT_GRANDSTAND", "1")
     GrandstandView(LaunchParty(None))   # default log: a no-op lambda
     out = capsys.readouterr().out
@@ -863,14 +866,19 @@ def test_theme_reaches_the_sheet_its_body_and_the_browser(roster):
 
 
 
+@pytest.mark.parametrize("next_ui", [None, "1"])
 @pytest.mark.parametrize("grandstand", ["", "0", "1"])
-def test_the_stamp_in_the_launchpad_window(qapp, monkeypatch, capsys, grandstand):
-    """Under TTMT_NEXT_UI=1 the view is the only launcher and TTMT_GRANDSTAND
-    has no say (the window forces it on), so the line must not offer it."""
-    monkeypatch.setenv("TTMT_NEXT_UI", "1")
+def test_the_stamp_in_the_launchpad_window(qapp, monkeypatch, capsys, grandstand, next_ui):
+    """In the launchpad window (the default) the view is the only launcher
+    and TTMT_GRANDSTAND has no say (the window forces it on), so the line
+    must not offer it."""
+    if next_ui is None:
+        monkeypatch.delenv("TTMT_NEXT_UI", raising=False)
+    else:
+        monkeypatch.setenv("TTMT_NEXT_UI", next_ui)
     monkeypatch.setenv("TTMT_GRANDSTAND", grandstand)
     GrandstandView(LaunchParty(None))
     out = capsys.readouterr().out
-    assert ("[Grandstand] view active — launchpad window (TTMT_NEXT_UI=1), the only "
+    assert ("[Grandstand] view active — launchpad window, the only "
             "launcher there (milestone 1)") in out
     assert "restores the previous launcher" not in out

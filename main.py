@@ -2080,12 +2080,13 @@ def _wire_app_lifecycle(app: QApplication, window: MultiToonTool) -> None:
 
 
 def _main_window_class():
-    """The app's main window class for this run: the launchpad window when
-    TTMT_NEXT_UI=1, otherwise the window the app has always had."""
-    from utils.launchpad_window import next_ui_enabled
+    """The app's main window class for this run: the launchpad window, or
+    the classic window when TTMT_NEXT_UI=0 (the escape hatch)."""
+    from utils.launchpad_window import CLASSIC_STAMP, next_ui_enabled
     if next_ui_enabled():
         from utils.launchpad_window import LaunchpadWindow
         return LaunchpadWindow
+    print(CLASSIC_STAMP)
     return MultiToonTool
 
 
