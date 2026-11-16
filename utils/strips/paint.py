@@ -276,14 +276,21 @@ class StripPainter:
         if hover:
             p.fillPath(path, HOVER_VEIL)
 
-    def _hidden_dot(self, p: QPainter, rect: QRectF, tone: Tone) -> None:
-        """6 px white dot with a 1.5 px dark ring, 2 px in from the top right."""
+    def _dot(self, p: QPainter, rect: QRectF, colour: QColor, tone: Tone) -> None:
+        """6 px dot with a 1.5 px dark ring, 2 px in from the top right."""
         dot = QRectF(rect.right() - 2.0 - 6.0, rect.top() + 2.0, 6.0, 6.0)
         p.setPen(Qt.NoPen)
         p.setBrush(tone(tokens.rgba(0, 0, 0, 0.6)))
         p.drawEllipse(dot.adjusted(-1.5, -1.5, 1.5, 1.5))
-        p.setBrush(tone(WHITE))
+        p.setBrush(tone(colour))
         p.drawEllipse(dot)
+
+    def _hidden_dot(self, p: QPainter, rect: QRectF, tone: Tone) -> None:
+        self._dot(p, rect, WHITE, tone)
+
+    def warning_dot(self, p: QPainter, rect: QRectF, tone: Tone = identity) -> None:
+        """Marks a block whose feature is switched on but not working."""
+        self._dot(p, rect, QColor(tokens.WARNING), tone)
 
     def home(self, p: QPainter, rect: QRectF, icon: QPixmap | None,
              is_open: bool, stopped: bool) -> None:

@@ -312,3 +312,30 @@ def test_number_block_paints_without_a_strip_widget(qapp):
     assert close(flat.pixelColor(30, 17), "#ffffff")         # inset ring
     assert flat.pixelColor(30, 13) == MAGENTA
     assert close(render("flat", False).pixelColor(21, 21), tokens.dk("#E05252", 46))
+
+
+def test_click_sync_error_is_unlit_with_an_amber_dot(mount):
+    model = FLOSSBUD.with_(click_sync=True, click_sync_state="error")
+    host, strip = mount(model, "flat")
+    image = grab(host)
+    block = strip.block_rect(L.CLICK_SYNC)
+    assert close(at(image, strip, block, 4, 20), tokens.dk("#d4548a", 30))   # unlit
+    assert close(at(image, strip, block, block.width() - 5, 5), "#ffb020")   # dot
+    # Armed is still lit and carries no dot.
+    host, strip = mount(FLOSSBUD.with_(click_sync_state="armed"), "flat")
+    image = grab(host)
+    block = strip.block_rect(L.CLICK_SYNC)
+    assert close(at(image, strip, block, 4, 20), "#d4548a")
+    assert close(at(image, strip, block, block.width() - 5, 5), "#d4548a")
+
+
+def test_a_real_portrait_fills_the_circle_inside_its_border(mount):
+    from PySide6.QtGui import QPixmap
+    pm = QPixmap(96, 96)
+    pm.fill(QColor("#00ff00"))
+    host, strip = mount(FLOSSBUD.with_(portrait=pm), "flat")
+    image = grab(host)
+    portrait = strip.block_rect(L.PORTRAIT)
+    assert close(at(image, strip, portrait, 18, 18), "#00ff00")     # the render
+    assert close(at(image, strip, portrait, 18, 1), "#4a8fe7")      # border kept
+    assert at(image, strip, portrait, 1, 1) == MAGENTA              # clipped round

@@ -63,6 +63,14 @@ class Keymaps:
         self.sets[game][index]["hidden"] = hidden
         self.notify()
 
+    def set_hidden(self, game, set_id, hidden):
+        for entry in self.sets[game]:
+            if entry["id"] == set_id:
+                entry["hidden"] = bool(hidden)
+                self.notify()
+                return True
+        return False
+
 
 class Settings:
     def __init__(self, **values):
@@ -90,14 +98,16 @@ def settle():
 def rig(qapp):
     made = []
 
-    def _rig(session=None, keymaps=None, settings=None):
+    def _rig(session=None, keymaps=None, settings=None, today=None, widths=None):
         session = session or FakeToonSession.demo(window_ids=WIDS)
-        rects = {wid: (100 + 900 * i, 50, 800, 600) for i, wid in enumerate(WIDS)}
+        rects = {wid: (100 + 900 * i, 50, (widths or {}).get(wid, 800), 600)
+                 for i, wid in enumerate(WIDS)}
         follower = StripFollower(Strategy(), Backend(), geometry_fn=rects.get,
                                  scale=1.0)
         controller = StripController(
             session, follower, keymap_manager=keymaps, settings_manager=settings,
-            keyset_ids=None if keymaps is not None else DEMO_KEYSET_IDS)
+            keyset_ids=None if keymaps is not None else DEMO_KEYSET_IDS,
+            today_fn=(lambda: today) if today is not None else None)
         controller.start()
         follower.tracker.stop()          # tests sample by hand
         follower.tracker.sample_now()
@@ -327,15 +337,37 @@ def test_add_appends_a_set_and_goes_away_at_the_maximum(rig):
     assert model(controller, "103").keysets == (1, 2)
 
 
-def test_add_with_hidden_sets_asks_for_the_menu_instead(rig):
-    keymaps = Keymaps(ttr=3)
+def test_add_with_hidden_sets_opens_the_restore_menu(rig):
+    keymaps = Keymaps(ttr=4)
     session, controller, _rects = rig(_session_with_ids(keymaps), keymaps)
     keymaps.hide("ttr", 2)
+    keymaps.hide("ttr", 3)
     settle()
-    asked = []
-    controller.add_menu_requested.connect(asked.append)
     click(controller, "101", L.ADD)
-    assert asked == ["101"] and len(keymaps.sets["ttr"]) == 3
+    assert len(keymaps.sets["ttr"]) == 4                 # nothing added yet
+    assert controller.popovers.open_tag("101") == "add"
+    menu = controller.popovers.open_content("101")
+    assert [(i.label, i.disabled) for i in menu.items()] == [
+        ("Show keyset 3", False), ("Show keyset 4", False), ("New keyset", False)]
+    menu.chosen.emit("show:4")
+    settle()
+    assert controller.popovers.open_tag("101") == ""
+    assert model(controller, "101").keysets == (1, 2, 4)
+    click(controller, "101", L.ADD)
+    controller.popovers.open_content("101").chosen.emit("new")
+    settle()
+    assert len(keymaps.sets["ttr"]) == 5
+
+
+def test_new_keyset_is_disabled_at_the_maximum(rig):
+    keymaps = Keymaps(ttr=8)
+    session, controller, _rects = rig(_session_with_ids(keymaps), keymaps)
+    keymaps.hide("ttr", 7)
+    settle()
+    click(controller, "101", L.ADD)
+    items = controller.popovers.open_content("101").items()
+    assert [(i.label, i.disabled) for i in items] == [
+        ("Show keyset 8", False), ("New keyset", True)]
 
 
 def test_keyset_view_maps_ids_and_numbers():
@@ -371,16 +403,360 @@ def test_look_comes_from_settings_and_follows_changes(rig):
     assert strip.style_name() == "neon"
 
 
-def test_right_click_and_home_are_reported_with_the_window(rig):
-    _session, controller, _rects = rig()
-    menus, homes = [], []
-    controller.context_requested.connect(lambda w, k, n: menus.append((w, k, n)))
-    controller.home_clicked.connect(homes.append)
-    strip = controller.follower.surface("102").strip
+def right_click(controller, wid, kind, number=0):
+    strip = controller.follower.surface(wid).strip
     QTest.mouseClick(strip, Qt.RightButton, Qt.NoModifier,
-                     strip.block_rect(L.KEYSET, 2).center().toPoint())
+                     strip.block_rect(kind, number).center().toPoint())
+    settle()
+
+
+def test_keyset_right_click_menu(rig):
+    keymaps = Keymaps(ttr=2)
+    session, controller, _rects = rig(_session_with_ids(keymaps), keymaps)
+    right_click(controller, "102", L.KEYSET, 2)
+    assert controller.popovers.open_tag("102") == "set:2"
+    menu = controller.popovers.open_content("102")
+    assert [(i.label, i.disabled) for i in menu.items()] == [
+        ("Edit keyset", False), ("Hide keyset", False)]
+    # A second right-click on the same button closes it.
+    right_click(controller, "102", L.KEYSET, 2)
+    assert controller.popovers.open_tag("102") == ""
+    right_click(controller, "102", L.KEYSET, 2)
+    menu = controller.popovers.open_content("102")
+    QTest.mouseClick(menu, Qt.LeftButton, Qt.NoModifier,
+                     menu.pill_rect(1).center().toPoint())
+    settle()
+    assert keymaps.sets["ttr"][1].get("hidden") is True
+    assert model(controller, "102").keysets == (1,)
+    # One visible set left: it cannot be hidden.
+    right_click(controller, "102", L.KEYSET, 1)
+    menu = controller.popovers.open_content("102")
+    assert [i.disabled for i in menu.items()] == [False, True]
+    assert [i.label for i in menu.items()] == ["Edit keyset", "Hide keyset"]
+
+
+def test_one_popover_per_strip_and_strips_are_independent(rig):
+    _session, controller, _rects = rig()
+    right_click(controller, "101", L.KEYSET, 1)
+    right_click(controller, "101", L.KEYSET, 2)
+    assert controller.popovers.open_tag("101") == "set:2"
+    right_click(controller, "102", L.PORTRAIT)
+    assert controller.popovers.open_tag("101") == "set:2"
+    assert controller.popovers.open_tag("102") == "toon"
+
+
+def test_toon_menu(rig):
+    session, controller, _rects = rig()
+    looks, windows = [], []
+    controller.appearance_requested.connect(lambda g, n: looks.append((g, n)))
+    controller.open_window_requested.connect(windows.append)
+
+    def choose(key):
+        right_click(controller, "102", L.NAME)
+        assert controller.popovers.open_tag("102") == "toon"
+        menu = controller.popovers.open_content("102")
+        menu.chosen.emit(key)
+        settle()
+        return menu
+
+    menu = choose("lock")
+    assert [i.label for i in menu.items()] == [
+        "Lock counters", "Change color\u2026", "Stop all toons", "Open MultiTool"]
+    assert not menu.items()[0].checked
+    assert session.toon("102").counters_locked is True
+    assert choose("color").items()[0].checked          # the lock shows its check now
+    assert looks == [("ttr", "Hector")]
+    choose("stop")
+    assert session.is_running() is False
+    assert choose("open").items()[2].label == "Start all toons"
+    assert windows == ["main"]
+    choose("stop")
+    assert session.is_running() is True
+
+
+# -- counters -----------------------------------------------------------------
+
+def test_locked_counters_show_without_hover_and_follow_the_lock(rig):
+    session, controller, _rects = rig()
+    pops = controller.popovers
+    assert pops.counters_shown("101")            # Flossbud's are locked in the demo
+    assert not pops.counters_shown("102")
+    session.set_counters_locked("101", False)
+    settle()
+    assert not pops.counters_shown("101")
+
+
+def test_counters_show_on_hover_and_linger_to_reach_the_lock(rig, qapp):
+    session, controller, _rects = rig()
+    pops = controller.popovers
+    pops.set_identity_hover("102", True)
+    settle()
+    assert pops.counters_shown("102")
+    view = pops._entries["102"].counters_view
+    assert (view.model().beans, view.model().bank) == (87, 9200)
+    # The pointer leaves the name and reaches the counters within the linger.
+    pops.set_identity_hover("102", False)
+    pops._counters_hover("102", True)
+    QTest.qWait(250)
+    assert pops.counters_shown("102")
+    # The lock is pressed: the session hears it and the counters stay.
+    QTest.mouseClick(view, Qt.LeftButton, Qt.NoModifier,
+                     view.lock_rect().center().toPoint())
+    settle()
+    assert session.toon("102").counters_locked is True
+    pops._counters_hover("102", False)
+    QTest.qWait(250)
+    assert pops.counters_shown("102")
+    # Unlocked and not hovered: gone after the linger.
+    session.set_counters_locked("102", False)
+    QTest.qWait(250)
+    assert not pops.counters_shown("102")
+
+
+def test_counters_sit_centred_under_portrait_and_name(rig):
+    _session, controller, _rects = rig()
+    pops = controller.popovers
+    surface = controller.follower.surface("101")
+    identity = pops.anchor_rect("101", "identity")
+    counters = pops._entries["101"].counters_surface.geometry()
+    assert abs(counters.center().x() - identity.center().x()) <= 1
+    assert counters.top() == identity.top() + identity.height()   # no gap to cross
+    assert surface.geometry().contains(identity)
+
+
+def test_token_cell_only_for_ttr_during_cartoonival(rig):
+    import datetime
+    _session, controller, _rects = rig(today=datetime.date(2026, 10, 1))
+    assert controller.counters_for("101").tokens == 310
+    assert controller.counters_for("103").tokens is None       # Corporate Clash
+    assert controller.counters_for("104").tokens == 0           # zero is a value
+
+
+def test_no_token_cell_outside_cartoonival(rig):
+    import datetime
+    _session, controller, _rects = rig(today=datetime.date(2026, 11, 16))
+    assert controller.counters_for("101").tokens is None
+    assert controller.counters_for("101").beans == 456
+
+
+def test_collapsed_strip_puts_the_name_in_the_counters(rig):
+    _session, controller, _rects = rig(widths={"102": 320})
+    assert controller.follower.surface("102").strip.strip_layout().collapse == L.NO_NAME
+    assert controller.counters_for("102").name == "Hector"
+    assert controller.counters_for("101").name == ""
+
+
+def test_moving_window_takes_counters_and_menus_with_it(rig):
+    _session, controller, rects = rig()
+    pops = controller.popovers
+    right_click(controller, "101", L.KEYSET, 2)
+    assert pops.open_tag("101") == "set:2" and pops.counters_shown("101")
+    rects["101"] = (160, 50, 800, 600)
+    controller.follower.tracker.sample_now()          # moving: strip concealed
+    settle()
+    assert pops.open_tag("101") == "" and not pops.counters_shown("101")
+    controller.follower.tracker.sample_now()          # at rest again
+    settle()
+    assert pops.counters_shown("101")                 # locked counters return
+    assert pops.open_tag("101") == ""                 # a menu does not
+    identity = pops.anchor_rect("101", "identity")
+    assert abs(pops._entries["101"].counters_surface.geometry().center().x()
+               - identity.center().x()) <= 1
+
+
+def test_closing_a_window_drops_what_hung_off_its_strip(rig):
+    session, controller, _rects = rig()
+    right_click(controller, "101", L.KEYSET, 2)
+    session.remove_toon("101")
+    settle()
+    assert "101" not in controller.popovers._entries
+    assert not controller.popovers.watch.is_watching()
+
+
+# -- keyset editor (on the real KeymapManager) -----------------------------------
+
+@pytest.fixture
+def real_keymaps(tmp_path, monkeypatch):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path / "cfg"))
+    from utils.keymap_manager import KeymapManager
+    km = KeymapManager()
+    for game in ("ttr", "cc"):
+        while len(km.get_set_ids(game)) < 3:
+            km.add_set(game)
+    return km
+
+
+def _real_session(km):
+    return FakeToonSession.demo(
+        window_ids=WIDS, keyset_ids={g: km.get_set_ids(g) for g in ("ttr", "cc")})
+
+
+def open_editor(controller, wid, number):
+    right_click(controller, wid, L.KEYSET, number)
+    controller.popovers.open_content(wid).chosen.emit("edit")
+    settle()
+    return controller.popovers.open_content(wid)
+
+
+def test_edit_keyset_opens_the_card_under_its_button(rig, real_keymaps):
+    from utils.strips.popovers.editor import KeysetEditor
+    session, controller, _rects = rig(_real_session(real_keymaps), real_keymaps)
+    card = open_editor(controller, "101", 2)
+    assert isinstance(card, KeysetEditor)
+    assert controller.popovers.open_tag("101") == "edit:2"
+    assert card.model().number == 2
+    # Rows come from the game's own actions: TTR has Action and no Sprint.
+    actions = [a for a, _label in card.model().actions]
+    assert "action" in actions and "sprint" not in actions
+    assert card.model().key_of("forward") == real_keymaps.get_set("ttr", 1)["forward"]
+    # Dropped under keyset 2's button.
+    anchor = controller.popovers.anchor_rect("101", L.KEYSET, 2)
+    geo = controller.popovers.open_surface("101").geometry()
+    assert geo.top() >= anchor.top() + anchor.height()
+    assert abs(geo.center().x() - anchor.center().x()) <= 1
+
+
+def test_clash_editor_has_sprint(rig, real_keymaps):
+    session, controller, _rects = rig(_real_session(real_keymaps), real_keymaps)
+    card = open_editor(controller, "103", 1)
+    actions = [a for a, _label in card.model().actions]
+    assert "sprint" in actions and "action" not in actions
+
+
+def test_pressing_a_key_rebinds_through_the_keymap_manager(rig, real_keymaps, qapp):
+    from PySide6.QtWidgets import QWidget
+    from utils import chord_capture_state
+    session, controller, _rects = rig(_real_session(real_keymaps), real_keymaps)
+    card = open_editor(controller, "101", 2)
+    QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier,
+                     card.zone_rect("cap", "gags").center().toPoint())
+    assert card.listening() == "gags"
+    assert QWidget.keyboardGrabber() is card
+    assert chord_capture_state.is_active()
+    QTest.keyClick(card, Qt.Key_K)
+    settle()
+    assert real_keymaps.get_set("ttr", 1)["gags"] == "k"
+    assert real_keymaps.get_set("ttr", 0)["gags"] != "k"       # only that set
+    # The keyboard went back the moment the key arrived.
+    assert card.listening() == "" and QWidget.keyboardGrabber() is None
+    assert not chord_capture_state.is_active()
+    # The open card shows the new binding.
+    assert controller.popovers.open_content("101").model().key_of("gags") == "k"
+
+
+def test_escape_cancels_the_capture_and_keeps_the_binding(rig, real_keymaps):
+    from PySide6.QtWidgets import QWidget
+    session, controller, _rects = rig(_real_session(real_keymaps), real_keymaps)
+    before = real_keymaps.get_set("ttr", 1)["gags"]
+    card = open_editor(controller, "101", 2)
+    QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier,
+                     card.zone_rect("cap", "gags").center().toPoint())
+    QTest.keyClick(card, Qt.Key_Escape)
+    settle()
+    assert real_keymaps.get_set("ttr", 1)["gags"] == before
+    assert QWidget.keyboardGrabber() is None
+    assert controller.popovers.open_tag("101") == "edit:2"     # the card stays
+
+
+def test_closing_the_card_mid_capture_gives_the_keyboard_back(rig, real_keymaps):
+    from PySide6.QtWidgets import QWidget
+    from utils import chord_capture_state
+    session, controller, rects = rig(_real_session(real_keymaps), real_keymaps)
+    for how in ("close", "move", "window-gone"):
+        card = open_editor(controller, "102", 1)
+        QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier,
+                         card.zone_rect("cap", "jump").center().toPoint())
+        assert QWidget.keyboardGrabber() is card
+        if how == "close":
+            controller.popovers.close_all()            # a click elsewhere
+        elif how == "move":
+            x, y, w, h = rects["102"]
+            rects["102"] = (x + 40, y, w, h)
+            controller.follower.tracker.sample_now()
+        else:
+            session.remove_toon("102")
+        settle()
+        assert QWidget.keyboardGrabber() is None, how
+        assert not chord_capture_state.is_active(), how
+        if how == "move":
+            controller.follower.tracker.sample_now()
+            settle()
+
+
+def test_escape_belongs_to_the_capture_while_it_runs(rig, real_keymaps):
+    session, controller, _rects = rig(_real_session(real_keymaps), real_keymaps)
+    watch = controller.popovers.watch
+    card = open_editor(controller, "101", 2)
+    assert not watch._paused
+    QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier,
+                     card.zone_rect("cap", "gags").center().toPoint())
+    assert watch._paused
+    QTest.keyClick(card, Qt.Key_Escape)
+    assert not watch._paused
+
+
+def test_keys_layout_binds_by_clicking_and_is_remembered(rig, real_keymaps):
+    settings = Settings()
+    session, controller, _rects = rig(_real_session(real_keymaps), real_keymaps, settings)
+    card = open_editor(controller, "101", 2)
+    assert card.kind() == "list"
+    height = controller.popovers.open_surface("101").height()
+    QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier,
+                     card.zone_rect("kind", "keys").center().toPoint())
+    settle()
+    assert settings.get(settings_keys.KEYSET_EDITOR_LAYOUT) == "keys"
+    assert controller.popovers.open_surface("101").height() > height
+    QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier,
+                     card.zone_rect("chip", "tasks").center().toPoint())
+    QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier,
+                     card.zone_rect("key", "p").center().toPoint())
+    settle()
+    assert real_keymaps.get_set("ttr", 1)["tasks"] == "p"
+    # The next editor opens in the layout last used.
+    controller.popovers.close_all()
+    assert open_editor(controller, "102", 1).kind() == "keys"
+
+
+def test_conflicts_are_marked_and_explained(rig, real_keymaps):
+    session, controller, _rects = rig(_real_session(real_keymaps), real_keymaps)
+    card = open_editor(controller, "101", 2)
+    assert card.model().conflicts == frozenset() 
+    forward = real_keymaps.get_set("ttr", 1)["forward"]
+    real_keymaps.update_set_key("ttr", 1, "jump", forward)
+    settle()
+    model = controller.popovers.open_content("101").model()
+    assert model.conflicts == frozenset({"forward", "jump"})
+    assert "Forward and Jump" in model.note
+    # A key that means something else in another set is explained, not marked.
+    real_keymaps.update_set_key("ttr", 1, "jump", "space")
+    real_keymaps.update_set_key("ttr", 1, "gags", "x")
+    real_keymaps.update_set_key("ttr", 0, "tasks", "x")
+    settle()
+    model = controller.popovers.open_content("101").model()
+    assert model.conflicts == frozenset()
+    assert model.note == "X is Tasks in keyset 1"
+
+
+def test_hiding_the_edited_set_closes_its_card(rig, real_keymaps):
+    session, controller, _rects = rig(_real_session(real_keymaps), real_keymaps)
+    open_editor(controller, "101", 3)
+    real_keymaps.set_hidden("ttr", real_keymaps.id_at("ttr", 2), True)
+    settle()
+    assert controller.popovers.open_tag("101") == ""
+
+
+def test_edit_is_disabled_without_a_keymap_manager(rig):
+    _session, controller, _rects = rig()
+    right_click(controller, "101", L.KEYSET, 1)
+    items = controller.popovers.open_content("101").items()
+    assert [i.disabled for i in items] == [True, True]
+
+
+def test_home_click_is_reported(rig):
+    _session, controller, _rects = rig()
+    homes = []
+    controller.home_clicked.connect(homes.append)
     click(controller, "101", L.HOME)
-    assert menus == [("102", L.KEYSET, 2)]
     assert homes == ["101"]
     controller.set_home_open(True)
     assert model(controller, "101").home_open

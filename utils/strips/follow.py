@@ -59,6 +59,10 @@ class StripFollower(QObject):
         self._tracker.hide.connect(self._on_hide)
         self._gate: QTimer | None = None
         self._running = False
+        # Other surfaces of ours over the same windows (popovers): they never
+        # occlude a strip, and they are swept by the same timer.
+        self._extra_own = []       # callables returning window ids
+        self._extra_sweeps = []    # callables taking (strategy, own ids)
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -130,7 +134,18 @@ class StripFollower(QObject):
             surface.set_style(self._style)
 
     def own_window_ids(self) -> list[int]:
-        return [int(s.winId()) for s in self._surfaces.values() if s.isVisible()]
+        ids = [int(s.winId()) for s in self._surfaces.values() if s.isVisible()]
+        for fn in self._extra_own:
+            try:
+                ids.extend(int(i) for i in fn())
+            except Exception:
+                pass
+        return ids
+
+    def add_companion(self, own_ids_fn, sweep_fn) -> None:
+        """Register surfaces that hang off the strips (see _extra_own)."""
+        self._extra_own.append(own_ids_fn)
+        self._extra_sweeps.append(sweep_fn)
 
     # -- tracker ------------------------------------------------------------
 
@@ -160,3 +175,8 @@ class StripFollower(QObject):
         for wid, surface in self._surfaces.items():
             if surface.isVisible() and self._tracker.placed_rect(wid) is not None:
                 self._gate_one(wid, surface, own)
+        for fn in self._extra_sweeps:
+            try:
+                fn(self._strategy, own)
+            except Exception:
+                pass

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QRegion
 from PySide6.QtWidgets import QWidget
 
@@ -44,6 +44,11 @@ def strip_origin(client: QRect, row: QSize, row_offset, scale: float) -> QPoint:
 
 
 class StripSurface(QWidget):
+    # For whatever hangs off a strip (counters, menus): it is on show or not,
+    # and it has moved or changed size.
+    presentation_changed = Signal(bool)
+    geometry_applied = Signal()
+
     # Read by the macOS backend when it picks a window level: anything that
     # is not the cluster's type gets the floating panel level.
     WM_WINDOW_TYPE = "strip"
@@ -153,7 +158,18 @@ class StripSurface(QWidget):
         # scaled strip by a pixel.
         origin = strip_origin(client, self.strip.row_size(),
                               self.strip.row_offset(), k)
-        self.setGeometry(QRect(origin, size))
+        target = QRect(origin, size)
+        if target != self.geometry():
+            self.setGeometry(target)
+        self.geometry_applied.emit()
+
+    @property
+    def strategy(self) -> AttachStrategy:
+        return self._strategy
+
+    @property
+    def backend(self) -> OverlayBackend:
+        return self._backend
 
     # -- mapping and the tie to the game window -----------------------------
 
@@ -197,7 +213,9 @@ class StripSurface(QWidget):
 
     def hideEvent(self, event) -> None:
         super().hideEvent(event)
-        self._shown = False
+        if self._shown:
+            self._shown = False
+            self.presentation_changed.emit(False)
         if event.spontaneous():
             # Unmapped by the window manager (minimized along with its game
             # window). Qt did not touch the tie, and no paint is guaranteed
@@ -272,7 +290,9 @@ class StripSurface(QWidget):
     def _present(self) -> None:
         shown = (self._attached and not self._concealed and not self._covered
                  and self.isVisible())
-        self._shown = shown
+        changed, self._shown = shown != self._shown, shown
+        if changed:
+            self.presentation_changed.emit(shown)
         if not self.isVisible():
             return
         try:
