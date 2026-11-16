@@ -660,7 +660,7 @@ class SettingsRowsMixin:
         if not results:
             results.append("No running CC processes detected.")
         QMessageBox.information(
-            self, "External CC log discovery", "\n".join(results),
+            self._dialog_parent(), "External CC log discovery", "\n".join(results),
         )
 
     def _build_features_page(self, page):
@@ -961,7 +961,7 @@ class SettingsRowsMixin:
                     break
             if holder is not None:
                 answer = QMessageBox.question(
-                    self, "Hotkey in use",
+                    self._dialog_parent(), "Hotkey in use",
                     f"'{display_chord(chord_text)}' is already bound to "
                     f"{action_by_id(holder).label}. Move it here?")
                 if answer != QMessageBox.Yes:
