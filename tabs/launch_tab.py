@@ -402,6 +402,9 @@ class LaunchTab(QWidget):
     # editor (Grandstand). The window refreshes the Multitoon slots playing
     # that toon; this tab has already repainted its cards.
     look_saved = Signal(str, str)
+    # The roster of some game was re-rendered: an account was added, removed
+    # or renamed, or an account's launch state or shown toon changed.
+    accounts_changed = Signal()
 
     LOADING_WINDOW_TIMEOUT_MS = 30000
 
@@ -1260,6 +1263,7 @@ class LaunchTab(QWidget):
                     raw_error=slot.raw_error, is_primary=False))
             self.grandstand.set_accounts(game, entries)
             self.grandstand.set_main_toon_names(game, {})
+            self.accounts_changed.emit()
             return
         for acct in self._ordered_accounts(game):
             entries.append(self._grandstand_entry(game, acct))
@@ -1270,6 +1274,56 @@ class LaunchTab(QWidget):
             if rec is not None:
                 names[acct.id] = rec.toon_name
         self.grandstand.set_main_toon_names(game, names)
+        self.accounts_changed.emit()
+
+    def launch_overview(self) -> list[dict]:
+        """Every saved account in the launcher's order (Toontown Rewritten,
+        then Corporate Clash) with its launch state, for a surface outside
+        the tab that lists and launches accounts.
+
+        Each item: ``account_id``, ``game``, ``label`` (what the card shows),
+        ``state`` (a ``LoginState`` value, after the same rehydration the
+        cards use) and ``toon`` (the toon the account shows, or "")."""
+        out = []
+        for game in ("ttr", "cc"):
+            for acct in self._ordered_accounts(game):
+                slot = self._slots[game].get(acct.id)
+                state = self._effective_state(game, slot)[0] if slot is not None \
+                    else LoginState.IDLE
+                rec = self._recent_toons.get(acct.id)
+                out.append({
+                    "account_id": acct.id, "game": game,
+                    "label": acct.label or acct.username or "",
+                    "state": state,
+                    "toon": rec.toon_name if rec is not None else "",
+                })
+        return out
+
+    def open_appearance_for_toon(self, game: str, toon_name: str,
+                                 account_id: str | None = None) -> bool:
+        """Open the appearance editor on one toon, by name: from a float
+        strip's "Change color", or a toon slot's pencil. Without an account
+        id the account is found from its toon history, preferring one that
+        shows this toon on its card. False when no account has that toon."""
+        if not self._grandstand_mounted() or not toon_name:
+            return False
+        if account_id is None:
+            shows, has = None, None
+            for acct in self._ordered_accounts(game):
+                records = self._recent_toons.list(acct.id)
+                if not any(rec.toon_name == toon_name for rec in records):
+                    continue
+                has = has or acct.id
+                shown = self._recent_toons.get(acct.id)
+                if shown is not None and shown.toon_name == toon_name:
+                    shows = shows or acct.id
+            account_id = shows or has
+        if account_id is None or self._global_index_of(account_id) is None:
+            return False
+        if game != self._party.active_game():
+            self.grandstand._on_game_clicked(game)
+        self._open_appearance_sheet(game, account_id, toon_name=toon_name)
+        return True
 
     def _on_grandstand_edit(self, game: str, account_id: str, surface: str) -> None:
         """The gear opens the account sheet; the pencil opens the appearance
@@ -1284,7 +1338,8 @@ class LaunchTab(QWidget):
         self._open_appearance_sheet(game, account_id)
 
     def _open_appearance_sheet(self, game: str, account_id: str,
-                               identity_changed: bool = False) -> None:
+                               identity_changed: bool = False,
+                               toon_name: str | None = None) -> None:
         """Build the appearance draft from the stores and enter focus mode on
         the toon this account shows. A look is stored per toon
         (`game::toon_name`), so an account with no discovered toon opens the
@@ -1301,8 +1356,12 @@ class LaunchTab(QWidget):
             self._render_grandstand(game)
         records = self._recent_toons.list(account_id)
         primary = self._recent_toons.primary_name(account_id)
-        # The same record the sheet, the browser and the card resolve to.
+        # The same record the sheet, the browser and the card resolve to,
+        # unless a particular toon of the account was asked for.
         rec = shown_record(unique_toons(records), primary)
+        if toon_name:
+            rec = next((r for r in unique_toons(records)
+                        if r.toon_name == toon_name), rec)
         entry = {}
         if self._customizations is not None and rec is not None:
             entry = self._customizations.get(game, rec.toon_name) or {}
