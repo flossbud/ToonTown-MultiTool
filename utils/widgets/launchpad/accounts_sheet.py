@@ -313,8 +313,10 @@ class AccountsSheet(QWidget):
                 if account.primary is not None:
                     look = self._backend.look_entry(account.game, account.primary.name)
                 row = AccountRow(account, look, self._dark, card)
+                row.set_reorder_enabled(len(accounts) > 1)
                 row.opened.connect(self._on_row_opened)
                 row.fix_requested.connect(self.open_fix_login)
+                row.reorder_requested.connect(self._on_account_reordered, Qt.QueuedConnection)
                 self.rows[account.id] = row
                 card.add_row(row)
             if self._add_game == game:
@@ -336,6 +338,22 @@ class AccountsSheet(QWidget):
         if keep_add is not None and keep_add is not self._add_form:
             keep_add.deleteLater()
         stack.addStretch(1)
+
+    def _on_account_reordered(self, source_id: str, target_id: str, before: bool) -> None:
+        # Re-read after the drag: another account may have appeared or gone.
+        if self._account_id is not None or source_id == target_id:
+            return
+        source, target = self._backend.account(source_id), self._backend.account(target_id)
+        if source is None or target is None or source.game != target.game:
+            return
+        current = [a.id for a in self._backend.accounts(source.game) if a.id]
+        if source_id not in current or target_id not in current:
+            return
+        ordered = list(current)
+        ordered.remove(source_id)
+        ordered.insert(ordered.index(target_id) + (0 if before else 1), source_id)
+        if ordered != current:
+            self._backend.reorder_accounts(source.game, ordered)
 
     def _new_add_form(self, game: str) -> LoginForm:
         form = LoginForm(m.FORM_ADD_ACCOUNT, game,

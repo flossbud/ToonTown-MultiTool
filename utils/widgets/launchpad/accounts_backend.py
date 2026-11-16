@@ -75,6 +75,10 @@ class AccountsBackend(QObject):
     def set_primary(self, account_id: str, toon_name: str) -> None:
         raise NotImplementedError
 
+    def reorder_accounts(self, game: str, ordered_ids: list[str]) -> bool:
+        """Reorder exactly the current accounts of one game by stable id."""
+        raise NotImplementedError
+
     def open_appearance(self, account_id: str, toon_name: str) -> None:
         """Open the Appearance editor on one toon of an account."""
         raise NotImplementedError
@@ -148,6 +152,21 @@ class FakeAccountsBackend(AccountsBackend):
 
     def accounts(self, game: str) -> list:
         return [a for a in self._accounts if a.game == game]
+
+    def reorder_accounts(self, game: str, ordered_ids: list[str]) -> bool:
+        self.calls.append(("reorder_accounts", game, list(ordered_ids)))
+        current = [a for a in self.accounts(game) if a.id]
+        if (game not in GAMES or len(ordered_ids) != len(set(ordered_ids))
+                or set(ordered_ids) != {a.id for a in current}):
+            return False
+        if ordered_ids == [a.id for a in current]:
+            return True
+        by_id = {a.id: a for a in current}
+        reordered = iter(by_id[aid] for aid in ordered_ids)
+        self._accounts = [next(reordered) if a.game == game and a.id else a
+                          for a in self._accounts]
+        self.changed.emit()
+        return True
 
     def keyring_available(self) -> bool:
         return self._keyring

@@ -200,6 +200,17 @@ class LauncherAccountsBackend(AccountsBackend):
         self._tab.set_primary_toon(account_id, toon_name)
         self._announce()
 
+    def reorder_accounts(self, game, ordered_ids):
+        if game not in GAMES or not self._creds.reorder_game(game, ordered_ids):
+            return False
+        # Same stable-ID write and reconciliation as the launcher's reorder
+        # dialog, without opening that dialog over the Accounts sheet.
+        self._tab._reconcile_slots()
+        self._tab._render_current_view(game)
+        self._tab.refresh_theme()
+        self._announce()
+        return True
+
     def open_appearance(self, account_id, toon_name):
         game = self._tab.game_of_account(account_id)
         if game is None:
