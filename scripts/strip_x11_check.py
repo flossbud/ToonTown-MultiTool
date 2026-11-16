@@ -158,6 +158,14 @@ class XSide:
     def minimize(self, wid):
         self._message(wid, "WM_CHANGE_STATE", [3])       # IconicState
 
+    def key(self, keysym):
+        code = self.d.keysym_to_keycode(keysym)
+        self.xtest.fake_input(self.d, self.X.KeyPress, code)
+        self.d.sync()
+        time.sleep(0.05)
+        self.xtest.fake_input(self.d, self.X.KeyRelease, code)
+        self.d.sync()
+
     def click(self, x, y, button=1):
         self.xtest.fake_input(self.d, self.X.MotionNotify, x=int(x), y=int(y))
         self.d.sync()
@@ -449,6 +457,8 @@ def run(args, env, procs) -> int:
            hex(x.active()))
     chk.shot("restored")
 
+    popover_phase(args, x, chk, demo, standin, game, other, strip, gx, gy)
+
     # 7. the window closes: the strip stops showing
     standin.stop()
     gone = wait_for(lambda: not x.viewable(strip) or x.opacity(strip) < 0.01, 4)
@@ -467,6 +477,169 @@ def run(args, env, procs) -> int:
         return 1
     print("ALL PASSED")
     return 0
+
+
+def popover_phase(args, x, chk, demo, standin, game, other, strip, gx, gy) -> None:
+    """Counters and menus: their own windows, stacked with the strip, closed
+    by Escape or a click elsewhere, and never holding the keyboard."""
+    from Xlib import XK
+    print("-- popovers --", flush=True)
+    wid = str(game)
+    quirk = ("openbox raises instead of restacking next to a sibling"
+             if wm_name(x) == "Openbox" else "")
+
+    def shown(w):
+        return x.viewable(w) and x.opacity(w) > 0.99
+
+    def blocks_now():
+        last = {}
+        for ln in demo.find(f"STRIP block {wid} "):
+            parts = ln.split()
+            last[(parts[3], int(parts[4]))] = [float(v) for v in parts[5:10]]
+        return last
+
+    def stacked_over_strip(label, w):
+        order = wait_for(lambda: (lambda o: w in o and o.index(w) > o.index(strip)
+                                  > o.index(game) and o)(x.stacking()), 3)
+        chk.ok(f"{label}: stacked over the strip and the game", bool(order),
+               str([hex(v) for v in x.stacking()]))
+        chk.ok(f"{label}: tied to the strip's window",
+               x.prop(w, "WM_TRANSIENT_FOR") == [strip], str(x.prop(w, "WM_TRANSIENT_FOR")))
+        state = x.prop(w, "_NET_WM_STATE") or []
+        chk.ok(f"{label}: out of the taskbar, not keep-above",
+               x.atom("_NET_WM_STATE_SKIP_TASKBAR") in state
+               and x.atom("_NET_WM_STATE_ABOVE") not in state)
+
+    def open_menu(kind, n, tag):
+        mark = len(demo.lines)
+        demo.send(f"menu {wid} {kind} {n}")
+        got = wait_for(lambda: demo.find(f"STRIP popover {wid} {tag} ", mark), 4)
+        return (int(got[-1].split()[4]) if got else None), mark
+
+    # Counters: the demo's first toon has them locked on.
+    got = wait_for(lambda: [ln for ln in demo.find(f"STRIP counters {wid} ")
+                            if not ln.endswith("hidden")], 5)
+    if not chk.ok("locked counters are up", bool(got)):
+        return
+    counters = int(got[-1].split()[3])
+    chk.ok("counters are shown", bool(wait_for(lambda: shown(counters), 4)),
+           f"viewable {x.viewable(counters)} opacity {x.opacity(counters):.2f}")
+    stacked_over_strip("counters", counters)
+    b = blocks_now()
+    s, c = x.rect(strip), x.rect(counters)
+    left = b[("portrait", 0)][0]
+    right = b[("name", 0)][0] + b[("name", 0)][2]
+    chk.ok("counters are centred under portrait and name",
+           abs((c[0] + c[2] / 2.0) - (s[0] + (left + right) / 2.0)) <= 1.5,
+           f"counters {c} strip {s} identity {left}..{right}")
+    row_bottom = s[1] + b[("portrait", 0)][1] + b[("portrait", 0)][3]
+    chk.ok("counters start at the row's bottom edge (no gap to cross)",
+           abs(c[1] - row_bottom) <= 1, f"counters y {c[1]} row bottom {row_bottom}")
+
+    # A menu, opened without the pointer.
+    menu, _ = open_menu("keyset", 2, "set:2")
+    if not chk.ok("keyset menu opens", menu is not None):
+        return
+    chk.ok("menu is shown", bool(wait_for(lambda: shown(menu), 4)))
+    stacked_over_strip("menu", menu)
+    chk.ok("menu did not take focus", x.active() == game, hex(x.active()))
+    x.move_resize(other, gx + 150, gy - 60, 520, 300)
+    time.sleep(0.4)
+    x.activate(other)
+    over = wait_for(lambda: (lambda o: o.index(other) > max(o.index(menu), o.index(counters),
+                                                             o.index(strip)) and o)(x.stacking()), 3)
+    chk.ok("a window raised over the game covers the menu and counters too", bool(over),
+           str([hex(v) for v in x.stacking()]))
+    chk.shot("popovers-covered")
+    x.activate(game)
+    wait_for(lambda: x.active() == game, 3)
+    x.move_resize(other, gx + 900, gy, 420, 360)
+    time.sleep(0.5)
+    stacked_over_strip("menu after raising the game", menu)
+    chk.shot("menu-open")
+
+    if args.no_pointer:
+        print("SKIP  Escape, click-elsewhere and menu clicks (--no-pointer)")
+        mark = len(demo.lines)
+        demo.send("close")
+        chk.ok("menu closes on request",
+               bool(wait_for(lambda: demo.find("STRIP popover-closed", mark), 3)))
+    else:
+        # Escape closes the menu and does not reach the game.
+        mark, smark = len(demo.lines), len(standin.lines)
+        x.key(XK.XK_Escape)
+        chk.ok("Escape closes the menu",
+               bool(wait_for(lambda: demo.find("STRIP popover-closed", mark), 3)))
+        time.sleep(0.2)
+        chk.ok("that Escape did not reach the game window",
+               not standin.find("STANDIN-KEY game", smark), str(standin.lines[smark:]))
+        chk.ok("focus stayed on the game window", x.active() == game, hex(x.active()))
+        smark = len(standin.lines)
+        x.key(XK.XK_a)
+        chk.ok("with the menu closed the game gets the keyboard again",
+               bool(wait_for(lambda: standin.find("STANDIN-KEY game", smark), 3)))
+        smark = len(standin.lines)
+        x.key(XK.XK_Escape)
+        chk.ok("and Escape is the game's again",
+               bool(wait_for(lambda: standin.find("STANDIN-KEY game", smark), 3)))
+
+        # A real right-click opens it; a click elsewhere closes it and still
+        # reaches the game.
+        b = blocks_now()
+        s = x.rect(strip)
+        kx, ky, kw, kh, dpr = b[("keyset", 2)]
+        mark = len(demo.lines)
+        x.click(s[0] + (kx + kw / 2) * dpr, s[1] + (ky + kh / 2) * dpr, button=3)
+        got = wait_for(lambda: demo.find(f"STRIP popover {wid} set:2 ", mark), 3)
+        chk.ok("right-click on a keyset opens its menu", bool(got))
+        g = x.rect(game)
+        mark, smark = len(demo.lines), len(standin.lines)
+        x.click(g[0] + g[2] / 2, g[1] + g[3] - 80)
+        chk.ok("a click elsewhere closes the menu",
+               bool(wait_for(lambda: demo.find("STRIP popover-closed", mark), 3)))
+        chk.ok("and that click still reached the game window",
+               bool(wait_for(lambda: standin.find("STANDIN-CLICK game", smark), 3)))
+
+        # Hide keyset 2 from the menu.
+        mark = len(demo.lines)
+        x.click(s[0] + (kx + kw / 2) * dpr, s[1] + (ky + kh / 2) * dpr, button=3)
+        got = wait_for(lambda: demo.find(f"STRIP popover {wid} set:2 ", mark), 3)
+        pills = {ln.split()[-1]: [float(v) for v in ln.split()[4:9]]
+                 for ln in demo.find(f"STRIP pill {wid} ", mark)}
+        if chk.ok("menu reopens with its items", bool(got) and "hide" in pills, str(pills)):
+            m = x.rect(int(got[-1].split()[4]))
+            px, py, pw, ph, pdpr = pills["hide"]
+            before = x.rect(strip)[2]
+            x.click(m[0] + (px + pw / 2) * pdpr, m[1] + (py + ph / 2) * pdpr)
+            # One 28 px block and its 6 px gap fewer.
+            shrunk = wait_for(lambda: x.rect(strip)[2] == before - 34 * dpr, 3)
+            chk.ok("Hide keyset removes that button from the strip", bool(shrunk),
+                   f"strip width {x.rect(strip)[2]} was {before}")
+            chk.ok("clicking a menu item left focus on the game", x.active() == game,
+                   hex(x.active()))
+
+    # Moving the window takes everything with it; locked counters come back.
+    menu, mark = open_menu("keyset", 1, "set:1")
+    chk.ok("menu open before the move", menu is not None)
+    for i in range(1, 9):
+        x.move_resize(game, gx + i * 15, gy + i * 6)
+        time.sleep(0.05)
+    chk.ok("moving the window closes the menu",
+           bool(wait_for(lambda: demo.find("STRIP popover-closed", mark), 3)))
+    chk.ok("and hides the counters while it moves",
+           x.opacity(counters) < 0.01 or not x.viewable(counters))
+    back = wait_for(lambda: shown(counters) and shown(strip), 4)
+    time.sleep(0.3)
+    s, c = x.rect(strip), x.rect(counters)
+    b = blocks_now()
+    left = b[("portrait", 0)][0]
+    right = b[("name", 0)][0] + b[("name", 0)][2]
+    chk.ok("locked counters return under the strip at the new place",
+           bool(back) and abs((c[0] + c[2] / 2.0) - (s[0] + (left + right) / 2.0)) <= 1.5,
+           f"counters {c} strip {s}")
+    chk.shot("popovers-after-move")
+    x.move_resize(game, gx, gy)
+    time.sleep(0.6)
 
 
 def four_windows(args, env, procs, x, chk, gx, gy) -> None:

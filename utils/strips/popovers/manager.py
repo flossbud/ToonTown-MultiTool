@@ -46,6 +46,8 @@ class StripPopovers(QObject):
     lock_toggled = Signal(str)                # window id
     menu_chosen = Signal(str, str, str)       # window id, menu tag, item key
     closed = Signal(str, str)                 # window id, tag of what closed
+    opened = Signal(str, str)                 # window id, tag
+    counters_changed = Signal(str, bool)      # window id, showing or not
 
     def __init__(self, follower, watch: PointerWatch | None = None,
                  parent: QObject | None = None) -> None:
@@ -174,7 +176,10 @@ class StripPopovers(QObject):
             return
         if not self._wants_counters(wid, entry):
             if entry.counters_surface is not None:
+                was = not entry.counters_surface._concealed
                 entry.counters_surface.conceal()
+                if was:
+                    self.counters_changed.emit(wid, False)
             return
         surface = self._follower.surface(wid)
         if entry.counters_view is None:
@@ -189,7 +194,10 @@ class StripPopovers(QObject):
                 surface.strategy, surface.backend, view)
         entry.counters_view.set_style(surface.strip.style_name())
         entry.counters_view.set_model(entry.counters_model)
+        was = not entry.counters_surface._concealed
         self._place_counters(wid, entry)
+        if not was:
+            self.counters_changed.emit(wid, True)
 
     def _counters_hover(self, wid: str, on: bool) -> None:
         entry = self._entries.get(wid)
@@ -215,6 +223,14 @@ class StripPopovers(QObject):
     def open_tag(self, wid: str) -> str:
         entry = self._entries.get(str(wid))
         return entry.tag if entry and entry.popover is not None else ""
+
+    def open_surface(self, wid: str) -> PopoverSurface | None:
+        entry = self._entries.get(str(wid))
+        return entry.popover if entry else None
+
+    def counters_surface(self, wid: str) -> PopoverSurface | None:
+        entry = self._entries.get(str(wid))
+        return entry.counters_surface if entry else None
 
     def open_content(self, wid: str) -> QWidget | None:
         entry = self._entries.get(str(wid))
@@ -265,6 +281,7 @@ class StripPopovers(QObject):
             return None
         self._update_counters(wid)
         self._sync_watch()
+        self.opened.emit(wid, tag)
         return entry.popover
 
     def _place_popover(self, wid: str, entry: _Entry) -> bool:
