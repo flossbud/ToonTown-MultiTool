@@ -13,6 +13,9 @@ class StripModel:
     game: str = "ttr"
     species: str | None = None          # silhouette fallback for the portrait
     portrait: QPixmap | None = field(default=None, compare=False)
+    # The saved framing of that portrait: zoom, offset x, offset y (fractions
+    # of the circle), rotation in degrees.
+    portrait_frame: tuple = (1.0, 0.0, 0.0, 0.0)
     enabled: bool = True
     running: bool = True                # broadcast service; stopped dims like disabled
     keep_alive: bool | None = True      # None: feature off app-wide, block omitted

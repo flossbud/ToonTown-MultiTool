@@ -90,7 +90,8 @@ def build_model(toon, *, home: bool, running: bool,
                 keep_alive_available: bool, click_sync_available: bool,
                 keysets: KeysetView, portrait=None,
                 home_open: bool = False, click_sync_state: str = "",
-                click_sync_error: str = "") -> StripModel:
+                click_sync_error: str = "",
+                portrait_frame: tuple = (1.0, 0.0, 0.0, 0.0)) -> StripModel:
     """What one toon's strip shows. Pure: same inputs, same model."""
     hidden = keysets.hidden_numbers(toon.game)
     return StripModel(
@@ -99,6 +100,7 @@ def build_model(toon, *, home: bool, running: bool,
         game=toon.game,
         species=toon.species,
         portrait=portrait,
+        portrait_frame=tuple(portrait_frame),
         enabled=bool(toon.enabled),
         running=bool(running),
         # A feature that is off app-wide has no block at all. The toon keeps
@@ -174,6 +176,10 @@ def build_editor_model(keymap_manager, game: str, number: int) -> EditorModel | 
                 note = (f"{editor_mod.key_name(key)} is {short(other_act)} "
                         f"in keyset {other_set + 1}")
                 break
+    if not note and any(key == "Escape" for _action, key in binds):
+        # Escape cancels a capture here, so this card can move an action
+        # off Esc but never onto it.
+        note = "Esc can only be assigned in the Keysets sheet"
     return EditorModel(
         number=number,
         actions=tuple((a, short(a)) for a in actions),
@@ -391,6 +397,8 @@ class StripController(QObject):
             toon,
             click_sync_state=state,
             click_sync_error=error,
+            portrait_frame=(self._portraits.frame(toon) if self._portraits is not None
+                            else (1.0, 0.0, 0.0, 0.0)),
             home=window_id == self._home_wid,
             running=self._session.is_running(),
             keep_alive_available=self._session.keep_alive_available(),

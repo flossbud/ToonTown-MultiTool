@@ -553,3 +553,34 @@ def test_stopped_service_offers_start(qapp):
     assert [label for key, _c, label, _h in panel.rows() if key][3] == "Start all toons"
     panel.set_running(True)
     assert [label for key, _c, label, _h in panel.rows() if key][3] == "Stop all toons"
+
+
+# -- popovers that had to open above their anchor --------------------------------------
+
+def test_flipped_menu_hangs_its_caret_underneath(qapp):
+    menu = PillMenu(ITEMS, "#E05252", "flat")
+    size = menu.sizeHint()
+    top_before = menu.pill_rect(0).top()
+    menu.set_flipped(True)
+    assert menu.sizeHint() == size                      # same footprint, mirrored
+    assert menu.pill_rect(0).top() > top_before
+    image = render(menu, "render_menu")
+    assert close(image.pixelColor(menu.width() // 2, menu.height() - 3), "#E05252")
+    assert image.pixelColor(menu.width() // 2, 3) == MAGENTA
+
+
+def test_flipped_cards_point_down_at_their_anchor(qapp):
+    for card in (KeysetEditor(MODEL, "list", "flat"), HomePanel("flat", accounts=ACCOUNTS)):
+        size = card.sizeHint()
+        up = card.card_rect()
+        card.set_flipped(True)
+        down = card.card_rect()
+        assert card.sizeHint() == size
+        assert down.top() > up.top() and down.height() == pytest.approx(up.height())
+        image = render(card, "render_panel" if isinstance(card, HomePanel) else "render_editor")
+        # Nothing above the card any more; the caret's tip is below it.
+        assert image.pixelColor(int(down.center().x()), int(down.top() - 4)) == MAGENTA
+        below = [image.pixelColor(x, int(down.bottom() + 3)) for x in range(card.width())]
+        assert any(c != MAGENTA for c in below)
+        # Its clickable parts moved with the card.
+        assert card.input_rects() == [down.toAlignedRect()]

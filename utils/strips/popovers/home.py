@@ -106,9 +106,10 @@ class HomePanel(QWidget):
         self.update()
 
     def set_flipped(self, flipped: bool) -> None:
+        """Opened above the block: the caret points down from the bottom."""
         if bool(flipped) != self._flipped:
             self._flipped = bool(flipped)
-            self.update()
+            self._relayout()
 
     def rows(self) -> list[tuple[str, str, str, str]]:
         """(key, colour, label, hint) for the quick menu, top to bottom;
@@ -142,7 +143,7 @@ class HomePanel(QWidget):
 
     def _relayout(self) -> None:
         zones: list[tuple[tuple, QRectF]] = []
-        left, top = MARGIN, CARET_RISE
+        left, top = MARGIN, (MARGIN if self._flipped else CARET_RISE)
         width = MENU_W if self._view == MENU else LAUNCH_W
         x0 = left + BORDER + PAD
         inner = width - 2 * (BORDER + PAD)
@@ -186,7 +187,8 @@ class HomePanel(QWidget):
         y += PAD + BORDER
         self._card = QRectF(left, top, width, y - top)
         self._zones = zones
-        self._design = QSize(int(round(width + 2 * MARGIN)), int(round(y + MARGIN)))
+        self._design = QSize(int(round(width + 2 * MARGIN)), int(round(
+            y + (CARET_RISE if self._flipped else MARGIN))))
         self.setFixedSize(self.sizeHint())
         self.update()
 
@@ -279,19 +281,9 @@ class HomePanel(QWidget):
             caret_fill = QColor(tokens.POPOVER_BASE)
         p.fillPath(paint.rounded(card, radius), fill)
         paint._border(p, paint.rounded, card, radius, BORDER, QColor(BLUE))
-        if not self._flipped:
-            cx = self._caret_x if self._caret_x is not None else card.left() + 13.0
-            cx = max(card.left() + radius + 4.0, min(cx, card.right() - radius - 4.0))
-            half = CARET * 0.7071
-            tip = QPointF(cx, card.top() - half + BORDER * 0.5)
-            p.setPen(Qt.NoPen)
-            p.setBrush(caret_fill)
-            p.drawPolygon(QPolygonF([tip, QPointF(cx + half, card.top() + BORDER),
-                                     QPointF(cx - half, card.top() + BORDER)]))
-            pen = QPen(QColor(BLUE), BORDER)
-            p.setPen(pen)
-            p.drawLine(QPointF(cx - half, card.top() + BORDER * 0.5), tip)
-            p.drawLine(tip, QPointF(cx + half, card.top() + BORDER * 0.5))
+        cx = self._caret_x if self._caret_x is not None else card.left() + 13.0
+        cx = max(card.left() + radius + 4.0, min(cx, card.right() - radius - 4.0))
+        paint.paint_card_caret(p, card, cx, BLUE, caret_fill, CARET, BORDER, self._flipped)
         inner_l = card.left() + BORDER + PAD
         inner_r = card.right() - BORDER - PAD
         for y in self._dividers:

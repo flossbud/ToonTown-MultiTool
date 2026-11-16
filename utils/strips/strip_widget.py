@@ -300,7 +300,8 @@ class StripWidget(QWidget):
         # Pass 2: identity. The portrait sits on top of the plate's tucked end.
         if name is not None:
             pt.name(p, name.rect, m.name, m.accent, dim)
-        pt.portrait(p, portrait.rect, m.accent, m.species, m.portrait, dim)
+        pt.portrait(p, portrait.rect, m.accent, m.species, m.portrait, dim,
+                    m.portrait_frame)
 
         # Pass 3: tools and keysets, the part that dims with the toon.
         if dim and not s.is_neon:

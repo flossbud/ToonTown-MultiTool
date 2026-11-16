@@ -12,7 +12,7 @@ from typing import Callable
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QImage,
                            QLinearGradient, QPainter, QPainterPath, QPen,
-                           QPixmap)
+                           QPixmap, QPolygonF)
 
 from utils import cc_race_assets
 from utils.strips import glyphs, tokens
@@ -103,6 +103,28 @@ def _border(p: QPainter, shape: Callable[[QRectF, float], QPainterPath],
     p.setPen(pen)
     p.setBrush(Qt.NoBrush)
     p.drawPath(shape(rect.adjusted(half, half, -half, -half), radius - half))
+
+
+def paint_card_caret(p, card: QRectF, cx: float, colour, fill, size: float,
+                     border: float, flipped: bool) -> None:
+    """The little rotated square that points from a card at its anchor: up
+    from the top edge, or down from the bottom edge when the card had to
+    open above."""
+    half = size * 0.7071
+    if flipped:
+        edge, tip_y, base = card.bottom(), card.bottom() + half - border * 0.5, -border
+    else:
+        edge, tip_y, base = card.top(), card.top() - half + border * 0.5, border
+    tip = QPointF(cx, tip_y)
+    p.setPen(Qt.NoPen)
+    p.setBrush(fill)
+    p.drawPolygon(QPolygonF([tip, QPointF(cx + half, edge + base),
+                             QPointF(cx - half, edge + base)]))
+    pen = QPen(QColor(colour), border)
+    pen.setJoinStyle(Qt.MiterJoin)
+    p.setPen(pen)
+    p.drawLine(QPointF(cx - half, edge + base * 0.25), tip)
+    p.drawLine(tip, QPointF(cx + half, edge + base * 0.25))
 
 
 # -- glow -------------------------------------------------------------------
@@ -201,6 +223,23 @@ def tinted_silhouette(species: str | None, colour: str, device_px: int) -> QPixm
     return pm
 
 
+_dimmed_cache: dict[tuple, QPixmap] = {}
+
+
+def dimmed_pixmap(pixmap: QPixmap, saturation: float, brightness: float) -> QPixmap:
+    """A desaturated, darkened copy (the card dim filter), remembered per
+    source pixmap: the filter walks every pixel and must not run per paint."""
+    from utils.card_dim import dim_pixmap
+    key = (pixmap.cacheKey(), round(saturation, 3), round(brightness, 3))
+    hit = _dimmed_cache.get(key)
+    if hit is None:
+        hit = dim_pixmap(pixmap, saturation, brightness)
+        if len(_dimmed_cache) > 64:
+            _dimmed_cache.clear()
+        _dimmed_cache[key] = hit
+    return hit
+
+
 def _device_scale(p: QPainter) -> float:
     t = p.deviceTransform()
     return max(0.1, math.hypot(t.m11(), t.m12()))
@@ -208,20 +247,28 @@ def _device_scale(p: QPainter) -> float:
 
 def _paint_portrait_content(p: QPainter, circle: QRectF, border: float,
                             species: str | None, sil_colour: str,
-                            portrait: QPixmap | None, dimmed: bool) -> None:
+                            portrait: QPixmap | None, dimmed: bool,
+                            frame: tuple = (1.0, 0.0, 0.0, 0.0)) -> None:
     if portrait is not None and not portrait.isNull():
+        # The launcher's disc painter frames the render (zoom, offset,
+        # rotation) exactly as the looks editor previews it. It works in
+        # whole pixels of whatever space it is given, so it is handed device
+        # pixels: the render stays sharp on a scaled or high-density strip.
+        from utils.widgets.grandstand.look_paint import paint_look_disc
+        zoom, off_x, off_y, rotate = (tuple(frame) + (1.0, 0.0, 0.0, 0.0))[:4]
+        entry = {"portrait": {"transform": {
+            "zoom": zoom, "offset_x": off_x, "offset_y": off_y, "rotate": rotate}}}
+        ds = _device_scale(p)
         inner = circle.adjusted(border, border, -border, -border)
-        clip = QPainterPath()
-        clip.addEllipse(inner)
-        p.save()
-        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        p.setClipPath(clip, Qt.IntersectClip)
-        side = min(portrait.width(), portrait.height())
-        src = QRectF((portrait.width() - side) / 2.0,
-                     (portrait.height() - side) / 2.0, side, side)
         if dimmed:
-            p.setOpacity(p.opacity() * 0.45)
-        p.drawPixmap(inner, portrait, src)
+            # A disabled toon's identity goes neutral: grey and darker.
+            portrait = dimmed_pixmap(portrait, 0.0, 0.6)
+        p.save()
+        p.scale(1.0 / ds, 1.0 / ds)
+        paint_look_disc(
+            p, QRectF(inner.x() * ds, inner.y() * ds, inner.width() * ds, inner.height() * ds),
+            entry, fill_fallback=QColor(0, 0, 0, 0), accent_fallback=QColor(0, 0, 0, 0),
+            ring_width=0, art=portrait, framed=True)
         p.restore()
         return
     size = float(round(circle.width() * 0.62))
@@ -252,7 +299,7 @@ class StripPainter:
     def tool(self, p, rect, kind, on, tone=identity, hover=False): ...
     def keyset(self, p, rect, number, active, tone=identity, hover=False): ...
     def add(self, p, rect, hidden_sets, tone=identity, hover=False): ...
-    def portrait(self, p, rect, accent, species, pixmap, dimmed): ...
+    def portrait(self, p, rect, accent, species, pixmap, dimmed, frame=(1.0, 0.0, 0.0, 0.0)): ...
     def name(self, p, rect, text, accent, dimmed): ...
     def separator(self, p, rect): ...
 
@@ -299,13 +346,12 @@ class StripPainter:
         p.setRenderHint(QPainter.Antialiasing, True)
         p.setRenderHint(QPainter.SmoothPixmapTransform, True)
         if icon is not None and not icon.isNull():
+            if stopped:
+                icon = dimmed_pixmap(icon, 0.5, 0.7)    # grayscale(.5) brightness(.7)
             clip = QPainterPath()
             clip.addEllipse(rect)
             p.setClipPath(clip, Qt.IntersectClip)
             p.drawPixmap(rect, icon, QRectF(icon.rect()))
-            if stopped:
-                # grayscale(.5) brightness(.7), as a veil over the icon.
-                p.fillRect(rect, tokens.rgba(0, 0, 0, 0.38))
         p.restore()
 
     @staticmethod
@@ -382,7 +428,8 @@ class NeonPainter(StripPainter):
         if hidden_sets:
             self._hidden_dot(p, rect, tone)
 
-    def portrait(self, p, rect, accent, species, pixmap, dimmed):
+    def portrait(self, p, rect, accent, species, pixmap, dimmed,
+                 frame=(1.0, 0.0, 0.0, 0.0)):
         s = self.style
         p.setRenderHint(QPainter.Antialiasing, True)
         circle = QPainterPath()
@@ -393,7 +440,8 @@ class NeonPainter(StripPainter):
         else:
             p.fillPath(circle, QBrush(tokens.body_gradient(rect, accent)))
             edge, sil = QColor(accent), lt(accent, 50)
-        _paint_portrait_content(p, rect, s.portrait_border, species, sil, pixmap, dimmed)
+        _paint_portrait_content(p, rect, s.portrait_border, species, sil, pixmap,
+                                dimmed, frame)
         half = s.portrait_border / 2.0
         p.setPen(QPen(edge, s.portrait_border))
         p.setBrush(Qt.NoBrush)
@@ -479,7 +527,8 @@ class FlatPainter(StripPainter):
         if hidden_sets:
             self._hidden_dot(p, rect, identity)
 
-    def portrait(self, p, rect, accent, species, pixmap, dimmed):
+    def portrait(self, p, rect, accent, species, pixmap, dimmed,
+                 frame=(1.0, 0.0, 0.0, 0.0)):
         s = self.style
         p.setRenderHint(QPainter.Antialiasing, True)
         circle = QPainterPath()
@@ -490,7 +539,8 @@ class FlatPainter(StripPainter):
         else:
             p.fillPath(circle, QColor(lt(accent, 55)))
             edge, sil = QColor(accent), dk(accent, 42)
-        _paint_portrait_content(p, rect, s.portrait_border, species, sil, pixmap, dimmed)
+        _paint_portrait_content(p, rect, s.portrait_border, species, sil, pixmap,
+                                dimmed, frame)
         half = s.portrait_border / 2.0
         p.setPen(QPen(edge, s.portrait_border))
         p.setBrush(Qt.NoBrush)
