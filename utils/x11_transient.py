@@ -108,3 +108,27 @@ def confine(ghost_wid: int, game_wid: int) -> bool:
     except Exception:
         _drop_display()
         return False
+
+
+def premap_skip_lists(wid: int) -> bool:
+    """Initial _NET_WM_STATE for a window that is realized but NOT yet
+    mapped: skip-taskbar and skip-pager, and deliberately not ABOVE. The WM
+    reads the property when it manages the window, so the window never
+    flashes in the taskbar; confine() re-sends the same states after the
+    map. For windows that must stack with one game window rather than over
+    everything."""
+    try:
+        from Xlib import X, Xatom
+
+        d = _get_display()
+        win = d.create_resource_object("window", int(wid))
+        win.change_property(
+            d.intern_atom("_NET_WM_STATE"), Xatom.ATOM, 32,
+            [d.intern_atom("_NET_WM_STATE_SKIP_TASKBAR"),
+             d.intern_atom("_NET_WM_STATE_SKIP_PAGER")],
+            X.PropModeReplace)
+        d.flush()
+        return True
+    except Exception:
+        _drop_display()
+        return False

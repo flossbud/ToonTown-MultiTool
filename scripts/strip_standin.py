@@ -1,0 +1,64 @@
+"""Plain windows standing in for game windows, for strip attach checks.
+
+    python scripts/strip_standin.py game:100,120,800,600 other:300,200,500,400
+
+Prints `STANDIN <name> <window id>` once each window is up, then
+`STANDIN-CLICK <name> <x> <y>` for every mouse press it receives and
+`STANDIN-FOCUS <name> in|out` when it gains or loses focus. Runs until killed.
+"""
+from __future__ import annotations
+
+import sys
+
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor, QPainter
+from PySide6.QtWidgets import QApplication, QWidget
+
+
+def say(*parts) -> None:
+    print(*parts, flush=True)
+
+
+class StandIn(QWidget):
+    def __init__(self, name: str, x: int, y: int, w: int, h: int) -> None:
+        super().__init__()
+        self._name = name
+        self.setWindowTitle(f"strip-standin-{name}")
+        self.setGeometry(x, y, w, h)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor("#24303a" if self._name.startswith("game")
+                                       else "#5a3d2b"))
+        p.setPen(QColor("#ffffff"))
+        p.drawText(self.rect(), Qt.AlignCenter, self._name)
+
+    def mousePressEvent(self, event) -> None:
+        pos = event.position().toPoint()
+        say("STANDIN-CLICK", self._name, pos.x(), pos.y())
+
+    def focusInEvent(self, event) -> None:
+        say("STANDIN-FOCUS", self._name, "in")
+
+    def focusOutEvent(self, event) -> None:
+        say("STANDIN-FOCUS", self._name, "out")
+
+
+def main() -> int:
+    app = QApplication(sys.argv[:1])
+    windows = []
+    for spec in sys.argv[1:]:
+        name, _, geo = spec.partition(":")
+        x, y, w, h = (int(v) for v in (geo or "100,100,800,600").split(","))
+        win = StandIn(name, x, y, w, h)
+        win.show()
+        windows.append((name, win))
+    # Report ids once the windows are really mapped.
+    QTimer.singleShot(400, lambda: [say("STANDIN", n, int(w.winId()))
+                                    for n, w in windows])
+    return app.exec()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
