@@ -244,6 +244,7 @@ class StripPopovers(QObject):
         size = entry.counters_view.sizeHint()
         spot = place_popover(anchor, size, self._screen_rect(anchor), gap=0)
         if self._wants_counters(wid, entry):
+            self._gate_before_present(wid, entry.counters_surface, spot.pos)
             entry.counters_surface.present(spot.pos, int(surface.winId()))
         else:
             entry.counters_surface.fit(spot.pos)
@@ -331,8 +332,21 @@ class StripPopovers(QObject):
             content.set_caret_x(spot.caret_x + inset)
         if hasattr(content, "set_flipped"):
             content.set_flipped(spot.flipped)
+        self._gate_before_present(wid, entry.popover, spot.pos)
         entry.popover.present(spot.pos, int(surface.winId()))
         return True
+
+    def _gate_before_present(self, wid: str, surface: PopoverSurface, pos: QPoint) -> None:
+        strategy = self._follower.strategy
+        if not strategy.gated:
+            return
+        target = QRect(pos, surface.content.sizeHint())
+        try:
+            region = strategy.visible_region(
+                target, wid, self._follower.own_window_ids(), clip=False)
+        except Exception:
+            region = None
+        surface.set_visible_region(region)
 
     def refit(self, wid: str) -> None:
         """The open popover's content changed size."""
