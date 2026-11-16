@@ -40,6 +40,11 @@ class AccountsBackend(QObject):
     def keyring_available(self) -> bool:
         raise NotImplementedError
 
+    def set_active(self, active: bool) -> None:
+        """Whether anyone is looking. A backend whose reads are costly (the
+        keyring) only follows changes while active, and announces once on
+        becoming active if something changed meanwhile."""
+
     def look_entry(self, game: str, toon_name: str) -> dict:
         """The stored look of a toon (backdrop, pattern, accent, pose)."""
         return {}

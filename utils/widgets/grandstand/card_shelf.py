@@ -81,6 +81,7 @@ class CardShelf(QWidget):
     quit_clicked = Signal(str)
     enter_2fa_clicked = Signal(str)
     retry_clicked = Signal(str)
+    fix_login_clicked = Signal(str)
     add_account_clicked = Signal()
     manage_clicked = Signal()
     clear_selection_clicked = Signal()
@@ -217,6 +218,7 @@ class CardShelf(QWidget):
             card.quit_clicked.connect(self.quit_clicked.emit)
             card.enter_2fa_clicked.connect(self.enter_2fa_clicked.emit)
             card.retry_clicked.connect(self.retry_clicked.emit)
+            card.fix_login_clicked.connect(self.fix_login_clicked.emit)
             card.apply_theme(self._is_dark)
             self._row.insertWidget(index, card)
             self._cards[entry.account_id] = card

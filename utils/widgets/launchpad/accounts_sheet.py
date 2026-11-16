@@ -160,6 +160,17 @@ class AccountsSheet(QWidget):
         """The account whose launch is waiting for a password, or None."""
         return self._launch_login_for
 
+    def cancel_launch_login(self) -> None:
+        """Drop a launch question without answering it (the sheet was
+        closed): the account stays idle."""
+        if self._launch_login_for is None:
+            return
+        form, self._login_form = self._login_form, None
+        self._build()
+        if form is not None:
+            form.deleteLater()
+        self._finish_launch_login(False)
+
     def _finish_launch_login(self, launched: bool) -> None:
         account_id, self._launch_login_for = self._launch_login_for, None
         if account_id is not None:
@@ -220,8 +231,13 @@ class AccountsSheet(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        self._backend.set_active(True)          # may announce what it missed
         if self._stale:
             self._build()
+
+    def hideEvent(self, event) -> None:
+        super().hideEvent(event)
+        self._backend.set_active(False)
 
     # ── Header ─────────────────────────────────────────────────────────────
 

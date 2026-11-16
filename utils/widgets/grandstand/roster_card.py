@@ -28,6 +28,12 @@ from utils.widgets.account_tile import summarize_error
 from utils.widgets.grandstand import palette as gp
 from utils.widgets.grandstand.model import CARD_POSE, PORTRAIT_RENDER
 
+# A rejected sign-in (launchpad handoff, section 3).
+FIX_LOGIN_TEXT = "Fix login"
+FIX_PILL_H = 22
+FIX_PILL_BORDER = "#e05252"
+FIX_CARD_BORDER = "#d95757"
+
 CARD_W = 148
 CARD_H = 216
 CARD_RADIUS = 16
@@ -162,6 +168,7 @@ class RosterCard(QFrame):
     quit_clicked = Signal(str)
     enter_2fa_clicked = Signal(str)
     retry_clicked = Signal(str)
+    fix_login_clicked = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -226,6 +233,20 @@ class RosterCard(QFrame):
         self.footer = QLabel(self)
         self.footer.setObjectName("card_footer")
         self.footer.setGeometry(10, 178, CARD_W - 20, 14)
+        # Takes the status line's place on a card whose sign-in was rejected.
+        self.fix_pill = QPushButton(FIX_LOGIN_TEXT, self)
+        self.fix_pill.setObjectName("card_fix_login")
+        self.fix_pill.setCursor(Qt.PointingHandCursor)
+        self.fix_pill.setFixedHeight(FIX_PILL_H)
+        self.fix_pill.setStyleSheet(
+            "QPushButton#card_fix_login {"
+            f" background: rgba(224,82,82,0.20); border: 1px solid {FIX_PILL_BORDER};"
+            f" border-radius: {FIX_PILL_H // 2}px; padding: 0 10px;"
+            " color: #ffb0b0; font-size: 10.5px; font-weight: 700; }"
+            "QPushButton#card_fix_login:hover { background: rgba(224,82,82,0.34); }")
+        self.fix_pill.adjustSize()
+        self.fix_pill.hide()
+        self.fix_pill.clicked.connect(lambda: self._emit(self.fix_login_clicked))
         # The size has to be set twice. The app stylesheet's `QWidget
         # { font-size: 12pt }` beats setFont() on any styled widget, so the
         # label's own stylesheet carries the 11px that is drawn; the QFont
@@ -524,10 +545,18 @@ class RosterCard(QFrame):
         tooltip = text if full_text is None else full_text
         self.footer.setToolTip(tooltip if tooltip else "")
 
+    def shows_fix_login(self) -> bool:
+        """A rejected sign-in, and nothing under way that outranks it."""
+        entry = self._entry
+        return bool(entry is not None and getattr(entry, "login_failed", False)
+                    and self._state in ("idle", "failed"))
+
     def _should_show_action(self) -> bool:
         label, _, _ = ACTION_MAP[self._state]
         if label is None:
             return False
+        if self.shows_fix_login():
+            return False                     # retrying the same login is no fix
         if self._state in URGENT_STATES:
             return True                      # spec Q2: never hidden
         if self._state in _SESSION_STATES:
@@ -572,6 +601,13 @@ class RosterCard(QFrame):
         full_text = self._message if self._state == "failed" and self._message \
             else footer_text
         self._set_footer_text(footer_text, full_text)
+        fix = self.shows_fix_login()
+        self.footer.setVisible(not fix)
+        self.fix_pill.setVisible(fix)
+        if fix:
+            self.fix_pill.move((CARD_W - self.fix_pill.width()) // 2,
+                               status_y - (FIX_PILL_H - 14) // 2)
+            self.fix_pill.raise_()
         self.dot.set_color(ink["dot"].name(), pulse=running)
         self.dot.setVisible(running)
         self.update()
@@ -665,7 +701,7 @@ class RosterCard(QFrame):
             self._paint_placeholder(p, box, e)
 
         p.setBrush(Qt.NoBrush)
-        p.setPen(d["border"])
+        p.setPen(QColor(FIX_CARD_BORDER) if self.shows_fix_login() else d["border"])
         p.drawRoundedRect(r, CARD_RADIUS, CARD_RADIUS)
         p.end()
 

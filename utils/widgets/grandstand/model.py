@@ -80,6 +80,9 @@ class RosterEntry:
     message: str
     raw_error: str
     pose: str = "portrait"
+    # The last sign-in was rejected and there is an Accounts sheet to fix it
+    # in: the card shows a "Fix login" pill instead of its status line.
+    login_failed: bool = False
 
     @property
     def display_name(self) -> str:
@@ -108,7 +111,7 @@ class LineupEntry:
 
 def roster_entry(*, account_id: str, game: str, label: str, username: str,
                  rec, entry: dict, state: str, message: str, raw_error: str,
-                 is_primary: bool) -> RosterEntry:
+                 is_primary: bool, login_failed: bool = False) -> RosterEntry:
     """Build a card's entry from an account plus its ToonRecord (or None) and
     its resolved customization dict."""
     toon_name = getattr(rec, "toon_name", None) if rec is not None else None
@@ -135,7 +138,7 @@ def roster_entry(*, account_id: str, game: str, label: str, username: str,
         footer=footer_text(state, toon_name is not None, is_primary),
         portrait_mode=portrait_mode(game, bool(dna)),
         state=state, message=message, raw_error=raw_error,
-        pose=pose,
+        pose=pose, login_failed=bool(login_failed),
     )
 
 

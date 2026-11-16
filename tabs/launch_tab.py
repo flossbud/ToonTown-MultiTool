@@ -405,6 +405,9 @@ class LaunchTab(QWidget):
     # The roster of some game was re-rendered: an account was added, removed
     # or renamed, or an account's launch state or shown toon changed.
     accounts_changed = Signal()
+    # The launcher's own focus page (appearance editor, account page) closed
+    # and the roster is showing again.
+    launcher_sheet_closed = Signal()
 
     LOADING_WINDOW_TIMEOUT_MS = 30000
 
@@ -1216,6 +1219,7 @@ class LaunchTab(QWidget):
         # rebuild every card and drop hover/focus.
         self.grandstand.add_account_requested.connect(self._on_add_account)
         self.grandstand.manage_requested.connect(self._on_manage)
+        self.grandstand.fix_login_requested.connect(self._on_fix_login)
         self.grandstand.game_changed.connect(self._render_grandstand)
         self.grandstand.edit_requested.connect(self._on_grandstand_edit)
         self.grandstand.official_launcher_requested.connect(self._on_launcher_clicked)
@@ -1240,6 +1244,7 @@ class LaunchTab(QWidget):
         self.ttr_section.hide()
         self.cc_section.hide()
         self._apply_accounts_router()
+        self.grandstand.pages.currentChanged.connect(self._on_grandstand_page)
         for game in ("ttr", "cc"):
             self._render_grandstand(game)
 
@@ -1257,7 +1262,37 @@ class LaunchTab(QWidget):
             account_id=acct.id, game=game, label=acct.label or "",
             username=acct.username or "", rec=rec, entry=cust,
             state=st, message=msg, raw_error=raw,
-            is_primary=(rec is not None and rec.toon_name == primary))
+            is_primary=(rec is not None and rec.toon_name == primary),
+            login_failed=self._shows_login_failed(acct.id))
+
+    def _shows_login_failed(self, account_id: str) -> bool:
+        """Whether this account's card is the "Fix login" card: its last
+        sign-in was rejected and there is an Accounts sheet to fix it in."""
+        if self._accounts_router is None:
+            return False
+        check = getattr(self.cred_manager, "is_login_failed", None)
+        try:
+            return bool(check is not None and check(account_id))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _unstage_failed_logins(self, game: str) -> None:
+        """A rejected sign-in is not selected for launch."""
+        party = getattr(self, "_party", None)
+        if party is None or self._accounts_router is None:
+            return
+        for account_id in list(party.selected(game)):
+            if self._shows_login_failed(account_id) and \
+                    not self.is_account_running(game, account_id) and \
+                    not self._is_in_flight(game, account_id):
+                party.toggle(game, account_id)
+
+    def _on_fix_login(self, game: str, account_id: str) -> None:
+        del game
+        router = self._accounts_router
+        if router is not None:
+            open_fix = getattr(router, "open_fix", None) or router.open_account
+            open_fix(account_id)
 
     def _render_grandstand(self, game: str) -> None:
         """Build RosterEntry values for one game and hand them to the view."""
@@ -1280,6 +1315,7 @@ class LaunchTab(QWidget):
             self.grandstand.set_main_toon_names(game, {})
             self.accounts_changed.emit()
             return
+        self._unstage_failed_logins(game)
         for acct in self._ordered_accounts(game):
             entries.append(self._grandstand_entry(game, acct))
         self.grandstand.set_accounts(game, entries)
@@ -1353,6 +1389,9 @@ class LaunchTab(QWidget):
         of failing. None restores this tab's own pages."""
         self._accounts_router = router
         self._apply_accounts_router()
+        if self._grandstand_mounted():
+            for game in ("ttr", "cc"):
+                self._render_grandstand(game)
 
     def _apply_accounts_router(self) -> None:
         if not self._grandstand_mounted():
@@ -1360,6 +1399,11 @@ class LaunchTab(QWidget):
         link = getattr(self.grandstand.shelf, "manage_link", None)
         if link is not None:
             link.setText("Accounts" if self._accounts_router is not None else "Manage")
+        self.grandstand.set_accounts_elsewhere(self._accounts_router is not None)
+
+    def _on_grandstand_page(self, index: int) -> None:
+        if index == 0:                      # the roster page
+            self.launcher_sheet_closed.emit()
 
     def _on_manage(self, game: str) -> None:
         if self._accounts_router is not None:
@@ -1537,6 +1581,12 @@ class LaunchTab(QWidget):
         editor on that toon's saved look. Unsaved edits to the previous
         toon's look are dropped, as the switcher warned."""
         if not self._grandstand_mounted():
+            return
+        if self._accounts_router is not None:
+            # With an Accounts sheet the switcher only picks whose look is
+            # edited; the primary toon is set with the star there.
+            self._open_appearance_sheet(game, account_id, identity_changed=True,
+                                        toon_name=toon_name)
             return
         self._recent_toons.set_primary(account_id, toon_name)
         self._render_grandstand(game)
