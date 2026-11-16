@@ -1406,9 +1406,18 @@ SWITCHER_EMPTY = ("No toons discovered yet. Launch this account once and play "
                   "fills itself in.")
 
 
-def switcher_heading(count: int, account_name: str) -> str:
+# With an Accounts sheet (launchpad handoff, section 5): the switcher only
+# re-targets the editor, and says so.
+SWITCHER_NOTE_RETARGET = ("Pick a toon to edit its look. The primary toon is "
+                          "set with the star in Accounts.")
+SWITCHER_SLOTS = 6
+
+
+def switcher_heading(count: int, account_name: str, of_slots: bool = False) -> str:
     if count == 0:
         return f"Toons on {account_name}"
+    if of_slots:
+        return f"{min(count, SWITCHER_SLOTS)} of {SWITCHER_SLOTS} toons on {account_name}"
     return f"{count} toon{'' if count == 1 else 's'} on {account_name}"
 
 
@@ -1463,9 +1472,14 @@ class ToonSwitcher(QFrame):
     def is_warning(self) -> bool:
         return self._warning
 
+    def set_retarget_only(self, retarget_only: bool) -> None:
+        """Picking a toon edits that toon's look and changes nothing else."""
+        self._retarget_only = bool(retarget_only)
+
     def open_for(self, anchor: QWidget, game: str, account_name: str,
                  toons: list, current: Optional[str], dirty: bool) -> None:
         self._anchor = anchor
+        retarget = getattr(self, "_retarget_only", False)
         for row in self._rows:
             self._rows_box.removeWidget(row)
             row.setParent(None)
@@ -1473,11 +1487,15 @@ class ToonSwitcher(QFrame):
         self._rows = []
         for rec in toons:
             row = ToonRow(game, rec, rec.toon_name == current, self)
+            if retarget:
+                row.setToolTip(f"{rec.toon_name}'s look is open"
+                               if rec.toon_name == current
+                               else f"Edit {rec.toon_name}'s look")
             row.clicked.connect(self._on_row_clicked)
             row.apply_theme(self._is_dark)
             self._rows_box.addWidget(row)
             self._rows.append(row)
-        self._heading = switcher_heading(len(toons), account_name)
+        self._heading = switcher_heading(len(toons), account_name, of_slots=retarget)
         self.heading.setText(self._heading.upper())
         self._warning = bool(toons) and dirty and bool(current)
         if not toons:
@@ -1485,7 +1503,7 @@ class ToonSwitcher(QFrame):
         elif self._warning:
             self.note.setText(SWITCHER_WARN.format(toon=current))
         else:
-            self.note.setText(SWITCHER_NOTE)
+            self.note.setText(SWITCHER_NOTE_RETARGET if retarget else SWITCHER_NOTE)
         self._restyle_note()
         self.layout().activate()
         height = self.layout().totalHeightForWidth(SWITCHER_W)

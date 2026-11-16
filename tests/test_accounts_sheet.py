@@ -520,3 +520,121 @@ def test_light_theme_builds_and_reads(qapp):
         assert stage.sheet.rows["t1"].status_text() == "Login saved"
     finally:
         stage.close()
+
+
+# ── A password asked for at launch ─────────────────────────────────────────
+
+@pytest.fixture
+def asking(stage):
+    """t1 has no saved login and was just launched."""
+    stage.backend.forget_login("t1")
+    stage.backend.calls.clear()
+    stage.finished = []
+    stage.sheet.launch_login_finished.connect(
+        lambda account_id, launched: stage.finished.append((account_id, launched)))
+    assert stage.sheet.open_launch_login("t1") is True
+    return stage
+
+
+def test_the_launch_form(asking):
+    form = asking.sheet.login_form()
+    assert asking.sheet.account_id() == "t1"
+    assert asking.sheet.launch_login_account() == "t1"
+    assert form.mode() == m.FORM_LAUNCH
+    assert form.title_label.text() == "Enter password to launch"
+    assert form.submit_button.text() == "Launch"
+    assert form.username.text() == "flossbud" and form.username.isReadOnly()
+    assert form.keep_toggle.isChecked()             # a keyring is available
+    assert form.keep_label.text() == m.KEEP_IN_KEYRING
+
+
+def test_the_launch_form_needs_a_password(asking):
+    form = asking.sheet.login_form()
+    click(form.submit_button)
+    assert form.error_text() == "Password is required"
+    assert asking.backend.calls == [] and asking.finished == []
+    form.password.setText("x")
+    form.password.textEdited.emit("x")
+    assert form.error_text() == ""
+
+
+def test_launching_and_keeping_the_login(asking):
+    form = asking.sheet.login_form()
+    form.password.setText("pw")
+    click(form.submit_button)
+    assert asking.backend.calls == [("launch_with_password", "t1", "pw", True)]
+    assert asking.finished == [("t1", True)]
+    assert asking.sheet.login_form() is None
+    assert asking.sheet.launch_login_account() is None
+    assert asking.backend.account("t1").login == m.LOGIN_SAVED
+
+
+def test_launching_on_a_password_for_this_launch_only(asking):
+    form = asking.sheet.login_form()
+    form.password.setText("pw")
+    form.keep_toggle.setChecked(False)
+    QTest.keyClick(form.password, Qt.Key_Return)
+    assert asking.backend.calls == [("launch_with_password", "t1", "pw", False)]
+    assert asking.finished == [("t1", True)]
+    account = asking.backend.account("t1")
+    assert account.running and account.login == m.LOGIN_NONE     # nothing saved
+
+
+def test_cancel_leaves_the_account_idle(asking):
+    click(asking.sheet.login_form().cancel_button)
+    assert asking.backend.calls == []
+    assert asking.finished == [("t1", False)]
+    assert not asking.backend.account("t1").running
+    assert asking.sheet.login_row is not None and asking.sheet.account_id() == "t1"
+
+
+def test_leaving_the_page_cancels_the_question(asking):
+    click(asking.host.panel.header.back_button)
+    assert asking.finished == [("t1", False)]
+    assert asking.sheet.account_id() is None
+
+
+def test_a_second_question_replaces_the_first(asking):
+    asking.backend.forget_login("t3")
+    asking.sheet.open_launch_login("t3")
+    assert asking.finished == [("t1", False)]
+    assert asking.sheet.launch_login_account() == "t3"
+    assert asking.sheet.login_form().username.text() == "hirofloss"
+
+
+def test_the_account_going_away_ends_the_question(asking):
+    asking.backend.remove_account("t1")
+    assert asking.finished == [("t1", False)]
+    assert asking.sheet.account_id() is None
+
+
+def test_no_question_for_an_account_that_is_not_there(stage):
+    assert stage.sheet.open_launch_login("nope") is False
+    assert stage.sheet.launch_login_account() is None
+
+
+def test_editing_a_login_normally_finishes_no_launch(stage):
+    seen = []
+    stage.sheet.launch_login_finished.connect(lambda *a: seen.append(a))
+    stage.sheet.open_account("t1")
+    click(stage.sheet.login_row.edit_button)
+    click(stage.sheet.login_form().cancel_button)
+    assert seen == []
+
+
+# ── Hidden ─────────────────────────────────────────────────────────────────
+
+def test_a_hidden_sheet_waits_until_it_is_shown_to_rebuild(stage):
+    sheet = stage.sheet
+    stage.host.close()
+    stage.settle(0.6)
+    assert not sheet.isVisible()
+    page = sheet._page
+    stage.backend.update("t1", running=True)
+    stage.backend.update("t2", label="Renamed")
+    assert sheet._page is page                      # nothing rebuilt
+    stage.host.open(sheet, sheet.IDENTITY, sheet.title(), sheet.sub())
+    stage.settle()
+    assert sheet._page is not page
+    assert sheet.rows["t1"].status_text() == "Running"
+    assert sheet.rows["t2"].title_text() == "Renamed"

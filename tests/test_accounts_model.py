@@ -93,6 +93,8 @@ def test_form_titles_and_buttons():
     assert m.form_title(m.FORM_FIX, "ttr") == "Fix login"
     assert m.form_primary_text(m.FORM_ADD_ACCOUNT) == "Add account"
     assert m.form_primary_text(m.FORM_EDIT) == "Save login"
+    assert m.form_title(m.FORM_LAUNCH, "cc") == "Enter password to launch"
+    assert m.form_primary_text(m.FORM_LAUNCH) == "Launch"
     assert m.add_account_text("ttr") == "Add TTR account"
     assert m.add_account_text("cc") == "Add CC account"
 
@@ -216,3 +218,15 @@ def test_without_a_keyring_nothing_is_saved(backend):
     backend.set_keyring_available(False)
     new_id = backend.add_account("ttr", "u", "pw", True)
     assert backend.account(new_id).login == LOGIN_NONE
+
+
+def test_launching_with_a_typed_password(backend):
+    backend.forget_login("t1")
+    assert backend.launch_with_password("t1", "pw", True) is True
+    account = backend.account("t1")
+    assert account.running and account.login == LOGIN_SAVED
+    backend.forget_login("t3")
+    assert backend.launch_with_password("t3", "pw", False) is True
+    assert backend.account("t3").running and backend.account("t3").login == LOGIN_NONE
+    assert backend.launch_with_password("t3", "", True) is False
+    assert backend.launch_with_password("nope", "pw", True) is False

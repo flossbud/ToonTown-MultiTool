@@ -62,6 +62,9 @@ class AccountsSheet(QWidget):
     TITLE = TITLE
     header_changed = Signal(str, str)        # title, sub
     page_changed = Signal(str)               # "" for the list, else the account id
+    # A password asked for at launch was answered: account id, and whether
+    # the launch went ahead (False: cancelled, or the account went away).
+    launch_login_finished = Signal(str, bool)
 
     def __init__(self, backend, is_dark: bool = True, parent: QWidget | None = None,
                  clock=None):
@@ -73,6 +76,8 @@ class AccountsSheet(QWidget):
         self._clock = clock
         self._host = None
         self._account_id: str | None = None
+        self._launch_login_for: str | None = None
+        self._stale = False
 
         # What is open on the list page.
         self._add_game: str | None = None
@@ -115,6 +120,7 @@ class AccountsSheet(QWidget):
         self._login_form = None
         self._confirm = None
         self._build()
+        self._finish_launch_login(False)
 
     def open_account(self, account_id: str, form: str | None = None) -> bool:
         """Show one account's page; with ``form`` (a FORM_* mode) on its
@@ -138,6 +144,37 @@ class AccountsSheet(QWidget):
         if account is None:
             return False
         return self.open_account(account_id, m.login_buttons(account)[1])
+
+    def open_launch_login(self, account_id: str) -> bool:
+        """An account launched with no saved login: its page, on the form
+        that takes the password and launches."""
+        if self._backend.account(account_id) is None:
+            return False
+        self._finish_launch_login(False)        # one question at a time
+        if not self.open_account(account_id, m.FORM_LAUNCH):
+            return False
+        self._launch_login_for = account_id
+        return True
+
+    def launch_login_account(self) -> str | None:
+        """The account whose launch is waiting for a password, or None."""
+        return self._launch_login_for
+
+    def cancel_launch_login(self) -> None:
+        """Drop a launch question without answering it (the sheet was
+        closed): the account stays idle."""
+        if self._launch_login_for is None:
+            return
+        form, self._login_form = self._login_form, None
+        self._build()
+        if form is not None:
+            form.deleteLater()
+        self._finish_launch_login(False)
+
+    def _finish_launch_login(self, launched: bool) -> None:
+        account_id, self._launch_login_for = self._launch_login_for, None
+        if account_id is not None:
+            self.launch_login_finished.emit(account_id, launched)
 
     def open_add_form(self, game: str) -> bool:
         """The list, with the add form open in ``game``'s card."""
@@ -174,15 +211,33 @@ class AccountsSheet(QWidget):
     def refresh(self) -> None:
         """The backend changed: show it, keeping whatever the user has open
         (a form keeps the text typed into it)."""
+        gone = False
         if self._account_id is not None and self._backend.account(self._account_id) is None:
             self._account_id = None             # removed underneath
             self._login_form = None
             self._confirm = None
+            gone = True
         if self._add_game is not None and \
                 len(self._backend.accounts(self._add_game)) >= m.MAX_ACCOUNTS_PER_GAME:
             self._add_game = None
             self._add_form = None
-        self._build()
+        if not self.isVisible() and self._page is not None:
+            # Nobody is looking: rebuild when the sheet is shown again.
+            self._stale = True
+        else:
+            self._build()
+        if gone:
+            self._finish_launch_login(False)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._backend.set_active(True)          # may announce what it missed
+        if self._stale:
+            self._build()
+
+    def hideEvent(self, event) -> None:
+        super().hideEvent(event)
+        self._backend.set_active(False)
 
     # ── Header ─────────────────────────────────────────────────────────────
 
@@ -207,6 +262,7 @@ class AccountsSheet(QWidget):
     def _build(self) -> None:
         """Rebuild the visible page from the backend. Open forms are kept as
         they are (same widget, same typed text) and placed back."""
+        self._stale = False
         keep_add = self._add_form
         keep_login = self._login_form
         label_text, label_focus = None, False
@@ -449,11 +505,19 @@ class AccountsSheet(QWidget):
         self._build()
         if form is not None:
             form.deleteLater()
+        self._finish_launch_login(False)        # cancelled: the account stays idle
 
     def _on_login_submitted(self, username: str, password: str, keep: bool) -> None:
         if self._account_id is None:
             return
         form = self._login_form
+        if form is not None and form.mode() == m.FORM_LAUNCH:
+            ok = self._backend.launch_with_password(self._account_id, password, keep)
+            self._login_form = None
+            self.refresh()
+            form.deleteLater()
+            self._finish_launch_login(bool(ok))
+            return
         if not self._backend.save_login(self._account_id, username, password, keep):
             if form is not None:
                 form.error_label.setText("The login could not be saved.")

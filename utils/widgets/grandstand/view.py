@@ -146,6 +146,7 @@ class GrandstandView(QWidget):
     retry_requested = Signal(str, str)
     add_account_requested = Signal(str)
     manage_requested = Signal(str)
+    fix_login_requested = Signal(str, str)        # game, account_id
     official_launcher_requested = Signal(str)
 
     # Sub-project C: the view emits intents; LaunchTab owns every write.
@@ -169,6 +170,7 @@ class GrandstandView(QWidget):
         print(stamp)
 
         self._party = party
+        self._accounts_elsewhere = False
         self._is_dark = True
         self._credential_kind = "ok"
         self._entries: dict[str, list] = {"ttr": [], "cc": []}
@@ -284,6 +286,8 @@ class GrandstandView(QWidget):
             lambda: self.add_account_requested.emit(self._party.active_game()))
         self.shelf.manage_clicked.connect(
             lambda: self.manage_requested.emit(self._party.active_game()))
+        self.shelf.fix_login_clicked.connect(
+            lambda aid: self.fix_login_requested.emit(self._party.active_game(), aid))
         self.shelf.clear_selection_clicked.connect(self._on_clear_selection)
         self.shelf.clear_main_clicked.connect(self._on_clear_main)
 
@@ -310,6 +314,14 @@ class GrandstandView(QWidget):
 
     def active_game(self) -> str:
         return self._party.active_game()
+
+    def set_accounts_elsewhere(self, elsewhere: bool) -> None:
+        """Account pages live in an Accounts sheet outside this view: the
+        appearance editor loses its "Account settings" link, and its toon
+        switcher only re-targets the editor (the primary toon is set with
+        the star in Accounts)."""
+        self._accounts_elsewhere = bool(elsewhere)
+        self.appearance_sheet.set_retarget_only(self._accounts_elsewhere)
 
     def party(self):
         return self._party
@@ -450,6 +462,13 @@ class GrandstandView(QWidget):
 
     def _on_card_clicked(self, account_id: str) -> None:
         game = self._party.active_game()
+        entry = self.entry_for(game, account_id)
+        if entry is not None and getattr(entry, "login_failed", False) \
+                and entry.state in ("idle", "failed"):
+            # A rejected sign-in is not staged for launch: its card opens
+            # the fix.
+            self.fix_login_requested.emit(game, account_id)
+            return
         if not self._party.toggle(game, account_id):
             self.shelf.shake(account_id)      # a refused fifth (spec §7)
             return
@@ -586,7 +605,10 @@ class GrandstandView(QWidget):
                         f"{look.game}::{look.toon_name or NO_TOON_STAMP}")
             self.sheet.set_header(appearance.title_for(look),
                                   appearance.subtitle_for(look))
-            self.sheet.set_cross_link(appearance.CROSS_LINK)
+            # With an Accounts sheet there is no account page in here to
+            # cross to.
+            self.sheet.set_cross_link(
+                "" if self._accounts_elsewhere else appearance.CROSS_LINK)
             self.sheet.set_note(appearance.note_for(look))
             return
         draft = self.account_sheet.draft()

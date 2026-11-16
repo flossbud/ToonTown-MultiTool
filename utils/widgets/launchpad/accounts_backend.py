@@ -40,6 +40,11 @@ class AccountsBackend(QObject):
     def keyring_available(self) -> bool:
         raise NotImplementedError
 
+    def set_active(self, active: bool) -> None:
+        """Whether anyone is looking. A backend whose reads are costly (the
+        keyring) only follows changes while active, and announces once on
+        becoming active if something changed meanwhile."""
+
     def look_entry(self, game: str, toon_name: str) -> dict:
         """The stored look of a toon (backdrop, pattern, accent, pose)."""
         return {}
@@ -72,6 +77,12 @@ class AccountsBackend(QObject):
 
     def open_appearance(self, account_id: str, toon_name: str) -> None:
         """Open the Appearance editor on one toon of an account."""
+        raise NotImplementedError
+
+    def launch_with_password(self, account_id: str, password: str, keep: bool) -> bool:
+        """Launch an account that has no saved login, on the password just
+        typed. With ``keep`` the login is saved first; without it the
+        password is used for this launch only and nothing is stored."""
         raise NotImplementedError
 
 
@@ -210,6 +221,17 @@ class FakeAccountsBackend(AccountsBackend):
 
     def open_appearance(self, account_id, toon_name):
         self.calls.append(("open_appearance", account_id, toon_name))
+
+    def launch_with_password(self, account_id, password, keep):
+        self.calls.append(("launch_with_password", account_id, password, keep))
+        info = self.account(account_id)
+        if info is None or not password:
+            return False
+        fields = {"running": True}
+        if keep and self._keyring:
+            fields["login"] = LOGIN_SAVED
+        self._replace(account_id, **fields)
+        return True
 
     # ── Drivers ────────────────────────────────────────────────────────────
 

@@ -244,6 +244,7 @@ class LaunchpadWindow(QMainWindow):
 
         self._wire_hotkeys()
         self._build_settings_sheet()
+        self._build_accounts_sheet()
 
         self.session.toons_changed.connect(self._refresh_session_status)
         self.session.keep_alive_inhibit_status.connect(self._on_keep_alive_inhibit_status)
@@ -626,6 +627,105 @@ class LaunchpadWindow(QMainWindow):
         if hasattr(rows, "set_update_checker"):
             rows.set_update_checker(self.update_checker)
 
+    # ── Accounts sheet ─────────────────────────────────────────────────────
+
+    def _build_accounts_sheet(self) -> None:
+        """The Accounts sheet over the launcher's accounts, and the routes
+        into it: the launcher's "Accounts" link, a card's gear, "Add
+        account", and an account launched with no saved login."""
+        from utils.widgets.launchpad.accounts_launcher_backend import (
+            LauncherAccountsBackend,
+        )
+        from utils.widgets.launchpad.accounts_sheet import AccountsSheet
+        self.accounts_backend = LauncherAccountsBackend(
+            self.launch_tab, customizations=self.session.customizations,
+            appearance_opener=self._open_look_from_account, parent=self)
+        self.accounts_sheet = AccountsSheet(self.accounts_backend, is_dark=self._is_dark())
+        self.register_sheet(SHEET_ACCOUNTS, self.accounts_sheet)
+        self.accounts_sheet.launch_login_finished.connect(self._on_launch_login_finished)
+        # Accounts whose launch is waiting for a password, in the order they
+        # were launched; the first is the one being asked for.
+        self._login_requests: list[str] = []
+        self._return_to_account: str | None = None
+        self.launch_tab.launcher_sheet_closed.connect(self._on_launcher_sheet_closed)
+        self.launch_tab.set_accounts_router(self)
+
+    # The launcher's router (LaunchTab.set_accounts_router).
+
+    def show_for(self, target: str, account_id: str | None = None) -> None:
+        """Bring the window in front of the user because something needs
+        them here: ``target`` says what ("accounts", "account",
+        "add_account", "fix_login", "launch_login"), ``account_id`` whose.
+        The one place the Accounts routes show the window from."""
+        del target, account_id
+        self.show_window()
+
+    def open_list(self) -> None:
+        self.show_for("accounts")
+        self.accounts_sheet.show_list()
+        self.open_sheet(SHEET_ACCOUNTS)
+
+    def open_account(self, account_id: str) -> None:
+        self.show_for("account", account_id)
+        self.open_sheet(SHEET_ACCOUNTS)
+        account = self.accounts_backend.account(account_id)
+        if account is not None and account.login == "failed" and not account.running:
+            self.accounts_sheet.open_fix_login(account_id)
+        else:
+            self.accounts_sheet.open_account(account_id)
+
+    def open_add(self, game: str) -> None:
+        self.show_for("add_account")
+        self.open_sheet(SHEET_ACCOUNTS)
+        self.accounts_sheet.open_add_form(game)
+
+    def open_fix(self, account_id: str) -> None:
+        self.show_for("fix_login", account_id)
+        self.open_sheet(SHEET_ACCOUNTS)
+        self.accounts_sheet.open_fix_login(account_id)
+
+    def request_login(self, game: str, account_id: str) -> None:
+        """An account was launched with nothing to sign in with: ask for its
+        password. Several at once (a party) are asked one after another;
+        the accounts that have a login launch meanwhile."""
+        del game
+        if account_id not in self._login_requests:
+            self._login_requests.append(account_id)
+        if self.accounts_sheet.launch_login_account() is None:
+            self._ask_next_login()
+
+    def _ask_next_login(self) -> None:
+        while self._login_requests:
+            account_id = self._login_requests[0]
+            self.show_for("launch_login", account_id)
+            self.open_sheet(SHEET_ACCOUNTS)
+            if self.accounts_sheet.open_launch_login(account_id):
+                return
+            self._login_requests.pop(0)         # the account is gone
+
+    def _on_launch_login_finished(self, account_id: str, launched: bool) -> None:
+        if account_id in self._login_requests:
+            self._login_requests.remove(account_id)
+        if self._login_requests:
+            # After this answer has finished being handled.
+            QTimer.singleShot(0, self._ask_next_login)
+        elif launched and self.open_sheet_name() == SHEET_ACCOUNTS:
+            self.open_sheet(None)               # back to the launcher, logging in
+
+    def _open_look_from_account(self, account_id: str, game: str, toon_name: str) -> None:
+        """A toon slot's pencil: the launcher's Appearance editor on that
+        toon. Closing the editor comes back to the account's page."""
+        self._return_to_account = account_id
+        self.open_sheet(None)
+        if not self.launch_tab.open_appearance_for_toon(game, toon_name, account_id):
+            self._return_to_account = None
+
+    def _on_launcher_sheet_closed(self) -> None:
+        account_id, self._return_to_account = self._return_to_account, None
+        if account_id is not None and self.accounts_backend.account(account_id) is not None:
+            self.open_sheet(SHEET_ACCOUNTS)
+            self.accounts_sheet.open_account(account_id)
+
     def _on_settings_header(self, title: str, sub: str) -> None:
         if self.open_sheet_name() == SHEET_SETTINGS:
             self.sheet_host.set_header(title, sub)
@@ -649,6 +749,11 @@ class LaunchpadWindow(QMainWindow):
         if name not in SHEET_TITLES:
             raise ValueError(f"unknown sheet {name!r}")
         was_open = self.open_sheet_name() == name
+        if content.parent() is None:
+            # Owned by the window from the start (the host adopts it when it
+            # is first opened), so it goes when the window goes.
+            content.setParent(self.sheet_host)
+            content.hide()
         self._sheets[name] = content
         self._sheet_names = {id(widget): key for key, widget in self._sheets.items()}
         if was_open:
@@ -676,6 +781,9 @@ class LaunchpadWindow(QMainWindow):
         content = self._sheets.get(name)
         if content is None:
             content = self._build_sheet(name)
+            if content.parent() is None:
+                content.setParent(self.sheet_host)
+                content.hide()
             self._sheets[name] = content
             self._sheet_names[id(content)] = name
         return content
@@ -698,14 +806,24 @@ class LaunchpadWindow(QMainWindow):
             content.set_game(self._launcher_game())
         title, sub = SHEET_TITLES[name]
         sub_of = getattr(content, "sub", None)
+        title_of = getattr(content, "title", None)
         self.sheet_host.open(
             content,
             getattr(content, "IDENTITY", SHEET_IDENTITY[name]),
-            getattr(content, "TITLE", title),
+            title_of() if callable(title_of) else getattr(content, "TITLE", title),
             sub_of() if callable(sub_of) else getattr(content, "SUB", sub))
+        attach = getattr(content, "attach_host", None)
+        if callable(attach):
+            # The sheet drives its own header and back button from here on.
+            attach(self.sheet_host)
+        else:
+            self.sheet_host.set_back(None)
 
     def _on_sheet_button(self, name: str) -> None:
-        self.open_sheet(next_open_sheet(self.open_sheet_name(), name))
+        target = next_open_sheet(self.open_sheet_name(), name)
+        if target == SHEET_ACCOUNTS and hasattr(self, "accounts_sheet"):
+            self.accounts_sheet.show_list()     # the button opens the list
+        self.open_sheet(target)
 
     def _on_sheet_content_changed(self, content) -> None:
         # The lit button is the one whose sheet is open.
@@ -714,6 +832,10 @@ class LaunchpadWindow(QMainWindow):
 
     def _on_sheet_closed(self) -> None:
         self.header.set_open_sheet(None)
+        sheet = getattr(self, "accounts_sheet", None)
+        if sheet is not None and sheet.launch_login_account() is not None:
+            # Closing the sheet on a launch question is a Cancel.
+            sheet.cancel_launch_login()
 
     # ── Header state ───────────────────────────────────────────────────────
 
