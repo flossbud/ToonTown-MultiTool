@@ -688,6 +688,13 @@ class AppearanceSheet(QWidget):
                                d.toon_name, d.is_dirty())
         self._watch(True)
 
+    def set_retarget_only(self, retarget_only: bool) -> None:
+        """The toon switcher picks whose look is edited and nothing more
+        (the primary toon is set elsewhere)."""
+        self.switcher.set_retarget_only(retarget_only)
+        self.pill.setToolTip("Edit another toon's look" if retarget_only
+                             else "Change which toon this account shows")
+
     def _on_toon_picked(self, toon_name: str) -> None:
         self._close_popovers()
         self.toon_switch_requested.emit(toon_name)

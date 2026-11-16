@@ -71,6 +71,9 @@ class GhostClicks(QObject):
             if not surface.geometry().contains(point):
                 continue
             local = point - surface.pos()
+            mask = surface.mask()
+            if not mask.isEmpty() and not mask.contains(local):
+                continue
             if not any(r.contains(local) for r in widget.input_rects()):
                 continue
             where = QPointF(local)

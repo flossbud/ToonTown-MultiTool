@@ -492,6 +492,28 @@ class KeymapManager:
         if changed:
             self._notify()
 
+    def update_set_key_by_id(self, game: str, set_id: str, action: str, key: str) -> bool:
+        """Resolve and update a stable target under one lock.
+
+        Returns False for an unknown target or unsupported action. A valid
+        unchanged binding succeeds without notifying, as with index writes.
+        """
+        if game not in GAMES or not logical_actions.supports(game, action):
+            return False
+        changed = False
+        with self._lock:
+            index = self._index_of_locked(game, set_id)
+            if index < 0:
+                return False
+            entry = self._sets[game][index]
+            if entry.get(action) != key:
+                entry[action] = key
+                self._save()
+                changed = True
+        if changed:
+            self._notify()
+        return True
+
     def next_default_name(self, game: str, exclude_index: int = -1) -> str:
         with self._lock:
             return self._next_default_name_locked(game, exclude_index)

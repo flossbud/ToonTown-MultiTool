@@ -28,6 +28,7 @@ FORM_ADD_ACCOUNT = "add_account"
 FORM_EDIT = "edit"
 FORM_FIX = "fix"
 FORM_ADD_LOGIN = "add_login"
+FORM_LAUNCH = "launch"              # asked for at launch: no saved login
 
 
 @dataclass(frozen=True)
@@ -145,16 +146,18 @@ def form_title(mode: str, game: str) -> str:
         FORM_EDIT: "Edit login",
         FORM_FIX: "Fix login",
         FORM_ADD_LOGIN: "Add login",
+        FORM_LAUNCH: "Enter password to launch",
     }[mode]
 
 
 def form_primary_text(mode: str) -> str:
-    return "Add account" if mode == FORM_ADD_ACCOUNT else "Save login"
+    return {FORM_ADD_ACCOUNT: "Add account", FORM_LAUNCH: "Launch"}.get(mode, "Save login")
 
 
 KEEP_IN_KEYRING = "Keep in system keyring"
 KEYRING_UNAVAILABLE = "Credential storage unavailable. You will type it each launch."
 USERNAME_REQUIRED = "Username is required"
+PASSWORD_REQUIRED = "Password is required"
 
 TOONS_NOTE = ("The star picks the toon this account shows on the launcher. "
               "Each toon keeps its own look.")

@@ -51,6 +51,9 @@ class LauncherPort(QObject):
         self._launch_tab = launch_tab
         self._last = tuple(self.accounts())
         launch_tab.accounts_changed.connect(self._on_launcher_changed)
+        states_changed = getattr(launch_tab, "launch_states_changed", None)
+        if states_changed is not None:
+            states_changed.connect(self._on_launcher_changed)
 
     def accounts(self) -> list:
         """Every saved account in the launcher's own order."""

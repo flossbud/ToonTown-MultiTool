@@ -125,6 +125,9 @@ class CredentialsManager:
         self._fallback_passwords: dict[str, tuple[str, float]] = {}  # id -> (password, timestamp)
         self._fallback_max_age = 3600  # 1 hour max in-memory retention
         self._fallback_lock = threading.Lock()
+        # Accounts whose in-memory password was put there on purpose, to be
+        # used and never written to the keyring (hold_password_for_session).
+        self._session_only: set[str] = set()
         self._use_keyring = True
         self._probe_complete = False
         self._legacy_fallback_deleted = False
@@ -911,6 +914,9 @@ class CredentialsManager:
         if not account_id:
             _dbg("[Credentials] _get_password called with empty account_id")
             return ""
+        held = self._session_password(account_id)
+        if held:
+            return held
         if self._macos_vault is not None:
             try:
                 return self._macos_vault.get_password(account_id)
@@ -964,9 +970,49 @@ class CredentialsManager:
         _dbg(f"[Credentials] _get_password({short_id}): returning empty")
         return ""
 
+    # ── A password for this session only ───────────────────────────────────
+
+    def hold_password_for_session(self, account_id: str, password: str) -> bool:
+        """Keep ``password`` for this account in memory only: the store used
+        when no keyring is available, with the same one-hour limit. Nothing
+        is written to the keyring or to disk, and login_status() does not
+        count it as a saved login. False for an unknown id or no password."""
+        if not password or self._entry(account_id) is None:
+            return False
+        with self._fallback_lock:
+            self._fallback_passwords[account_id] = (password, time.monotonic())
+            self._session_only.add(account_id)
+        return True
+
+    def drop_session_password(self, account_id: str) -> None:
+        """Forget a password held by hold_password_for_session."""
+        with self._fallback_lock:
+            if account_id in self._session_only:
+                self._session_only.discard(account_id)
+                self._fallback_passwords.pop(account_id, None)
+
+    def has_session_password(self, account_id: str) -> bool:
+        return bool(self._session_password(account_id))
+
+    def _session_password(self, account_id: str) -> str:
+        with self._fallback_lock:
+            if account_id not in self._session_only:
+                return ""
+            entry = self._fallback_passwords.get(account_id)
+            if entry is None or time.monotonic() - entry[1] > self._fallback_max_age:
+                self._session_only.discard(account_id)
+                self._fallback_passwords.pop(account_id, None)
+                return ""
+            return entry[0]
+
     def _set_password(self, account_id: str, password: str) -> bool:
         if not account_id:
             return False
+        # A real save replaces a password that was only being held.
+        with self._fallback_lock:
+            if account_id in self._session_only:
+                self._session_only.discard(account_id)
+                self._fallback_passwords.pop(account_id, None)
         if self._macos_vault is not None:
             try:
                 self._macos_vault.set_password(account_id, password)
@@ -992,6 +1038,8 @@ class CredentialsManager:
     def _delete_password(self, account_id: str):
         if not account_id:
             return
+        with self._fallback_lock:
+            self._session_only.discard(account_id)
         if self._macos_vault is not None:
             try:
                 self._macos_vault.delete_password(account_id)
@@ -1375,6 +1423,20 @@ class CredentialsManager:
             return LOGIN_FAILED
         if a.get("game", "ttr") == "cc" and self.get_launcher_token(account_id):
             return LOGIN_SAVED
+        with self._fallback_lock:
+            held = account_id in self._session_only
+        if held:
+            # Held for one launch, on purpose not saved: read what is stored.
+            if self._macos_vault is not None:
+                try:
+                    stored = self._macos_vault.get_password(account_id)
+                except Exception:
+                    stored = ""
+            else:
+                ok, stored = self._try_keyring_call(
+                    keyring.get_password, keyring_service(), account_id, timeout=1.5)
+                stored = stored if ok else ""
+            return LOGIN_SAVED if stored else LOGIN_NONE
         return LOGIN_SAVED if self._get_password(account_id) else LOGIN_NONE
 
     def reorder_game(self, game: str, ordered_ids: list[str]) -> bool:
