@@ -2079,6 +2079,16 @@ def _wire_app_lifecycle(app: QApplication, window: MultiToonTool) -> None:
     app.aboutToQuit.connect(window.shutdown)
 
 
+def _main_window_class():
+    """The app's main window class for this run: the launchpad window when
+    TTMT_NEXT_UI=1, otherwise the window the app has always had."""
+    from utils.launchpad_window import next_ui_enabled
+    if next_ui_enabled():
+        from utils.launchpad_window import LaunchpadWindow
+        return LaunchpadWindow
+    return MultiToonTool
+
+
 def _platform_only_modules(platform: str) -> set[str]:
     """Modules whose top-level body imports a platform-specific library and
     therefore cannot be imported on every interpreter. `platform` is a
@@ -2147,7 +2157,7 @@ def _run_self_check() -> int:
         app = QApplication(sys.argv)
         settings = SettingsManager()
         apply_theme(app, resolve_theme(settings))
-        window = MultiToonTool()
+        window = _main_window_class()()
         app.processEvents()
         window.shutdown()        # stop service threads BEFORE the Qt/Python teardown
         window.close()
@@ -2479,7 +2489,7 @@ if __name__ == "__main__":
     app.setFont(_appfont)
     settings = SettingsManager()
     apply_theme(app, resolve_theme(settings))
-    window = MultiToonTool()
+    window = _main_window_class()()
     window.log(_ui_scale.stamp())
     if sys.platform == "win32":
         window.log(_elevation.stamp())
