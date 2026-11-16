@@ -241,3 +241,47 @@ def test_mounted_render(qapp, quiet, theme):
         assert s.keep_alive_row().label_widget.fontInfo().pixelSize() in (12, 13)
         assert host.panel.header.sub_label.fullText() == "App-wide preferences"
         win.close()
+
+
+def test_about_keeps_what_the_credits_page_had(qapp, quiet, monkeypatch):
+    s = _sheet()
+    assert s._hook.text() == "For when one toon isn't enough."
+    assert s._byline.text() in ("by flossbud", "by flossbud \U0001F43E")
+    text = s._repo.text()
+    for url in (ss.REPO_URL, ss.BUG_URL, ss.PRIVACY_URL):
+        assert f'href="{url}"' in text
+    assert "Report a bug" in text and "Privacy Policy" in text
+    # The Credits page's URLs, not new ones.
+    import inspect
+    import tabs.credits_tab as credits
+    src = inspect.getsource(credits)
+    for url in (ss.REPO_URL, ss.BUG_URL, ss.PRIVACY_URL):
+        assert url in src
+    opened = []
+    monkeypatch.setattr("utils.open_url.open_url", lambda url: opened.append(url) or True)
+    for url in (ss.REPO_URL, ss.BUG_URL, ss.PRIVACY_URL):
+        s._repo.linkActivated.emit(url)
+    assert opened == [ss.REPO_URL, ss.BUG_URL, ss.PRIVACY_URL]
+
+
+@pytest.mark.parametrize("theme", ["dark", "light"])
+def test_about_labels_are_styled_in_both_themes(qapp, quiet, theme):
+    s = SettingsSheet(_Settings(), is_dark=theme == "dark")
+    s.set_tab("about")
+    for lbl in (s._hook, s._byline, s._about_line, s._version):
+        assert "background: transparent" in lbl.styleSheet()
+    assert s._hook.fontInfo().pixelSize() == 14
+    assert "Noto Color Emoji" in s._byline.styleSheet()
+
+
+@pytest.mark.parametrize("families,paw", [
+    (["DejaVu Sans"], False),
+    (["DejaVu Sans", "Noto Color Emoji"], True),
+    (["Segoe UI", "Segoe UI Emoji"], True),
+])
+def test_byline_paw_only_with_an_emoji_font(monkeypatch, families, paw):
+    from PySide6.QtGui import QFontDatabase
+    monkeypatch.setattr(QFontDatabase, "families", staticmethod(lambda *a: families))
+    text = ss._byline_text()
+    assert text.startswith("by flossbud")
+    assert ("\U0001F43E" in text) is paw

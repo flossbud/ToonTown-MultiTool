@@ -29,7 +29,9 @@ import os
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPixmap
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QScrollArea, QToolButton, QWidget
+from PySide6.QtWidgets import (
+    QApplication, QHBoxLayout, QLabel, QScrollArea, QToolButton, QWidget,
+)
 
 from utils import settings_keys as sk
 from utils.color_math import alpha
@@ -47,8 +49,24 @@ TABS = (("settings", "Settings"), ("logs", "Logs"), ("about", "About"))
 SUBS = {"settings": "App-wide preferences", "logs": "What the app has been doing",
         "about": "ToonTown MultiTool"}
 REPO_URL = "https://github.com/flossbud/ToonTown-MultiTool"
-ABOUT_LINE = ("A multitoon controller for Toontown Rewritten and Corporate Clash. "
-              "Made by Flossbud.")
+# The Credits page's links and lines, kept when its page goes (same URLs as
+# tabs/credits_tab.py).
+BUG_URL = "https://github.com/flossbud/ToonTown-MultiTool/issues/new"
+PRIVACY_URL = "https://github.com/flossbud/ToonTown-MultiTool/blob/main/PRIVACY.md"
+ABOUT_HOOK = "For when one toon isn't enough."
+ABOUT_LINE = "A multitoon controller for Toontown Rewritten and Corporate Clash."
+ABOUT_BYLINE = "by flossbud"
+PAW = "\U0001F43E"
+EMOJI_FONTS = ("Noto Color Emoji", "Noto Emoji", "Segoe UI Emoji", "Apple Color Emoji")
+EMOJI_FAMILIES = ", ".join(f'"{f}"' for f in EMOJI_FONTS)
+
+
+def _byline_text() -> str:
+    """The Credits byline, with its paw only where a font can draw it: with
+    no emoji font the paw is an empty box."""
+    from PySide6.QtGui import QFontDatabase
+    families = set(QFontDatabase.families())
+    return f"{ABOUT_BYLINE} {PAW}" if families & set(EMOJI_FONTS) else ABOUT_BYLINE
 
 FEATURES = ("#0077ff", "Features")
 STRIPS = ("#1fb8a6", "Float strips")
@@ -482,7 +500,6 @@ class SettingsSheet(QWidget):
 
     def _build_about_page(self) -> QWidget:
         from utils import build_info
-        from utils.open_url import open_url
         page = QWidget()
         page.setStyleSheet("background: transparent;")
         lay = sheet_stack(page)
@@ -493,15 +510,25 @@ class SettingsSheet(QWidget):
         self._version = QLabel(build_info.version_string())
         self._version.setAlignment(Qt.AlignHCenter)
         self.about_card.add_row(self._version)
+        self._hook = QLabel(ABOUT_HOOK)
+        self._hook.setWordWrap(True)
+        self._hook.setAlignment(Qt.AlignHCenter)
+        self.about_card.add_row(self._hook)
         self._about_line = QLabel(ABOUT_LINE)
         self._about_line.setWordWrap(True)
         self._about_line.setAlignment(Qt.AlignHCenter)
         self.about_card.add_row(self._about_line)
+        self._byline = QLabel(_byline_text())
+        self._byline.setAlignment(Qt.AlignHCenter)
+        self.about_card.add_row(self._byline)
         self._repo = QLabel()
         self._repo.setAlignment(Qt.AlignHCenter)
         self._repo.setTextFormat(Qt.RichText)
         self._repo.setTextInteractionFlags(Qt.TextBrowserInteraction)
-        self._repo.linkActivated.connect(open_url)
+        self._repo.setWordWrap(True)
+        # Through utils.open_url (Qt's own opener fails inside an AppImage;
+        # see tabs/credits_tab.py).
+        self._repo.linkActivated.connect(self._open_link)
         self.about_card.add_row(self._repo)
         lay.addWidget(self.about_card)
         return page
@@ -521,11 +548,26 @@ class SettingsSheet(QWidget):
         self._about_line.setStyleSheet(
             f"QLabel {{ font-size: 12px; color: {pal['text_secondary']};"
             " background: transparent; border: none; }")
+        self._hook.setStyleSheet(
+            f"QLabel {{ font-size: 14px; font-weight: 600; color: {pal['text']};"
+            " background: transparent; border: none; }")
+        self._byline.setStyleSheet(
+            f"QLabel {{ font-size: 13px; font-weight: 700; color: {pal['text']};"
+            f" font-family: \"{QApplication.font().family()}\", {EMOJI_FAMILIES};"
+            " background: transparent; border: none; }")
         link = "#6ba8f0" if self._is_dark else "#1d4ed8"
-        self._repo.setText(f'<a href="{REPO_URL}" style="color:{link};">'
-                           "github.com/flossbud/ToonTown-MultiTool</a>")
+        sep = f'<span style="color:{pal["text_muted"]};">&nbsp;&nbsp;\u00b7&nbsp;&nbsp;</span>'
+        self._repo.setText(
+            f'<a href="{REPO_URL}" style="color:{link};">'
+            "github.com/flossbud/ToonTown-MultiTool</a>" + sep
+            + f'<a href="{BUG_URL}" style="color:{link};">Report a bug</a>' + sep
+            + f'<a href="{PRIVACY_URL}" style="color:{link};">Privacy Policy</a>')
         self._repo.setStyleSheet(
             "QLabel { font-size: 12px; background: transparent; border: none; }")
+
+    def _open_link(self, url: str) -> None:
+        from utils import open_url as opener
+        opener.open_url(url)
 
     # ── events ──────────────────────────────────────────────────────────
     def showEvent(self, event) -> None:
