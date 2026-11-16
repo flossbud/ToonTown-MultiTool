@@ -506,9 +506,11 @@ class ToonSession(QObject):
         """Stop broadcasting ("Stop all toons").
 
         The InputService thread, window detection and toon polling keep
-        running; every toon is reported as not enabled to InputService, the
-        keep-alive loop stops and click sync pauses. Each toon keeps its own
-        flags, so ``start()`` restores exactly what was there.
+        running, so the toons stay listed. Every toon is reported as not
+        enabled to InputService and its key routing is suspended (no grabs:
+        the focused game window gets its keys natively), the keep-alive loop
+        stops and click sync pauses. Each toon keeps its own flags, so
+        ``start()`` restores exactly what was there.
         """
         self._set_running(False)
 
@@ -876,15 +878,28 @@ class ToonSession(QObject):
     def _set_running(self, running: bool) -> None:
         if running == self._running or self._shut_down:
             return
+        if not running:
+            # Before the toons read as not enabled: the router releases the
+            # keys it is holding down for the toons that were.
+            self._apply_routing_suspended(True)
         self._running = running
         self._apply_click_sync_master()
         self._publish()
+        if running:
+            self._apply_routing_suspended(False)
         if running:
             self._log("[Service] Multitoon service started.", level="ok")
             self._schedule_fetch()
         else:
             self._log("[Service] Multitoon service stopped.")
         self.running_changed.emit(running)
+
+    def _apply_routing_suspended(self, suspended: bool) -> None:
+        # While stopped the router must not grab keys: it re-delivers a
+        # grabbed key only to an enabled toon, and none is enabled.
+        suspend = getattr(self._input_service, "set_routing_suspended", None)
+        if suspend is not None:
+            suspend(suspended)
 
     def _refresh_is_coalesced(self, now: float) -> bool:
         """True when a refresh asked for at monotonic ``now`` falls inside the
