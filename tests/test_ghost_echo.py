@@ -28,7 +28,7 @@ from PySide6.QtCore import QObject, QPoint, QPointF, QRect, Signal
 from PySide6.QtGui import QColor, QImage, QPainterPath, QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 
-from tabs.multitoon import _ghost_cursors as gc
+from utils import ghost_cursors as gc
 from utils.overlay.ghost_echo import GhostEchoLayer
 
 # The cluster harness (stub provider/window/surface + geometry constants) is
@@ -356,7 +356,7 @@ def _sync_ghost_frames():
     frame cadence. This suite asserts synchronously after each emit, so
     flush the sampled points right after every pointer event; the paced
     path itself is pinned by tests/test_ghost_frame_pacing.py."""
-    from tabs.multitoon._ghost_cursors import GhostCursorController
+    from utils.ghost_cursors import GhostCursorController
     orig = GhostCursorController._on_pointer_event
 
     def synced(self, payload):

@@ -18,7 +18,7 @@ import pytest
 from PySide6.QtCore import QRect
 from PySide6.QtGui import QRegion
 
-from tabs.multitoon._ghost_cursors import (
+from utils.ghost_cursors import (
     CURSOR_SIZE,
     HOTSPOT,
     GhostCursorController,
@@ -114,7 +114,7 @@ def _gated(ctl, snap_holder):
 
 
 def test_region_inputs_scanned_once_per_snapshot_identity(ctl, monkeypatch):
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     holder = {"snap": [(GAME, (0, 0, 1600, 1200), 777)]}
     _gated(ctl, holder)
     scans = []

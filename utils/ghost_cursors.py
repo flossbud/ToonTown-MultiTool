@@ -53,8 +53,7 @@ def _cursor_path(slot: int) -> str:
     relative (same convention as utils/cc_race_assets.py)."""
     base = getattr(
         sys, "_MEIPASS",
-        os.path.dirname(os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__)))),
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     )
     return os.path.join(base, "assets", "cursors", f"toon{slot + 1}.png")
 

@@ -389,7 +389,7 @@ class GhostRendererCore:
             ov.hide_now()
             return
         if CANVAS_MODE:
-            from tabs.multitoon._ghost_cursors import HOTSPOT
+            from utils.ghost_cursors import HOTSPOT
             canvas = self._canvas_for(x, y)
             if canvas is None:
                 return
@@ -423,7 +423,7 @@ class GhostRendererCore:
         if not wid or os.environ.get("TTMT_GHOST_UNCONFINED") == "1":
             return None
         from PySide6.QtCore import QRect
-        from tabs.multitoon._ghost_cursors import (
+        from utils.ghost_cursors import (
             CURSOR_SIZE, HOTSPOT, _darwin_zorder_snapshot,
             _region_from_inputs, _scan_region_inputs,
         )
@@ -470,7 +470,7 @@ class GhostRendererCore:
             return ov
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QGuiApplication, QPixmap
-        from tabs.multitoon._ghost_cursors import (
+        from utils.ghost_cursors import (
             CURSOR_SIZE, SLOT_COUNT, GhostCursorOverlay, _cursor_path,
         )
         if not 0 <= slot < SLOT_COUNT:

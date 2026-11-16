@@ -84,7 +84,7 @@ def test_normalize_unknown_and_none_return_default():
 
 
 def test_effective_keyset_dynamic_all_default_keyset():
-    from tabs.multitoon._tab import compute_effective_chat_enabled
+    from services.chat_handling import compute_effective_chat_enabled
     assert compute_effective_chat_enabled(
         mode="keyset_dynamic", raw_chat=[True]*4,
         enabled_toons=[True]*4, assignments=[0, 0, 0, 0],
@@ -92,7 +92,7 @@ def test_effective_keyset_dynamic_all_default_keyset():
 
 
 def test_effective_keyset_dynamic_one_non_default_keyset():
-    from tabs.multitoon._tab import compute_effective_chat_enabled
+    from services.chat_handling import compute_effective_chat_enabled
     assert compute_effective_chat_enabled(
         mode="keyset_dynamic", raw_chat=[True]*4,
         enabled_toons=[True]*4, assignments=[0, 1, 0, 0],
@@ -100,7 +100,7 @@ def test_effective_keyset_dynamic_one_non_default_keyset():
 
 
 def test_effective_keyset_dynamic_disabled_toon():
-    from tabs.multitoon._tab import compute_effective_chat_enabled
+    from services.chat_handling import compute_effective_chat_enabled
     assert compute_effective_chat_enabled(
         mode="keyset_dynamic", raw_chat=[True]*4,
         enabled_toons=[True, False, True, True], assignments=[0, 0, 0, 0],
@@ -108,7 +108,7 @@ def test_effective_keyset_dynamic_disabled_toon():
 
 
 def test_effective_keyset_dynamic_short_assignments():
-    from tabs.multitoon._tab import compute_effective_chat_enabled
+    from services.chat_handling import compute_effective_chat_enabled
     assert compute_effective_chat_enabled(
         mode="keyset_dynamic", raw_chat=[True]*4,
         enabled_toons=[True]*4, assignments=[0, 0],
@@ -116,7 +116,7 @@ def test_effective_keyset_dynamic_short_assignments():
 
 
 def test_effective_per_toon_returns_raw():
-    from tabs.multitoon._tab import compute_effective_chat_enabled
+    from services.chat_handling import compute_effective_chat_enabled
     assert compute_effective_chat_enabled(
         mode="per_toon", raw_chat=[True, False, True, False],
         enabled_toons=[True]*4, assignments=[1, 1, 1, 1],
@@ -124,7 +124,7 @@ def test_effective_per_toon_returns_raw():
 
 
 def test_effective_focused_only_is_all_false():
-    from tabs.multitoon._tab import compute_effective_chat_enabled
+    from services.chat_handling import compute_effective_chat_enabled
     assert compute_effective_chat_enabled(
         mode="focused_only", raw_chat=[True]*4,
         enabled_toons=[True]*4, assignments=[0, 0, 0, 0],
@@ -132,7 +132,7 @@ def test_effective_focused_only_is_all_false():
 
 
 def test_effective_all_toons_enabled_only():
-    from tabs.multitoon._tab import compute_effective_chat_enabled
+    from services.chat_handling import compute_effective_chat_enabled
     assert compute_effective_chat_enabled(
         mode="all_toons", raw_chat=[False]*4,
         enabled_toons=[True, False, True, True], assignments=[1, 1, 1, 1],
@@ -140,7 +140,7 @@ def test_effective_all_toons_enabled_only():
 
 
 def test_effective_length_follows_enabled_toons():
-    from tabs.multitoon._tab import compute_effective_chat_enabled
+    from services.chat_handling import compute_effective_chat_enabled
     assert compute_effective_chat_enabled(
         mode="keyset_dynamic", raw_chat=[True]*4,
         enabled_toons=[True, True], assignments=[0, 1],
@@ -202,7 +202,7 @@ def test_apply_mode_hides_all_buttons_for_focused_only():
 def test_effective_per_toon_short_raw_chat_pads_false():
     """per_toon length-normalizes: missing raw_chat indices -> False, never
     an IndexError."""
-    from tabs.multitoon._tab import compute_effective_chat_enabled
+    from services.chat_handling import compute_effective_chat_enabled
     assert compute_effective_chat_enabled(
         mode="per_toon", raw_chat=[True], enabled_toons=[True, True, True],
         assignments=[0, 0, 0],

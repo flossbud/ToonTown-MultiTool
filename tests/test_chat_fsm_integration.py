@@ -325,7 +325,7 @@ class TestKeepAliveGate:
 
     def test_dispatch_cycle_respects_gate_and_fails_open(self, monkeypatch, tmp_path):
         monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
-        from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+        from services.keep_alive import dispatch_keep_alive_cycle as _dispatch_keep_alive_cycle
         from utils.keymap_manager import KeymapManager
         from utils.game_registry import GameRegistry
         monkeypatch.setattr(
