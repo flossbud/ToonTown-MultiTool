@@ -127,6 +127,13 @@ def paint_card_caret(p, card: QRectF, cx: float, colour, fill, size: float,
     p.drawLine(tip, QPointF(cx + half, edge + base * 0.25))
 
 
+def path_region(path: QPainterPath, scale: float = 1.0):
+    """The pixels a filled path covers, as a region (for window shapes)."""
+    from PySide6.QtGui import QRegion, QTransform
+    polygon = path.toFillPolygon(QTransform().scale(scale, scale)).toPolygon()
+    return QRegion(polygon) if not polygon.isEmpty() else QRegion()
+
+
 # -- glow -------------------------------------------------------------------
 
 _GLOW_STEP = 0.5

@@ -66,6 +66,8 @@ class PopoverSurface(QWidget):
                 except Exception:
                     pass
             self.setWindowOpacity(0.0)
+            if self._strategy.shaped():
+                self._apply_shape(False)
             self.show()
         else:
             self._present()
@@ -170,6 +172,32 @@ class PopoverSurface(QWidget):
             region = region.intersected(mask)
         return region
 
+    def _apply_shape(self, shown: bool) -> None:
+        """No compositor: cut the window to what the content paints."""
+        try:
+            backed = getattr(self.content, "set_backed", None)
+            if callable(backed):
+                backed(True)
+            shape = getattr(self.content, "shape_region", None)
+            region = shape() if callable(shape) else QRegion(self.content.rect())
+            self._strategy.set_shape(self, region if shown else QRegion())
+            self._shape_set = True
+        except Exception:
+            pass
+
+    def refresh_presentation(self) -> None:
+        """A compositing manager came or went."""
+        if not self._strategy.shaped() and getattr(self, "_shape_set", False):
+            self._shape_set = False
+            try:
+                backed = getattr(self.content, "set_backed", None)
+                if callable(backed):
+                    backed(False)
+                self._strategy.set_shape(self, None)
+            except Exception:
+                pass
+        self._present()
+
     def refresh_input(self) -> None:
         """The content's clickable area changed."""
         self._present()
@@ -185,4 +213,6 @@ class PopoverSurface(QWidget):
                 self, self.input_region() if shown else QRegion())
         except Exception:
             pass
+        if self._strategy.shaped():
+            self._apply_shape(shown)
         self.setWindowOpacity(1.0 if shown else 0.0)

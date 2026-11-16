@@ -9,6 +9,8 @@ small interface and never to a platform API:
                      transient for the game window and restacked right above
                      it. The window manager then keeps it there: covered when
                      the game is covered, minimized with it. Nothing computed.
+                     With no compositing manager the windows are shaped to
+                     what they paint instead of being translucent.
   win32-topmost-gate Windows. A topmost tool window, masked every 100 ms to
                      the part of the game window no foreign window covers.
   cocoa-panel-gate   macOS. A non-activating panel at a floating level with
@@ -27,6 +29,7 @@ from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QGuiApplication, QRegion
 
 from utils import screen_coords, x11_transient
+from utils.strips import x11_shape
 
 _BASE_FLAGS = Qt.FramelessWindowHint | Qt.WindowDoesNotAcceptFocus
 
@@ -42,6 +45,19 @@ class AttachStrategy:
 
     def window_flags(self):
         return Qt.Window | _BASE_FLAGS | Qt.WindowStaysOnTopHint
+
+    def shaped(self) -> bool:
+        """True when translucency is not available and a surface must cut
+        itself to what it paints (X11 with no compositing manager)."""
+        return False
+
+    def refresh(self) -> bool:
+        """Look at the desktop again; True when shaped() changed."""
+        return False
+
+    def set_shape(self, surface, region: QRegion | None) -> None:
+        """Shaped strategies: show only `region` (surface-local, logical px);
+        an empty region shows nothing; None gives the whole window back."""
 
     def prepare(self, surface, backend) -> None:
         """Native handle exists, window not mapped yet."""
@@ -82,8 +98,30 @@ class X11TransientAttach(AttachStrategy):
 
     name = "x11-transient"
 
+    def __init__(self) -> None:
+        self._shaped = not x11_shape.composited()
+
     def window_flags(self):
         return Qt.Window | _BASE_FLAGS
+
+    def shaped(self) -> bool:
+        return self._shaped
+
+    def refresh(self) -> bool:
+        now = not x11_shape.composited()
+        changed, self._shaped = now != self._shaped, now
+        return changed
+
+    def set_shape(self, surface, region: QRegion | None) -> None:
+        wid = int(surface.winId())
+        if region is None:
+            x11_shape.clear_bounding(wid)
+            return
+        ratio = self.region_ratio(surface)
+        x11_shape.set_bounding(wid, [
+            (round(r.x() * ratio), round(r.y() * ratio),
+             max(1, round(r.width() * ratio)), max(1, round(r.height() * ratio)))
+            for r in region])
 
     def prepare(self, surface, backend) -> None:
         x11_transient.premap_skip_lists(int(surface.winId()))
