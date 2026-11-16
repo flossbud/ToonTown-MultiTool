@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 from utils.shared_widgets import PulsingDot
 from utils.toon_renders import AWAITING_RENDER_TOOLTIP, PREVIOUS_LOOK_TOOLTIP, ToonRenders
 from utils.toon_silhouette import paint_race_silhouette
-from utils.widgets.account_tile import summarize_error
+from utils.error_summary import summarize_error
 from utils.widgets.grandstand import palette as gp
 from utils.widgets.grandstand.model import CARD_POSE, PORTRAIT_RENDER
 

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from PySide6.QtWidgets import QApplication
 
-import tabs.settings_tab as st
+import utils.widgets.settings_rows as st
 import tabs.launch_tab as lt
 
 
@@ -28,9 +28,9 @@ def test_max_per_game_ignores_stored_setting_value(qapp):
     assert tab._max_per_game() == 16
 
 
-def test_settings_tab_has_no_max_accounts_signal():
-    assert not hasattr(st.SettingsTab, "max_accounts_changed")
-    assert not hasattr(st.SettingsTab, "_on_max_accounts_changed")
+def test_settings_rows_have_no_max_accounts_signal():
+    assert not hasattr(st.SettingsRows, "max_accounts_changed")
+    assert not hasattr(st.SettingsRows, "_on_max_accounts_changed")
 
 
 def test_launch_tab_ceiling_is_16():

@@ -2,7 +2,7 @@
 route the binary-existence check through engine_binary_path so a data dir whose
 nested .app bundle holds TTREngine validates and stores.
 
-The browse test patches settings_tab.engine_binary_path to the macOS nesting
+The browse test patches settings_rows.engine_binary_path to the macOS nesting
 directly (rather than a global sys.platform patch, which would perturb tab
 construction), and creates the real nested file so os.path.isfile passes."""
 import os
@@ -31,7 +31,7 @@ class _SettingsStub:
         pass
 
 
-def _quiet_autodetect(monkeypatch, settings_tab):
+def _quiet_autodetect(monkeypatch, settings_rows):
     # Keep tab construction deterministic regardless of host. On a machine with
     # TTR actually installed, SettingsTab construction silently auto-detects and
     # pre-stores ttr_engine_dir (via find_engine_path), which would mask what
@@ -44,8 +44,9 @@ def _quiet_autodetect(monkeypatch, settings_tab):
 
 
 def test_browse_validates_macos_data_dir_with_nested_bundle(qapp, tmp_path, monkeypatch):
-    from tabs import settings_tab
-    _quiet_autodetect(monkeypatch, settings_tab)
+    from utils.widgets import settings_rows
+    from tests._settings_rows_harness import RowsUnderTest
+    _quiet_autodetect(monkeypatch, settings_rows)
     data_dir = tmp_path / "Toontown Rewritten"
     nested = data_dir / "Toontown Rewritten.app" / "Contents" / "MacOS"
     nested.mkdir(parents=True)
@@ -60,14 +61,15 @@ def test_browse_validates_macos_data_dir_with_nested_bundle(qapp, tmp_path, monk
         staticmethod(lambda *a, **k: str(data_dir)),
     )
     settings = _SettingsStub()
-    tab = settings_tab.SettingsTab(settings_manager=settings)
+    tab = RowsUnderTest(settings_manager=settings)
     tab._game_path_browse("ttr")
     assert settings.get("ttr_engine_dir") == str(data_dir)
 
 
 def test_browse_rejects_macos_dir_without_bundle(qapp, tmp_path, monkeypatch):
-    from tabs import settings_tab
-    _quiet_autodetect(monkeypatch, settings_tab)
+    from utils.widgets import settings_rows
+    from tests._settings_rows_harness import RowsUnderTest
+    _quiet_autodetect(monkeypatch, settings_rows)
     data_dir = tmp_path / "Empty"
     data_dir.mkdir()
     monkeypatch.setattr(
@@ -80,17 +82,18 @@ def test_browse_rejects_macos_dir_without_bundle(qapp, tmp_path, monkeypatch):
         staticmethod(lambda *a, **k: str(data_dir)),
     )
     settings = _SettingsStub()
-    tab = settings_tab.SettingsTab(settings_manager=settings)
+    tab = RowsUnderTest(settings_manager=settings)
     tab._game_path_browse("ttr")
     assert settings.get("ttr_engine_dir") is None
 
 
 def test_auto_detect_stores_ttr_data_dir(qapp, tmp_path, monkeypatch):
-    from tabs import settings_tab
-    _quiet_autodetect(monkeypatch, settings_tab)
+    from utils.widgets import settings_rows
+    from tests._settings_rows_harness import RowsUnderTest
+    _quiet_autodetect(monkeypatch, settings_rows)
     data_dir = str(tmp_path / "Toontown Rewritten")
     monkeypatch.setattr(settings_rows, "find_engine_path", lambda: data_dir)
     settings = _SettingsStub()
-    tab = settings_tab.SettingsTab(settings_manager=settings)
+    tab = RowsUnderTest(settings_manager=settings)
     tab._game_path_auto_detect("ttr")
     assert settings.get("ttr_engine_dir") == data_dir

@@ -47,9 +47,9 @@ def _features_field(tab, label):
 
 
 def test_features_page_has_pink_click_sync_card(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     from utils.widgets.card_surface import CardSurface
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     cards = tab.pages["features"].findChildren(CardSurface)
     pink = [c for c in cards if c.accent_key == "pink"]
     assert len(pink) == 1
@@ -62,9 +62,9 @@ def test_features_card_order_keep_alive_click_sync_chat(qapp, settings_manager):
     user sees), not findChildren -- findChildren reflects QObject creation
     order, which can diverge from layout order if an insertWidget index is
     wrong. All four Features cards are v2 CardSurfaces."""
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     from utils.widgets.card_surface import CardSurface
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     layout = tab.pages["features"]._panel_layout
     titles = []
     for i in range(layout.count()):
@@ -77,10 +77,11 @@ def test_features_card_order_keep_alive_click_sync_chat(qapp, settings_manager):
 def test_click_sync_toggle_lives_inside_the_pink_card(qapp, settings_manager):
     """The toggle must live INSIDE the pink Click Sync card, not merely
     somewhere on the Features page."""
-    from tabs.settings_tab import SettingsTab, Switch
+    from tests._settings_rows_harness import RowsUnderTest
+    from utils.shared_widgets import Switch
     from utils.widgets.card_surface import CardSurface
     from utils.widgets.inset_row import InsetRow
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     pink = next(
         c for c in tab.pages["features"].findChildren(CardSurface)
         if c.accent_key == "pink"
@@ -96,8 +97,8 @@ def test_click_sync_toggle_lives_inside_the_pink_card(qapp, settings_manager):
 
 
 def test_click_sync_toggle_default_off(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab
-    tab = SettingsTab(settings_manager)
+    from tests._settings_rows_harness import RowsUnderTest
+    tab = RowsUnderTest(settings_manager)
     field = _features_field(tab, "Enable Click Sync")
     assert field.control_widget.isChecked() is False
 
@@ -105,18 +106,18 @@ def test_click_sync_toggle_default_off(qapp, settings_manager):
 def test_click_sync_toggle_reflects_persisted_enabled(qapp, settings_manager):
     """When CLICK_SYNC_ENABLED is already True in settings, the switch must
     render checked on build (spec: initial value reads the stored key)."""
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     from utils.settings_keys import CLICK_SYNC_ENABLED
     settings_manager.set(CLICK_SYNC_ENABLED, True)
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     field = _features_field(tab, "Enable Click Sync")
     assert field.control_widget.isChecked() is True
 
 
 def test_click_sync_toggle_writes_setting(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     from utils.settings_keys import CLICK_SYNC_ENABLED
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     field = _features_field(tab, "Enable Click Sync")
     field.control_widget.setChecked(True)
     assert settings_manager.get(CLICK_SYNC_ENABLED) is True
@@ -125,9 +126,9 @@ def test_click_sync_toggle_writes_setting(qapp, settings_manager):
 
 
 def test_ttr_games_panel_no_longer_has_click_sync_field(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     from utils.widgets.inset_row import InsetRow
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     labels = {
         f.label_widget.text()
         for f in tab.pages["games"].findChildren(InsetRow)
@@ -138,26 +139,26 @@ def test_ttr_games_panel_no_longer_has_click_sync_field(qapp, settings_manager):
 
 
 def test_ghost_cursor_toggle_default_on(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab
-    tab = SettingsTab(settings_manager)
+    from tests._settings_rows_harness import RowsUnderTest
+    tab = RowsUnderTest(settings_manager)
     field = _features_field(tab, "Show ghost cursors")
     assert field is not None
     assert field.control_widget.isChecked() is True
 
 
 def test_ghost_cursor_toggle_reflects_persisted_off(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     from utils.settings_keys import GHOST_CURSORS_ENABLED
     settings_manager.set(GHOST_CURSORS_ENABLED, False)
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     field = _features_field(tab, "Show ghost cursors")
     assert field.control_widget.isChecked() is False
 
 
 def test_ghost_cursor_toggle_writes_setting(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     from utils.settings_keys import GHOST_CURSORS_ENABLED
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     field = _features_field(tab, "Show ghost cursors")
     field.control_widget.setChecked(False)
     assert settings_manager.get(GHOST_CURSORS_ENABLED) is False

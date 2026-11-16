@@ -36,9 +36,9 @@ def settings_manager():
 
 
 def test_games_page_has_ttr_and_cc_panels(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     from utils.widgets.card_surface import CardSurface
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     cards = tab.pages["games"].findChildren(CardSurface)
     by_kind = {c.accent_key: c for c in cards}
     assert "ttr" in by_kind
@@ -48,9 +48,10 @@ def test_games_page_has_ttr_and_cc_panels(qapp, settings_manager):
 
 
 def test_ttr_panel_has_companion_app_toggle(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab, Switch
+    from tests._settings_rows_harness import RowsUnderTest
+    from utils.shared_widgets import Switch
     from utils.widgets.inset_row import InsetRow
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     # Look for an InsetRow with the Companion App label inside the Games page.
     field = None
     for f in tab.pages["games"].findChildren(InsetRow):
@@ -64,11 +65,12 @@ def test_ttr_panel_has_companion_app_toggle(qapp, settings_manager):
 
 
 def test_cc_panel_has_hide_console_toggle(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab, Switch
+    from tests._settings_rows_harness import RowsUnderTest
+    from utils.shared_widgets import Switch
     from utils.widgets.inset_row import InsetRow
     from utils.settings_keys import CC_HIDE_LAUNCH_CONSOLE
     settings_manager.set(CC_HIDE_LAUNCH_CONSOLE, True)
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     field = None
     for f in tab.pages["games"].findChildren(InsetRow):
         if f.label_widget.text() == "Hide CC launch console":
@@ -81,10 +83,10 @@ def test_cc_panel_has_hide_console_toggle(qapp, settings_manager):
 
 
 def test_cc_panel_external_log_directory_clear(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     from utils.settings_keys import CC_EXTERNAL_LOG_DIR
     settings_manager.set(CC_EXTERNAL_LOG_DIR, "/tmp/some/path")
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     # The Clear button on the external-log row clears the setting.
     btn = None
     for b in tab.pages["games"].findChildren(__import__("PySide6.QtWidgets", fromlist=["QPushButton"]).QPushButton):
@@ -98,12 +100,12 @@ def test_cc_panel_external_log_directory_clear(qapp, settings_manager):
 
 def test_cc_panel_external_log_helper_updates_on_browse_and_clear(qapp, settings_manager, monkeypatch):
     """Browse and Clear update the helper text so users see the current value."""
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     from utils.widgets.inset_row import InsetRow
     from utils.settings_keys import CC_EXTERNAL_LOG_DIR
     from PySide6.QtWidgets import QFileDialog
     settings_manager.set(CC_EXTERNAL_LOG_DIR, "")
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     field = None
     for f in tab.pages["games"].findChildren(InsetRow):
         if f.label_widget.text() == "External CC log directory (advanced)":
@@ -130,9 +132,9 @@ def test_cc_panel_external_log_helper_updates_on_browse_and_clear(qapp, settings
 
 
 def test_ttr_panel_uses_brand_logo(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     from utils.widgets.card_surface import CardSurface
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     ttr_card = next(c for c in tab.pages["games"].findChildren(CardSurface)
                     if c.accent_key == "ttr")
     # Logo-variant badges load the bundled brand pixmap into PortraitBadge.
@@ -142,11 +144,11 @@ def test_ttr_panel_uses_brand_logo(qapp, settings_manager):
 
 def test_apply_picked_install_updates_cc_panel(qapp, settings_manager, monkeypatch):
     """Boot-time CC picker accept should refresh CC panel sub-label + persist keys."""
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     from services.wine_runtimes import WineInstall
     from utils.settings_keys import CC_ENGINE_INSTALL_SIGNATURE
 
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
 
     # Stub install matching what main.py would pass.
     install = WineInstall(

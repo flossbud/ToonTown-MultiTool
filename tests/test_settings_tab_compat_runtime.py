@@ -1,7 +1,7 @@
 """Tests for the compatibility-runtime field on the CC panel (Games page).
 
 The field appears under the CC panel and is hidden on Windows and when no
-CC install is configured. State lives on SettingsTab as:
+CC install is configured. State lives on SettingsRows as:
     tab._compat_field        — the InsetRow widget
     tab._compat_change_btn   — the Change… QPushButton
     tab._refresh_compat_runtime_row() — rebuild label from settings
@@ -63,8 +63,8 @@ def _build_tab(sm):
     """Build a SettingsTab without invoking the Games page (so we can
     construct the compat field in isolation, without depending on a real
     cc_engine_dir on disk). Returns the tab."""
-    from tabs.settings_tab import SettingsTab
-    return SettingsTab(settings_manager=sm)
+    from tests._settings_rows_harness import RowsUnderTest
+    return RowsUnderTest(settings_manager=sm)
 
 
 def test_compat_field_hidden_on_windows(qapp, tmp_path, monkeypatch):
