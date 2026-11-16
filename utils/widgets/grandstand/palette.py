@@ -227,6 +227,20 @@ _STATUS_LIGHT = {
 }
 
 
+def fix_login() -> dict:
+    """The card of an account whose last sign-in was rejected (launchpad
+    handoff, section 3): its border, and the "Fix login" pill that takes the
+    status line's place. One set for both themes, as the handoff draws it;
+    the pill's fills are QSS strings because that is where they are used."""
+    return {
+        "card_border": QColor("#d95757"),            # --red-border
+        "pill_border": "#e05252",
+        "pill_bg": "rgba(224,82,82,0.20)",
+        "pill_bg_hover": "rgba(224,82,82,0.34)",
+        "pill_text": "#ffb0b0",
+    }
+
+
 def status_ink(state: str, is_dark: bool) -> dict:
     """Footer text + dot for one card state. Unknown/idle falls to muted."""
     if is_dark:
