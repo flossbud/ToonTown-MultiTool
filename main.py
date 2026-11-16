@@ -2277,6 +2277,13 @@ def _show_or_float_at_startup(window, *, settings, env, _show=None) -> None:
 
 
 if __name__ == "__main__":
+    # Fit the fixed-size design onto small screens (a 1080p laptop at 150%
+    # has only 720 logical pixels of height; the window needs ~860). Qt reads
+    # the scale when the QApplication is constructed, so this must run first,
+    # and it runs for the helper renderer too so both processes agree.
+    from utils.ui_scale import apply_startup_ui_scale, release_qt_env
+    _ui_scale = apply_startup_ui_scale()
+
     if "--ghost-renderer" in sys.argv:
         # Ghost-renderer helper process (ledger CP17): a dedicated Qt loop
         # for cursor-class glove motion, fed over stdin by the parent app.
@@ -2321,6 +2328,8 @@ if __name__ == "__main__":
     if desktop_file_name is not None:
         QGuiApplication.setDesktopFileName(desktop_file_name)
     app = QApplication(sys.argv)
+    release_qt_env()
+    print(_ui_scale.stamp())
     app.setWindowIcon(_resolve_app_icon())
     app.setStyle(NoFocusProxyStyle(app.style()))
     if os.environ.get("TTMT_CLICK_DIAG"):
@@ -2384,6 +2393,7 @@ if __name__ == "__main__":
     settings = SettingsManager()
     apply_theme(app, resolve_theme(settings))
     window = MultiToonTool()
+    window.log(_ui_scale.stamp())
     _wire_app_lifecycle(app, window)
     from PySide6.QtCore import QLibraryInfo as _QLI
     # Render cache, part 1: import the legacy flat cache once, BEFORE the
