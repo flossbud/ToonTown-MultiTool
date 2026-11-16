@@ -1083,3 +1083,8 @@ def make_window_icon(size: int = 16, color: QColor | None = None) -> QIcon:
     p.drawLine(QPointF(3 * s, 10 * s), QPointF(21 * s, 10 * s))
     p.end()
     return QIcon(pm)
+
+
+def make_chevron_left_icon(size: int = 14, color: QColor | None = None) -> QIcon:
+    """Left chevron: back to the previous page."""
+    return _v2_polyline_icon(size, color, [[(15, 6), (9, 12), (15, 18)]])
