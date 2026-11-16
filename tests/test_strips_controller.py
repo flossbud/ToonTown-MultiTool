@@ -3,8 +3,6 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from dataclasses import replace
-
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QRegion
@@ -12,7 +10,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from services.toon_session import GAME_TTR, ToonState
-from services.toon_session_fake import FakeToonSession
+from services.toon_session_fake import DEMO_KEYSET_IDS, FakeToonSession
 from utils import settings_keys
 from utils.overlay.backend import OverlayBackend
 from utils.strips import layout as L
@@ -97,8 +95,9 @@ def rig(qapp):
         rects = {wid: (100 + 900 * i, 50, 800, 600) for i, wid in enumerate(WIDS)}
         follower = StripFollower(Strategy(), Backend(), geometry_fn=rects.get,
                                  scale=1.0)
-        controller = StripController(session, follower, keymap_manager=keymaps,
-                                     settings_manager=settings)
+        controller = StripController(
+            session, follower, keymap_manager=keymaps, settings_manager=settings,
+            keyset_ids=None if keymaps is not None else DEMO_KEYSET_IDS)
         controller.start()
         follower.tracker.stop()          # tests sample by hand
         follower.tracker.sample_now()
@@ -177,7 +176,7 @@ def test_a_new_window_gets_a_strip(rig):
     session.add_toon(ToonState(
         window_id="105", slot=3, game=GAME_TTR, name=None, species=None,
         dna=None, accent="#4a8fe7", enabled=True, keep_alive=False,
-        click_sync=False, click_sync_supported=True, keyset_id="0",
+        click_sync=False, click_sync_supported=True, keyset_id="demo-ttr-1",
         counters_locked=False, beans=None, bank=None, tokens=None, laff=None,
         max_laff=None))
     settle()
@@ -267,9 +266,9 @@ def test_only_the_changed_strip_is_rebuilt(rig):
 # -- keysets come from the keymap manager -----------------------------------------
 
 def _session_with_ids(keymaps):
-    base = FakeToonSession.demo(window_ids=WIDS)
-    toons = [replace(t, keyset_id=keymaps.sets[t.game][0]["id"]) for t in base.toons()]
-    return FakeToonSession(toons, running=True)
+    """The demo toons, all on the first real set of their game."""
+    ids = {g: [sets[0]["id"]] for g, sets in keymaps.sets.items()}
+    return FakeToonSession.demo(window_ids=WIDS, keyset_ids=ids)
 
 
 def test_buttons_are_the_visible_sets_numbered_by_position(rig):
@@ -320,17 +319,22 @@ def test_add_with_hidden_sets_asks_for_the_menu_instead(rig):
     assert asked == ["101"] and len(keymaps.sets["ttr"]) == 3
 
 
-def test_keyset_view_without_a_manager_and_with_positional_ids():
-    view = KeysetView(None)
+def test_keyset_view_maps_ids_and_numbers():
+    view = KeysetView(None, DEMO_KEYSET_IDS)
     assert view.visible_numbers("ttr") == (1, 2, 3)
-    assert view.number_for("ttr", "1") == 2 and view.id_for("ttr", 2) == "1"
+    assert view.number_for("ttr", "demo-ttr-2") == 2
+    assert view.id_for("ttr", 2) == "demo-ttr-2"
+    assert not view.can_add("ttr")            # nothing to add a set to
+    assert KeysetView(None).visible_numbers("ttr") == ()
     keymaps = Keymaps(ttr=3)
     view = KeysetView(keymaps)
     assert view.number_for("ttr", "t0000002") == 3
-    assert view.number_for("ttr", "1") == 2          # an id from before real ids
     assert view.number_for("ttr", "zzzz") == 0       # unknown: nothing lit
+    assert view.number_for("cc", "t0000002") == 0    # ids are per game
     assert view.id_for("ttr", 9) is None
     assert view.can_add("ttr")
+    keymaps.sets["ttr"] = keymaps.sets["ttr"] * 3    # nine entries: full
+    assert not view.can_add("ttr")
 
 
 # -- look, menus, pure model ----------------------------------------------------
@@ -367,7 +371,8 @@ def test_right_click_and_home_are_reported_with_the_window(rig):
 def test_build_model_is_pure():
     toon = FakeToonSession.demo().toons()[2]             # Moe, Corporate Clash
     kwargs = dict(home=False, running=True, keep_alive_available=True,
-                  click_sync_available=True, keysets=KeysetView(None))
+                  click_sync_available=True,
+                  keysets=KeysetView(None, DEMO_KEYSET_IDS))
     assert build_model(toon, **kwargs) == build_model(toon, **kwargs)
     m = build_model(toon, **kwargs)
     assert (m.name, m.game, m.keep_alive, m.click_sync, m.active) == (

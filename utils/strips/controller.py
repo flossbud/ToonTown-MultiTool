@@ -10,16 +10,11 @@ from typing import Callable
 
 from PySide6.QtCore import QObject, Signal
 
-from services.toon_session import keyset_id_for_index, keyset_index_for_id
 from utils import settings_keys
 from utils.strips import layout as L
 from utils.strips import tokens
 from utils.strips.follow import StripFollower
 from utils.strips.model import StripModel
-
-# Shown when there is no keymap manager to ask (the fake session, demos).
-_FALLBACK_SETS = 3
-
 
 class KeysetView:
     """The keysets of a game as a strip needs them: every set has an id, a
@@ -27,23 +22,24 @@ class KeysetView:
     The one place that maps between the session's keyset ids and the numbers
     on the buttons."""
 
-    def __init__(self, keymap_manager=None) -> None:
+    def __init__(self, keymap_manager=None, fixed_ids: dict | None = None) -> None:
+        """`fixed_ids` ({game: [id, ...]}, none hidden) stands in where there
+        is no keymap manager: demos and tests on the fake session."""
         self._km = keymap_manager
+        self._fixed = {g: [str(i) for i in ids]
+                       for g, ids in (fixed_ids or {}).items()}
 
     def entries(self, game: str) -> list[tuple[str, int, bool]]:
         """(id, number, hidden) for every set of `game`, in order."""
         if self._km is None:
-            return [(keyset_id_for_index(i), i + 1, False)
-                    for i in range(_FALLBACK_SETS)]
+            return [(set_id, i + 1, False)
+                    for i, set_id in enumerate(self._fixed.get(game, ()))]
         try:
             sets = self._km.get_sets(game) or []
         except Exception:
             sets = []
-        out = []
-        for index, entry in enumerate(sets):
-            set_id = entry.get("id") or keyset_id_for_index(index)
-            out.append((str(set_id), index + 1, entry.get("hidden") is True))
-        return out
+        return [(str(entry.get("id")), index + 1, entry.get("hidden") is True)
+                for index, entry in enumerate(sets) if entry.get("id")]
 
     def visible_numbers(self, game: str) -> tuple[int, ...]:
         return tuple(n for _id, n, hidden in self.entries(game) if not hidden)
@@ -53,14 +49,9 @@ class KeysetView:
 
     def number_for(self, game: str, keyset_id: str) -> int:
         """Number of the set with this id; 0 when the game has no such set."""
-        entries = self.entries(game)
-        for set_id, number, _hidden in entries:
+        for set_id, number, _hidden in self.entries(game):
             if set_id == keyset_id:
                 return number
-        # An id from before sets carried ids is a position.
-        index = keyset_index_for_id(keyset_id, default=-1)
-        if 0 <= index < len(entries) and str(keyset_id).isdigit():
-            return index + 1
         return 0
 
     def id_for(self, game: str, number: int) -> str | None:
@@ -70,7 +61,9 @@ class KeysetView:
         return None
 
     def can_add(self, game: str) -> bool:
-        return len(self.entries(game)) < tokens.MAX_SETS
+        """True while the game has room for another set (and there is a
+        keymap manager to add it to)."""
+        return self._km is not None and len(self.entries(game)) < tokens.MAX_SETS
 
 
 def build_model(toon, *, home: bool, running: bool,
@@ -114,14 +107,14 @@ class StripController(QObject):
 
     def __init__(self, session, follower: StripFollower | None = None,
                  keymap_manager=None, settings_manager=None,
-                 style: str | None = None,
+                 style: str | None = None, keyset_ids: dict | None = None,
                  portrait_fn: Callable | None = None,
                  parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._session = session
         self._keymap_manager = keymap_manager
         self._settings = settings_manager
-        self._keysets = KeysetView(keymap_manager)
+        self._keysets = KeysetView(keymap_manager, keyset_ids)
         self._portrait_fn = portrait_fn
         if style is None:
             style = self._style_from_settings()

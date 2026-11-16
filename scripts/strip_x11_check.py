@@ -172,16 +172,21 @@ class XSide:
 class Check:
     def __init__(self, shots: str | None) -> None:
         self.failed: list[str] = []
+        self.known: list[str] = []
         self.shots = shots
         self._n = 0
         if shots:
             os.makedirs(shots, exist_ok=True)
 
-    def ok(self, name: str, cond, detail="") -> bool:
-        print(f"{'PASS' if cond else 'FAIL'}  {name}" + (f"  [{detail}]" if detail else ""),
-              flush=True)
+    def ok(self, name: str, cond, detail="", known: str = "") -> bool:
+        """`known` names a limit of THIS window manager: a failure is then
+        printed as KNOWN and not counted, so the same check stays strict on
+        the window managers that matter."""
+        word = "PASS" if cond else ("KNOWN" if known else "FAIL")
+        note = detail if not (known and not cond) else f"{known}; {detail}"
+        print(f"{word}  {name}" + (f"  [{note}]" if note else ""), flush=True)
         if not cond:
-            self.failed.append(name)
+            (self.known if known else self.failed).append(name)
         return bool(cond)
 
     def shot(self, name: str) -> None:
@@ -448,6 +453,9 @@ def run(args, env, procs) -> int:
     four_windows(args, env, procs, x, chk, gx, gy)
 
     print()
+    if chk.known:
+        print(f"{len(chk.known)} KNOWN limits of this window manager: "
+              + "; ".join(chk.known))
     if chk.failed:
         print(f"{len(chk.failed)} FAILED: " + "; ".join(chk.failed))
         print("--- demo output ---\n" + "\n".join(demo.lines[-40:]))
@@ -502,10 +510,18 @@ def four_windows(args, env, procs, x, chk, gx, gy) -> None:
                and abs((s[1] + MARGIN) - (g[1] + INSET)) <= 1, f"game {g} strip {s}")
         chk.ok(f"toon {i + 1}: strip tied to its own window",
                x.prop(strips[wid], "WM_TRANSIENT_FOR") == [wid])
+    # Openbox answers a restack-next-to-a-sibling request with a plain raise,
+    # so strips mapped after several windows sit in a block above all of
+    # them until each window is next raised. KWin and mutter restack in place.
+    quirk = ("openbox raises instead of restacking next to a sibling"
+             if wm_name(x) == "Openbox" else "")
     order = x.stacking()
+    chk.ok("each strip is above its own window",
+           all(order.index(strips[w]) > order.index(w) for w in ids),
+           str([hex(w) for w in order]))
     chk.ok("each strip is directly above its own window",
            all(order.index(strips[w]) == order.index(w) + 1 for w in ids),
-           str([hex(w) for w in order]))
+           str([hex(w) for w in order]), known=quirk)
 
     def blocks_of(wid, start=0):
         last = {}
@@ -529,10 +545,14 @@ def four_windows(args, env, procs, x, chk, gx, gy) -> None:
     x.activate(ids[1])
     time.sleep(0.5)
     order = x.stacking()
-    chk.ok("raising one window carries only its own strip",
+    chk.ok("raising a window carries its own strip to the top with it",
            order.index(strips[ids[1]]) == order.index(ids[1]) + 1
-           and all(order.index(strips[w]) == order.index(w) + 1 for w in ids),
+           and order.index(strips[ids[1]]) == max(order.index(v) for v in
+                                                  list(strips.values()) + ids),
            str([hex(w) for w in order]))
+    chk.ok("and the other strips stay directly above their own windows",
+           all(order.index(strips[w]) == order.index(w) + 1 for w in ids),
+           str([hex(w) for w in order]), known=quirk)
 
     # Toon 1's window closes: its strip goes, the home block moves on.
     width_before = x.rect(strips[ids[1]])[2]

@@ -33,7 +33,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from PySide6.QtCore import QObject, QTimer, Signal            # noqa: E402
 from PySide6.QtWidgets import QApplication                    # noqa: E402
 
-from services.toon_session_fake import FakeToonSession        # noqa: E402
+from services.toon_session_fake import (DEMO_KEYSET_IDS,      # noqa: E402
+                                        FakeToonSession)
 from utils.strips.controller import StripController           # noqa: E402
 from utils.strips.follow import _platform_geometry            # noqa: E402
 
@@ -80,7 +81,8 @@ def main() -> int:
     session = FakeToonSession(
         [replace(demo[i], window_id=wid, slot=i) for i, wid in enumerate(wids)],
         running=True)
-    controller = StripController(session, style=args.style)
+    controller = StripController(session, style=args.style,
+                                 keyset_ids=DEMO_KEYSET_IDS)
     follower = controller.follower
 
     def report_blocks(wid: str) -> None:
