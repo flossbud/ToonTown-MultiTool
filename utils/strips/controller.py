@@ -195,6 +195,7 @@ class StripController(QObject):
     open_window_requested = Signal(str)         # WINDOW_MAIN | _SETTINGS | _LAUNCHER
     quit_requested = Signal()                   # the home menu's Quit MultiTool
     home_moved = Signal(str)                    # window id now carrying the home block
+    user_hidden_changed = Signal(bool)
     _keymaps_changed = Signal()
     _style_changed = Signal(str)
 
@@ -252,6 +253,7 @@ class StripController(QObject):
         self._home_wid: str | None = None
         self._home_open = False
         self._started = False
+        self._user_hidden = False
 
         session.toons_changed.connect(self._sync)
         session.toon_changed.connect(self._refresh_one)
@@ -303,6 +305,26 @@ class StripController(QObject):
         self._wired.clear()
         self._home_wid = None
 
+    def user_hidden(self) -> bool:
+        return self._user_hidden
+
+    def toggle_user_hidden(self) -> None:
+        self.set_user_hidden(not self._user_hidden)
+
+    def set_user_hidden(self, hidden: bool) -> None:
+        hidden = bool(hidden)
+        if hidden == self._user_hidden:
+            return
+        self._user_hidden = hidden
+        if hidden:
+            # Return the keyboard and release Escape before hiding surfaces.
+            self._popovers.close_all()
+        else:
+            self._refresh_all()
+        for surface in self._follower.surfaces().values():
+            surface.set_user_hidden(hidden)
+        self.user_hidden_changed.emit(hidden)
+
     def _style_from_settings(self) -> str:
         if self._settings is None:
             return tokens.NEON
@@ -353,6 +375,7 @@ class StripController(QObject):
                 self._wired.discard(wid)
         for toon in toons:
             surface = self._follower.add(toon.window_id)
+            surface.set_user_hidden(self._user_hidden)
             if toon.window_id not in self._wired:
                 self._wired.add(toon.window_id)
                 self._wire(toon.window_id, surface)

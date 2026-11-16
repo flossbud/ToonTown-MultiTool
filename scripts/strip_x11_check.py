@@ -439,6 +439,30 @@ def run(args, env, procs) -> int:
         chk.ok("focus never moved to the strip", x.active() == game, hex(x.active()))
         chk.shot("after-clicks")
 
+    # The visibility hotkey suppresses input as well as paint, then restores
+    # the current presentation without breaking the tie to the game.
+    before = x.rect(strip)
+    mark = len(demo.lines)
+    demo.send("user-hidden 1")
+    wait_for(lambda: demo.find("STRIP did user-hidden 1", mark), 3)
+    hidden = wait_for(lambda: x.opacity(strip) < 0.01
+                      and (not bare or x.bounding_rects(strip) == []), 3)
+    chk.ok("user-hidden: strip is invisible and has no painted shape", bool(hidden))
+    chk.ok("user-hidden: strip takes no input", x.input_rects(strip) == [])
+    if not args.no_pointer and ("keyset", 2) in blocks:
+        bx, by, bw, bh, dpr = blocks[("keyset", 2)]
+        smark, mark = len(standin.lines), len(demo.lines)
+        x.click(before[0] + (bx + bw / 2) * dpr, before[1] + (by + bh / 2) * dpr)
+        chk.ok("user-hidden: a click where a block was reaches the game",
+               bool(wait_for(lambda: standin.find("STANDIN-CLICK game", smark), 3)))
+        chk.ok("user-hidden: the strip did not take that click",
+               not demo.find("STRIP click", mark))
+    demo.send("user-hidden 0")
+    chk.ok("user-shown: strip is back with its input region",
+           bool(wait_for(lambda: shown() and bool(x.input_rects(strip))
+                         and (not bare or bool(x.bounding_rects(strip))), 3)))
+    placed_ok("after user-show")
+
     # 4. hide while moving, come back in place
     mark = len(demo.lines)
     seen_hidden = []
