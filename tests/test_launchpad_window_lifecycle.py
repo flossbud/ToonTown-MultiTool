@@ -263,3 +263,28 @@ def test_strip_requests_go_through_the_lifecycle(lw, monkeypatch):
 def test_the_tray_goes_in_shutdown(window):
     window.shutdown()
     assert not window.tray.is_shown()
+
+
+@pytest.mark.parametrize("target,sheet", [
+    ("settings", SHEET_SETTINGS), ("keysets", SHEET_KEYSETS), ("launcher", None),
+])
+def test_show_for_opens_the_window_on_its_target(lw, monkeypatch, target, sheet):
+    win, L = lw
+    _toons(win, monkeypatch, 1)
+    win.close()
+    win.show_for(target)
+    assert win.isVisible() and win.lifecycle.window == "visible"
+    assert win.open_sheet_name() == sheet
+
+
+def test_show_for_an_account_opens_it_in_accounts(lw, monkeypatch):
+    from utils.widgets.launchpad.header import SHEET_ACCOUNTS
+    win, L = lw
+    opened = []
+    sheet = win._sheet_content(SHEET_ACCOUNTS)
+    monkeypatch.setattr(sheet, "open_account", lambda aid, *a, **k: opened.append(aid) or True,
+                        raising=False)
+    win.close()
+    win.show_for("account", "acct-7")
+    assert win.isVisible() and win.open_sheet_name() == SHEET_ACCOUNTS
+    assert opened == ["acct-7"]
