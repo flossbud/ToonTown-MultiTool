@@ -462,6 +462,15 @@ class LaunchTab(QWidget):
         self._party_gate_ok: set[tuple[str, str]] = set()
         self._party_pending: set[tuple[str, str]] = set()
         self._shutting_down = False
+        # Set by a window that has an Accounts sheet: account pages, adding
+        # an account and a missing login are routed there (set_accounts_router).
+        self._accounts_router = None
+        # Accounts being launched on a password typed for that launch only:
+        # nothing about the login is persisted for them.
+        self._one_time_logins: set[str] = set()
+        # account_id -> toon names last announced, so a newly discovered toon
+        # (not only a change to the card) is announced once.
+        self._toon_names_seen: dict[str, tuple] = {}
 
         # Loading-state orchestration. _loading[game] is a launch-ordered list
         # of account_ids (the timer itself lives on each slot.loading_timer);
@@ -639,6 +648,9 @@ class LaunchTab(QWidget):
             species=species, accent=accent)
         if affected is None or not self._grandstand_mounted():
             return
+        names = tuple(rec.toon_name for rec in self._recent_toons.list(affected[1]))
+        new_toon = self._toon_names_seen.get(affected[1]) != names
+        self._toon_names_seen[affected[1]] = names
         # Captures arrive on every laff tick of every running toon. Repaint
         # only when one changed something the view draws: RosterEntry carries
         # no laff, so a laff-only capture compares equal and the cards — and
@@ -650,7 +662,9 @@ class LaunchTab(QWidget):
             return
         if self._grandstand_entry(game, acct) != \
                 self.grandstand.entry_for(game, account_id):
-            self._render_current_view(game)
+            self._render_current_view(game)       # announces accounts_changed
+        elif new_toon:
+            self.accounts_changed.emit()          # a toon the card does not show
 
     def set_overlay_active_provider(self, fn) -> None:
         """Install a ``() -> bool`` predicate reporting whether the transparent
@@ -1201,7 +1215,7 @@ class LaunchTab(QWidget):
         # and the view restyles its own surfaces; a rerender would only
         # rebuild every card and drop hover/focus.
         self.grandstand.add_account_requested.connect(self._on_add_account)
-        self.grandstand.manage_requested.connect(self._on_reorder)
+        self.grandstand.manage_requested.connect(self._on_manage)
         self.grandstand.game_changed.connect(self._render_grandstand)
         self.grandstand.edit_requested.connect(self._on_grandstand_edit)
         self.grandstand.official_launcher_requested.connect(self._on_launcher_clicked)
@@ -1225,6 +1239,7 @@ class LaunchTab(QWidget):
         # shown. Keep them explicitly hidden until the eventual cut-over.
         self.ttr_section.hide()
         self.cc_section.hide()
+        self._apply_accounts_router()
         for game in ("ttr", "cc"):
             self._render_grandstand(game)
 
@@ -1325,6 +1340,123 @@ class LaunchTab(QWidget):
         self._open_appearance_sheet(game, account_id, toon_name=toon_name)
         return True
 
+    # ── For a window with an Accounts sheet ────────────────────────────────
+
+    def set_accounts_router(self, router) -> None:
+        """Hand account pages to an Accounts sheet outside this tab.
+
+        ``router`` has ``open_list()``, ``open_account(account_id)``,
+        ``open_add(game)`` and ``request_login(game, account_id)``. With one
+        set, the chooser's link reads "Accounts" and opens the list, a card's
+        gear opens that account, "Add account" opens the add form, and
+        launching an account with no saved login asks for it there instead
+        of failing. None restores this tab's own pages."""
+        self._accounts_router = router
+        self._apply_accounts_router()
+
+    def _apply_accounts_router(self) -> None:
+        if not self._grandstand_mounted():
+            return
+        link = getattr(self.grandstand.shelf, "manage_link", None)
+        if link is not None:
+            link.setText("Accounts" if self._accounts_router is not None else "Manage")
+
+    def _on_manage(self, game: str) -> None:
+        if self._accounts_router is not None:
+            self._accounts_router.open_list()
+        else:
+            self._on_reorder(game)
+
+    def _ask_for_login(self, game: str, account_id: str) -> bool:
+        """An account with nothing to sign in with was launched. True when
+        someone took the question (the launch then waits for the answer)."""
+        router = self._accounts_router
+        if router is None:
+            return False
+        try:
+            router.request_login(game, account_id)
+        except Exception as exc:  # noqa: BLE001
+            self.log(f"[Launch] could not ask for a login: {exc!r}")
+            return False
+        return True
+
+    def sheet_accounts(self, game: str) -> list[dict]:
+        """One game's accounts for the Accounts sheet, in launcher order:
+        ``account`` (metadata, no password), ``state`` (LoginState),
+        ``records`` (the toons seen on it, rename ghosts collapsed, most
+        recent first) and ``primary`` (the starred toon's name or None)."""
+        out = []
+        for acct in self._ordered_accounts(game):
+            slot = self._slots[game].get(acct.id)
+            state = self._effective_state(game, slot)[0] if slot is not None \
+                else LoginState.IDLE
+            out.append({
+                "account": acct, "state": state,
+                "records": unique_toons(self._recent_toons.list(acct.id)),
+                "primary": self._recent_toons.primary_name(acct.id),
+            })
+        return out
+
+    def sheet_add_account(self, game: str, username: str, password: str) -> str | None:
+        """Add an account from the Accounts sheet; its id, or None when it
+        could not be added (the game is full, or storage refused)."""
+        if len(self._ordered_accounts(game)) >= MAX_PER_GAME:
+            return None
+        before = {a.id for a in self._ordered_accounts(game)}
+        ok = self.cred_manager.add_account(
+            label="", username=username, password=password, game=game)
+        if ok is False:
+            self.log(f"[Launch] Could not add {game.upper()} account.")
+            return None
+        self._reconcile_slots()
+        added = [a.id for a in self._ordered_accounts(game) if a.id not in before]
+        if added:
+            self._navigate_to_account(game, added[-1])
+        else:
+            self._render_current_view(game)
+            self.refresh_theme()
+        return added[-1] if added else None
+
+    def sheet_update_account(self, account_id: str, *, label: str | None = None,
+                             username: str | None = None,
+                             password: str | None = None) -> bool:
+        """Change an account's label, username or stored password (None
+        leaves a field alone; an empty password removes the stored one)."""
+        global_idx = self._global_index_of(account_id)
+        game = self.game_of_account(account_id)
+        if global_idx is None or game is None:
+            return False
+        self.cred_manager.update_account(
+            global_idx, label=label, username=username, password=password)
+        self._reconcile_slots()
+        self._render_current_view(game)
+        self.refresh_theme()
+        return True
+
+    def set_primary_toon(self, account_id: str, toon_name: str) -> None:
+        """Make ``toon_name`` the toon this account shows on the launcher."""
+        game = self.game_of_account(account_id)
+        if game is not None:
+            self._on_primary_picked(game, account_id, toon_name)
+
+    def launch_account_once(self, game: str, account_id: str, password: str) -> None:
+        """Launch on a password typed for this launch only. It is held in
+        memory for the moment the launch reads it and dropped again; nothing
+        is written to the keyring, including the token a Corporate Clash
+        sign-in earns."""
+        creds = self.cred_manager
+        if not creds.hold_password_for_session(account_id, password):
+            return
+        self._one_time_logins.add(account_id)
+        try:
+            self._on_launch(game, account_id)
+        finally:
+            creds.drop_session_password(account_id)
+            slot = self._slots[game].get(account_id)
+            if game != "cc" or slot is None or slot.worker is None:
+                # No Clash sign-in is under way that could earn a token.
+                self._one_time_logins.discard(account_id)
+
     def _on_grandstand_edit(self, game: str, account_id: str, surface: str) -> None:
         """The gear opens the account sheet; the pencil opens the appearance
         editor. Each sheet's cross-link routes here too, asking for the
@@ -1333,7 +1465,10 @@ class LaunchTab(QWidget):
             self._on_tile_edit(game, account_id)
             return
         if surface == "account":
-            self._open_account_sheet(game, account_id)
+            if self._accounts_router is not None:
+                self._accounts_router.open_account(account_id)
+            else:
+                self._open_account_sheet(game, account_id)
             return
         self._open_appearance_sheet(game, account_id)
 
@@ -1713,7 +1848,10 @@ class LaunchTab(QWidget):
         if len(self._ordered_accounts(game)) >= MAX_PER_GAME:
             return  # hard ceiling (the footer Add button is also hidden at 16)
         if self._grandstand_mounted():
-            self._open_add_sheet(game)        # sub-project C: the sheet, add mode
+            if self._accounts_router is not None:
+                self._accounts_router.open_add(game)
+            else:
+                self._open_add_sheet(game)    # sub-project C: the sheet, add mode
             return
         editor = AccountEditor(game=game, mode="add", parent=self.window())
 
@@ -1841,6 +1979,15 @@ class LaunchTab(QWidget):
         )
         if dlg.exec() != dlg.DialogCode.Accepted:
             return
+        self.delete_account_confirmed(game, account_id)
+
+    def delete_account_confirmed(self, game: str, account_id: str) -> bool:
+        """Remove an account the user has already confirmed removing (this
+        tab's own dialog, or the Accounts sheet's question). False when the
+        account is not there."""
+        global_idx = self._global_index_of(account_id)
+        if global_idx is None:
+            return False
 
         # Cancel any active worker/launcher and drop a pending loading timer.
         slot = self._slots[game].get(account_id)
@@ -1877,6 +2024,7 @@ class LaunchTab(QWidget):
             party.prune(game, {a.id for a in self._ordered_accounts(game)})
         self._render_current_view(game)
         self.refresh_theme()
+        return True
 
     def _on_tile_quit(self, game: str, account_id: str):
         """Quit the running launcher for this slot, with optional confirm."""
@@ -2143,9 +2291,14 @@ class LaunchTab(QWidget):
         # TTR still requires a password up front. CC accounts may legitimately
         # have no password (token-only model after register_and_login).
         if game == "ttr" and not acct.password:
+            if self._ask_for_login(game, account_id):
+                return
             msg = "Missing username or password. Click Edit."
             self._update_status(game, account_id, LoginState.FAILED, msg)
             self._show_failure_dialog(game, account_id, msg)
+            return
+        if game == "cc" and not acct.launcher_token and not acct.password \
+                and self._ask_for_login(game, account_id):
             return
 
         # Check if already running
@@ -2249,6 +2402,11 @@ class LaunchTab(QWidget):
         clear the password after the attempt was replaced."""
         slot = self._slots[game].get(account_id)
         if slot is None or slot.worker is not worker:
+            return
+        if account_id in self._one_time_logins:
+            # Launched on a password typed for this launch only: the token
+            # it earned is not kept either.
+            self._one_time_logins.discard(account_id)
             return
         self._persist_launcher_token(account_id, token)
 

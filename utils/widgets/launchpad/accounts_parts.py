@@ -545,6 +545,8 @@ class LoginForm(QFrame):
         self.username.setObjectName("login_username")
         self.username.setText(username)
         self.username.setFixedHeight(FIELD_H)
+        # Asked for at launch, the account is already chosen.
+        self.username.setReadOnly(mode == m.FORM_LAUNCH)
         self.password = QLineEdit(self)
         self.password.setObjectName("login_password")
         self.password.setEchoMode(QLineEdit.Password)
@@ -586,6 +588,7 @@ class LoginForm(QFrame):
         self.username.returnPressed.connect(self.submit)
         self.password.returnPressed.connect(self.submit)
         self.username.textEdited.connect(self._clear_error)
+        self.password.textEdited.connect(self._clear_error)
         self.apply_theme(self._dark)
 
     def mode(self) -> str:
@@ -611,6 +614,12 @@ class LoginForm(QFrame):
             self.error_label.show()
             self._style_fields()
             self.username.setFocus(Qt.OtherFocusReason)
+            return
+        if self._mode == m.FORM_LAUNCH and not self.password.text():
+            self.error_label.setText(m.PASSWORD_REQUIRED)
+            self.error_label.show()
+            self._style_fields()
+            self.password.setFocus(Qt.OtherFocusReason)
             return
         self.submitted.emit(username, self.password.text(), self.keep())
 
@@ -642,9 +651,11 @@ class LoginForm(QFrame):
             f"QLineEdit#{name}:focus {{ border: 1px solid {FORM_BORDER}; }}")
 
     def _style_fields(self) -> None:
-        invalid = not self.error_label.isHidden()
-        self.username.setStyleSheet(self._field_qss("login_username", invalid))
-        self.password.setStyleSheet(self._field_qss("login_password"))
+        error = self.error_text()
+        self.username.setStyleSheet(self._field_qss(
+            "login_username", error == m.USERNAME_REQUIRED))
+        self.password.setStyleSheet(self._field_qss(
+            "login_password", error == m.PASSWORD_REQUIRED))
 
     def apply_theme(self, is_dark: bool) -> None:
         self._dark = bool(is_dark)
