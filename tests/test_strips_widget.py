@@ -339,3 +339,94 @@ def test_a_real_portrait_fills_the_circle_inside_its_border(mount):
     assert close(at(image, strip, portrait, 18, 18), "#00ff00")     # the render
     assert close(at(image, strip, portrait, 18, 1), "#4a8fe7")      # border kept
     assert at(image, strip, portrait, 1, 1) == MAGENTA              # clipped round
+
+
+# -- transitions ---------------------------------------------------------------------
+
+def test_state_change_cross_fades_and_lands_on_the_new_state(mount, qapp):
+    host, strip = mount(FLOSSBUD, "flat")
+    strip.set_reduced_motion_fn(lambda: False)
+    grab(host)
+    block = strip.block_rect(L.KEEP_ALIVE)
+    strip.set_model(FLOSSBUD.with_(keep_alive=False))
+    assert strip.is_fading()
+    # Mid-fade the block is between lit and unlit, and still fully opaque.
+    strip._fade.pause()
+    strip._fade.setCurrentTime(70)
+    mid = at(grab(host), strip, block, 4, 4)
+    lit, unlit = QColor("#ff9500"), QColor(tokens.dk("#ff9500", 30))
+    assert unlit.red() + 15 < mid.red() < lit.red() - 15
+    assert mid.blue() < 30                       # no magenta showing through
+    strip._fade.setCurrentTime(140)
+    strip._end_fade()
+    assert not strip.is_fading()
+    assert close(at(grab(host), strip, block, 4, 4), unlit)
+
+
+def test_dim_fades_a_little_longer(mount):
+    host, strip = mount(FLOSSBUD, "neon")
+    strip.set_reduced_motion_fn(lambda: False)
+    strip.set_model(FLOSSBUD.with_(enabled=False))
+    assert strip.is_fading() and strip._fade.duration() == 200
+    strip._end_fade()
+    strip.set_model(FLOSSBUD.with_(enabled=False, keep_alive=False))
+    assert strip._fade.duration() == 140
+
+
+def test_reduced_motion_snaps(mount):
+    host, strip = mount(FLOSSBUD, "flat")
+    strip.set_reduced_motion_fn(lambda: True)
+    strip.set_model(FLOSSBUD.with_(keep_alive=False))
+    assert not strip.is_fading()
+    assert close(at(grab(host), strip, strip.block_rect(L.KEEP_ALIVE), 4, 4),
+                 tokens.dk("#ff9500", 30))
+
+
+def test_a_layout_change_is_never_faded(mount):
+    host, strip = mount(FLOSSBUD, "flat")
+    strip.set_reduced_motion_fn(lambda: False)
+    strip.set_model(FLOSSBUD.with_(keysets=(1, 2)))      # a block went away
+    assert not strip.is_fading()
+
+
+def test_saved_portrait_framing_is_applied(mount):
+    """A render that is green on its left half and red on its right: moved
+    half a circle to the left, the middle of the portrait turns red."""
+    from PySide6.QtGui import QPixmap
+    pm = QPixmap(96, 96)
+    pm.fill(QColor("#ff0000"))
+    painter = QPainter(pm)
+    painter.fillRect(0, 0, 48, 96, QColor("#00ff00"))
+    painter.end()
+    host, strip = mount(FLOSSBUD.with_(portrait=pm), "flat")
+    portrait = strip.block_rect(L.PORTRAIT)
+    assert close(at(grab(host), strip, portrait, 12, 18), "#00ff00", 12)
+    host, strip = mount(FLOSSBUD.with_(portrait=pm, portrait_frame=(1.0, -0.4, 0.0, 0.0)),
+                        "flat")
+    assert close(at(grab(host), strip, portrait, 12, 18), "#ff0000", 12)
+    # Zoomed in, the same pixels cover more of the circle; still clipped round.
+    host, strip = mount(FLOSSBUD.with_(portrait=pm, portrait_frame=(2.0, 0.0, 0.0, 0.0)),
+                        "flat")
+    image = grab(host)
+    assert close(at(image, strip, portrait, 8, 18), "#00ff00", 12)
+    assert at(image, strip, portrait, 1, 1) == MAGENTA
+
+
+def test_a_disabled_toons_portrait_goes_grey(mount):
+    from PySide6.QtGui import QPixmap
+    pm = QPixmap(96, 96)
+    pm.fill(QColor("#00ff00"))
+    host, strip = mount(FLOSSBUD.with_(portrait=pm, enabled=False), "flat")
+    grey = at(grab(host), strip, strip.block_rect(L.PORTRAIT), 18, 18)
+    assert abs(grey.red() - grey.green()) <= 2 and abs(grey.green() - grey.blue()) <= 2
+    assert 40 < grey.green() < 140
+
+
+def test_stopped_service_dims_the_home_icon(mount):
+    lit_host, lit = mount(FLOSSBUD.with_(home=True), "flat")
+    dim_host, dim = mount(FLOSSBUD.with_(home=True, running=False), "flat")
+    home = lit.block_rect(L.HOME)
+    a = at(grab(lit_host), lit, home, 14, 6)
+    b = at(grab(dim_host), dim, home, 14, 6)
+    assert b.red() + b.green() + b.blue() < a.red() + a.green() + a.blue()
+    assert at(grab(dim_host), dim, home, 1, 1) == MAGENTA      # still a circle

@@ -177,10 +177,10 @@ class KeysetEditor(QWidget):
         self.update()
 
     def set_flipped(self, flipped: bool) -> None:
-        """Opened above its anchor: the upward caret is left out."""
+        """Opened above its anchor: the caret points down from the bottom."""
         if bool(flipped) != self._flipped:
             self._flipped = bool(flipped)
-            self.update()
+            self._relayout()
 
     # -- capture: the one time the card takes the keyboard --------------------
 
@@ -246,7 +246,7 @@ class KeysetEditor(QWidget):
         m = self._model
         fonts = self._fonts()
         zones: list[tuple[tuple, QRectF]] = []
-        left, top = MARGIN, CARET_RISE
+        left, top = MARGIN, (MARGIN if self._flipped else CARET_RISE)
         inner_l = left + BORDER + PAD_X
         inner_w = WIDTH - 2 * (BORDER + PAD_X)
         y = top + BORDER
@@ -323,7 +323,8 @@ class KeysetEditor(QWidget):
         y += 12.0 + BORDER
         self._card = QRectF(left, top, WIDTH, y - top)
         self._zones = zones
-        self._design = QSize(int(round(WIDTH + 2 * MARGIN)), int(round(y + MARGIN)))
+        self._design = QSize(int(round(WIDTH + 2 * MARGIN)), int(round(
+            y + (CARET_RISE if self._flipped else MARGIN))))
         self.setFixedSize(self.sizeHint())
         self.update()
 
@@ -381,21 +382,9 @@ class KeysetEditor(QWidget):
             caret_fill = QColor(tokens.POPOVER_BASE)
         cx = self._caret_x if self._caret_x is not None else card.center().x()
         cx = max(card.left() + radius + CARET, min(cx, card.right() - radius - CARET))
-        tip = QPointF(cx, card.top() - CARET * 0.7071 + BORDER * 0.5)
-        half = CARET * 0.7071
-        caret = QPolygonF([tip, QPointF(cx + half, card.top() + BORDER),
-                           QPointF(cx - half, card.top() + BORDER)])
         p.fillPath(paint.rounded(card, radius), fill)
         paint._border(p, paint.rounded, card, radius, BORDER, QColor(c))
-        if not self._flipped:
-            p.setPen(Qt.NoPen)
-            p.setBrush(caret_fill)
-            p.drawPolygon(caret)
-            pen = QPen(QColor(c), BORDER)
-            pen.setJoinStyle(Qt.MiterJoin)
-            p.setPen(pen)
-            p.drawLine(QPointF(cx - half, card.top() + BORDER * 0.5), tip)
-            p.drawLine(tip, QPointF(cx + half, card.top() + BORDER * 0.5))
+        paint.paint_card_caret(p, card, cx, c, caret_fill, CARET, BORDER, self._flipped)
 
         # Header.
         mid = self._header_mid

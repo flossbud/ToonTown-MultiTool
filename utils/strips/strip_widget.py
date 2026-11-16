@@ -6,7 +6,8 @@ sit in a translucent, click-through surface.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import (QEvent, QPointF, QRect, QRectF, QSize, Qt, Signal,
+                            QVariantAnimation)
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import QSizePolicy, QToolTip, QWidget
 
@@ -18,6 +19,21 @@ from utils.strips.model import StripModel
 # Room around the row for the Neon halos (3 sigma of the widest, 9 px blur).
 # Kept in both looks so switching look never moves the blocks.
 MARGIN = 14.0
+
+# State changes cross-fade: fills and glows in 140 ms, the dim of a disabled
+# toon in 200 ms. Nothing moves, so there is nothing to animate when the
+# layout itself changes; and nothing at all under reduced motion.
+FADE_MS = 140
+DIM_FADE_MS = 200
+
+
+def _motion_reduced() -> bool:
+    try:
+        from utils import motion
+        return bool(motion.is_reduced())
+    except Exception:
+        return False
+
 
 _home_icons: dict[int, QPixmap] = {}
 
@@ -52,6 +68,13 @@ class StripWidget(QWidget):
         self._layout = None
         self._hover: tuple[str, int] | None = None
         self._pressed: tuple[str, int] | None = None
+        self._reduced_fn = _motion_reduced
+        self._fade_from: QPixmap | None = None
+        self._fade = QVariantAnimation(self)
+        self._fade.setStartValue(0.0)
+        self._fade.setEndValue(1.0)
+        self._fade.valueChanged.connect(lambda _v: self.update())
+        self._fade.finished.connect(self._end_fade)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAutoFillBackground(False)
@@ -69,8 +92,50 @@ class StripWidget(QWidget):
     def set_model(self, model: StripModel) -> None:
         if model == self._model and model.portrait is self._model.portrait:
             return
+        old, old_layout = self._model, self._layout
+        before = self._snapshot() if self._may_animate() else None
         self._model = model
         self._relayout()
+        if before is not None and self._layout.blocks == old_layout.blocks:
+            self._fade_from = before
+            self._fade.stop()
+            self._fade.setDuration(DIM_FADE_MS if old.dimmed != model.dimmed else FADE_MS)
+            self._fade.start()
+        else:
+            self._end_fade()
+
+    def set_reduced_motion_fn(self, fn) -> None:
+        """Replace the reduced-motion test (tests; a host with its own rule)."""
+        self._reduced_fn = fn
+
+    def is_fading(self) -> bool:
+        return self._fade_from is not None
+
+    def _may_animate(self) -> bool:
+        if not self.isVisible() or self.width() <= 0:
+            return False
+        try:
+            return not self._reduced_fn()
+        except Exception:
+            return True
+
+    def _end_fade(self) -> None:
+        if self._fade_from is not None:
+            self._fade.stop()
+            self._fade_from = None
+            self.update()
+
+    def _snapshot(self) -> QPixmap:
+        """The strip as it is painted now, at device resolution."""
+        dpr = self.devicePixelRatioF() or 1.0
+        pm = QPixmap(max(1, int(round(self.width() * dpr))),
+                     max(1, int(round(self.height() * dpr))))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        self.render_strip(p)
+        p.end()
+        return pm
 
     def style_name(self) -> str:
         return self._style.name
@@ -166,8 +231,39 @@ class StripWidget(QWidget):
 
     def paintEvent(self, _event) -> None:
         p = QPainter(self)
-        self.render_strip(p)
+        old = self._fade_from
+        if old is None or old.size() != self._snapshot_size():
+            self.render_strip(p)
+        else:
+            # A true cross-dissolve: old * (1 - t) + new * t, built on its own
+            # layer so translucent parts neither dip nor double up.
+            t = float(self._fade.currentValue() or 0.0)
+            frame = self._weighted(old, 1.0 - t)
+            fp = QPainter(frame)
+            # Plus at full opacity: with a painter opacity Qt blends the sum
+            # back toward the destination and the result comes out thin.
+            fp.setCompositionMode(QPainter.CompositionMode_Plus)
+            fp.drawPixmap(0, 0, self._weighted(self._snapshot(), t))
+            fp.end()
+            p.drawPixmap(0, 0, frame)
         p.end()
+
+    @staticmethod
+    def _weighted(pixmap: QPixmap, weight: float) -> QPixmap:
+        """`pixmap` scaled by `weight` in every channel, alpha included."""
+        out = QPixmap(pixmap.size())
+        out.setDevicePixelRatio(pixmap.devicePixelRatio())
+        out.fill(Qt.transparent)
+        p = QPainter(out)
+        p.setOpacity(max(0.0, min(1.0, weight)))
+        p.drawPixmap(0, 0, pixmap)
+        p.end()
+        return out
+
+    def _snapshot_size(self) -> QSize:
+        dpr = self.devicePixelRatioF() or 1.0
+        return QSize(max(1, int(round(self.width() * dpr))),
+                     max(1, int(round(self.height() * dpr))))
 
     def render_strip(self, p: QPainter) -> None:
         """Paint the strip with the painter's origin at the widget's."""
@@ -204,7 +300,8 @@ class StripWidget(QWidget):
         # Pass 2: identity. The portrait sits on top of the plate's tucked end.
         if name is not None:
             pt.name(p, name.rect, m.name, m.accent, dim)
-        pt.portrait(p, portrait.rect, m.accent, m.species, m.portrait, dim)
+        pt.portrait(p, portrait.rect, m.accent, m.species, m.portrait, dim,
+                    m.portrait_frame)
 
         # Pass 3: tools and keysets, the part that dims with the toon.
         if dim and not s.is_neon:

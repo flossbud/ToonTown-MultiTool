@@ -752,15 +752,231 @@ def test_edit_is_disabled_without_a_keymap_manager(rig):
     assert [i.disabled for i in items] == [True, True]
 
 
-def test_home_click_is_reported(rig):
-    _session, controller, _rects = rig()
-    homes = []
-    controller.home_clicked.connect(homes.append)
+# -- home block: quick menu and compact launcher -----------------------------------
+
+from PySide6.QtCore import QObject, Signal                              # noqa: E402
+
+from utils.strips.launcher_port import LaunchAccount                     # noqa: E402
+
+
+class Launcher(QObject):
+    changed = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.list = [
+            LaunchAccount("a1", "ttr", "Main", "running", "Flossbud"),
+            LaunchAccount("a2", "ttr", "Alt 1", "running", "Hector"),
+            LaunchAccount("a3", "ttr", "Alt 3"),
+            {"account_id": "c1", "game": "cc", "label": "Clash alt", "state": "idle"},
+        ]
+        self.launched = []
+
+    def accounts(self):
+        return list(self.list)
+
+    def launch(self, account_id):
+        self.launched.append(account_id)
+        self.list[2] = LaunchAccount("a3", "ttr", "Alt 3", "launching")
+        self.changed.emit()
+
+
+@pytest.fixture
+def home_rig(rig, qapp):
+    def _make(launcher=None):
+        session, controller, rects = rig()
+        controller._launcher = launcher
+        if launcher is not None:
+            launcher.changed.connect(controller._refresh_home_panel)
+        return session, controller
+    return _make
+
+
+def press(panel, *zone):
+    QTest.mouseClick(panel, Qt.LeftButton, Qt.NoModifier,
+                     panel.zone_rect(*zone).center().toPoint())
+    settle()
+
+
+def test_home_block_opens_the_quick_menu_under_itself(home_rig):
+    _session, controller = home_rig(Launcher())
     click(controller, "101", L.HOME)
-    assert homes == ["101"]
-    controller.set_home_open(True)
-    assert model(controller, "101").home_open
+    pops = controller.popovers
+    assert pops.open_tag("101") == "home"
+    assert model(controller, "101").home_open              # the ring is drawn
+    panel = pops.open_content("101")
+    labels = [label for key, _c, label, _h in panel.rows() if key]
+    assert labels == ["Launch accounts", "Settings", "Open MultiTool",
+                      "Stop all toons", "Quit MultiTool"]
+    assert panel.rows()[0][3] == "2 running \u203a"
+    # The card's left edge lines up with the block; it hangs 10 px below.
+    block = pops.anchor_rect("101", L.HOME)
+    card = panel.card_rect().toAlignedRect().translated(pops.open_surface("101").pos())
+    assert abs(card.left() - block.left()) <= 1
+    assert card.top() - (block.top() + block.height()) == 10
+    # A second click closes it and the ring goes.
+    click(controller, "101", L.HOME)
+    assert pops.open_tag("101") == "" and not model(controller, "101").home_open
+
+
+def test_quick_menu_rows(home_rig):
+    session, controller = home_rig(Launcher())
+    windows, quits = [], []
+    controller.open_window_requested.connect(windows.append)
+    controller.quit_requested.connect(lambda: quits.append(1))
+
+    def choose(key):
+        click(controller, "101", L.HOME)
+        press(controller.popovers.open_content("101"), "row", key)
+        assert controller.popovers.open_tag("101") == ""       # every row closes it
+
+    choose("settings")
+    choose("window")
+    assert windows == ["settings", "main"]
+    choose("toggle")
+    assert session.is_running() is False
+    click(controller, "101", L.HOME)
+    panel = controller.popovers.open_content("101")
+    assert [label for key, _c, label, _h in panel.rows() if key][3] == "Start all toons"
+    press(panel, "row", "toggle")
+    assert session.is_running() is True
+    choose("quit")
+    assert quits == [1]
+
+
+def test_compact_launcher_lists_accounts_and_launches(home_rig):
+    launcher = Launcher()
+    _session, controller = home_rig(launcher)
+    click(controller, "101", L.HOME)
+    pops = controller.popovers
+    panel = pops.open_content("101")
+    menu_height = pops.open_surface("101").height()
+    press(panel, "row", "launch")
+    assert panel.view() == "launch" and pops.open_tag("101") == "home"
+    assert pops.open_surface("101").height() != menu_height    # the card was refitted
+    assert [a.label for a in panel.accounts()] == ["Main", "Alt 1", "Alt 3", "Clash alt"]
+    # Running accounts have no button; idle ones do.
+    assert panel.zone_rect("go", "a1") is None
+    assert panel.zone_rect("go", "a3") is not None and panel.zone_rect("go", "c1") is not None
+    press(panel, "go", "a3")
+    assert launcher.launched == ["a3"]
+    assert panel.accounts()[2].state == "launching"            # followed the launcher
+    assert panel.zone_rect("go", "a3") is None
+    press(panel, "back")
+    assert panel.view() == "menu"
+
+
+def test_open_full_launcher_and_no_launcher_at_all(home_rig):
+    _session, controller = home_rig(Launcher())
+    windows = []
+    controller.open_window_requested.connect(windows.append)
+    click(controller, "101", L.HOME)
+    panel = controller.popovers.open_content("101")
+    press(panel, "row", "launch")
+    press(panel, "full")
+    assert windows == ["launcher"] and controller.popovers.open_tag("101") == ""
+    # Without a launcher source the row goes straight to the full launcher.
+    _session, controller = home_rig(None)
+    windows = []
+    controller.open_window_requested.connect(windows.append)
+    click(controller, "101", L.HOME)
+    panel = controller.popovers.open_content("101")
+    assert panel.rows()[0][3] == ""
+    press(panel, "row", "launch")
+    assert windows == ["launcher"]
+
+
+def test_locked_counters_step_aside_for_a_popover_that_would_cover_them(home_rig):
+    """Seen live under KWin: the counters pill drew over the quick menu's
+    first row. Both hang under the strip, so the counters wait."""
+    _session, controller = home_rig(Launcher())
+    pops = controller.popovers
+    assert pops.counters_shown("101")                 # locked in the demo
+    click(controller, "101", L.HOME)
+    assert pops.open_tag("101") == "home" and not pops.counters_shown("101")
+    click(controller, "101", L.HOME)
+    assert pops.counters_shown("101")                 # back when it closes
+    # A menu further along the strip does not touch them.
+    right_click(controller, "101", L.KEYSET, 3)
+    assert pops.open_tag("101") == "set:3" and pops.counters_shown("101")
+
+
+def test_home_panel_goes_with_its_strip(home_rig):
+    session, controller = home_rig(Launcher())
+    click(controller, "101", L.HOME)
+    session.remove_toon("101")
+    settle()
+    assert controller.home_window() == "102"
     assert not model(controller, "102").home_open
+    click(controller, "102", L.HOME)
+    assert controller.popovers.open_tag("102") == "home"
+    assert model(controller, "102").home_open
+
+
+# -- ghost cursors pressing blocks ---------------------------------------------------
+
+def test_ghost_press_clicks_the_block_of_that_toons_strip(rig):
+    settings = Settings()
+    session, controller, _rects = rig(settings=settings)
+    ghosts = controller.ghost_clicks
+    surface = controller.follower.surface("102")
+    spot = surface.mapToGlobal(surface.strip.block_rect(L.KEYSET, 3).center().toPoint())
+    assert session.toon("102").keyset_id == controller.keysets.id_for("ttr", 2)
+    ghosts.on_ghost_event(("press", [(1, spot.x(), spot.y())]))   # slot 1 is Hector
+    settle()
+    assert session.toon("102").keyset_id == controller.keysets.id_for("ttr", 3)
+    # Motion and release press nothing.
+    enable = surface.mapToGlobal(surface.strip.block_rect(L.ENABLE).center().toPoint())
+    ghosts.on_ghost_event(("motion", [(1, enable.x(), enable.y())]))
+    ghosts.on_ghost_event(("release", [(1, enable.x(), enable.y())]))
+    assert session.toon("102").enabled is True
+
+
+def test_ghost_press_between_blocks_or_in_another_slot_does_nothing(rig):
+    settings = Settings()
+    session, controller, _rects = rig(settings=settings)
+    ghosts = controller.ghost_clicks
+    surface = controller.follower.surface("102")
+    sep = surface.mapToGlobal(surface.strip.block_rect(L.SEPARATOR).center().toPoint())
+    assert ghosts.press(1, sep) is False
+    enable = surface.mapToGlobal(surface.strip.block_rect(L.ENABLE).center().toPoint())
+    assert ghosts.press(0, enable) is False       # Flossbud's ghost is not on this strip
+    assert session.toon("102").enabled is True
+    assert ghosts.press(1, enable) is True
+    assert session.toon("102").enabled is False
+
+
+def test_ghost_clicks_follow_both_settings_and_never_raise(rig):
+    settings = Settings(**{settings_keys.GHOST_CURSORS_CONTROL_CARDS: False})
+    session, controller, _rects = rig(settings=settings)
+    ghosts = controller.ghost_clicks
+    surface = controller.follower.surface("102")
+    enable = surface.mapToGlobal(surface.strip.block_rect(L.ENABLE).center().toPoint())
+    press = ("press", [(1, enable.x(), enable.y())])
+    ghosts.on_ghost_event(press)
+    assert session.toon("102").enabled is True
+    settings.set(settings_keys.GHOST_CURSORS_CONTROL_CARDS, True)
+    settings.set(settings_keys.GHOST_CURSORS_ENABLED, False)
+    ghosts.on_ghost_event(press)
+    assert session.toon("102").enabled is True
+    settings.set(settings_keys.GHOST_CURSORS_ENABLED, True)
+    for junk in (None, "press", ("press", None), ("press", [("x",), (1, "a", "b")])):
+        ghosts.on_ghost_event(junk)               # malformed: ignored
+    ghosts.on_ghost_event(press)
+    assert session.toon("102").enabled is False
+
+
+def test_ghost_press_reaches_an_open_menu_first(rig):
+    keymaps = Keymaps(ttr=3)
+    settings = Settings()
+    session, controller, _rects = rig(_session_with_ids(keymaps), keymaps, settings)
+    right_click(controller, "102", L.KEYSET, 2)
+    pops = controller.popovers
+    menu, surface = pops.open_content("102"), pops.open_surface("102")
+    spot = surface.mapToGlobal(menu.pill_rect(1).center().toPoint())     # Hide keyset
+    assert controller.ghost_clicks.press(1, spot) is True
+    settle()
+    assert keymaps.sets["ttr"][1].get("hidden") is True
 
 
 def test_build_model_is_pure():

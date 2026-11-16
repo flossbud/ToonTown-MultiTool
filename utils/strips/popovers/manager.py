@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QWidget
 from utils.strips.popovers import menu as menu_mod
 from utils.strips.popovers.counters import CountersModel, CountersView
 from utils.strips.popovers.menu import PillMenu
-from utils.strips.popovers.placement import CENTER, place_popover
+from utils.strips.popovers.placement import CENTER, LEFT, place_popover
 from utils.strips.popovers.pointer_watch import PointerWatch
 from utils.strips.popovers.surface import PopoverSurface
 
@@ -168,7 +168,37 @@ class StripPopovers(QObject):
             return False
         if entry.popover is not None and entry.tag == "toon":
             return False        # the toon menu takes their place
-        return model.locked or entry.hover_identity or entry.hover_counters
+        if not (model.locked or entry.hover_identity or entry.hover_counters):
+            return False
+        return not self._popover_covers_counters(wid, entry)
+
+    def _popover_covers_counters(self, wid: str, entry: _Entry) -> bool:
+        """Counters and popovers both hang under the strip. Where an open
+        popover would sit over the counters (the home panel, an editor under
+        the first keyset), the counters step aside until it closes."""
+        if entry.popover is None or entry.counters_model is None:
+            return False
+        anchor = self.anchor_rect(wid, IDENTITY)
+        surface = self._follower.surface(wid)
+        if anchor is None or surface is None:
+            return False
+        view = entry.counters_view
+        if view is None:
+            # Not built yet: measure with a throwaway of the same content.
+            view = CountersView()
+            view.set_scale(surface.strip.scale())
+            view.set_style(surface.strip.style_name())
+            view.set_model(entry.counters_model)
+            view.deleteLater()
+        elif view.model() != entry.counters_model:
+            view.set_model(entry.counters_model)
+        spot = place_popover(anchor, view.sizeHint(), self._screen_rect(anchor), gap=0)
+        pill = view.pill_rect().toAlignedRect().translated(spot.pos)
+        content = entry.popover.content
+        rects = getattr(content, "input_rects", None)
+        rects = rects() if callable(rects) else [content.rect()]
+        origin = entry.popover.pos()
+        return any(r.translated(origin).intersects(pill) for r in rects)
 
     def _update_counters(self, wid: str) -> None:
         entry = self._entries.get(wid)
@@ -290,10 +320,15 @@ class StripPopovers(QObject):
         if rect is None or surface is None or entry.popover is None:
             return False
         content = entry.popover.content
-        spot = place_popover(rect, content.sizeHint(), self._screen_rect(rect),
-                             gap=entry.gap, align=entry.align)
+        # A left-aligned card lines its CARD up with the anchor; the halo
+        # margin around it hangs out to the left.
+        inset = 0
+        if entry.align == LEFT:
+            inset = int(round(getattr(content, "LEFT_INSET", 0) * surface.strip.scale()))
+        spot = place_popover(rect.translated(-inset, 0), content.sizeHint(),
+                             self._screen_rect(rect), gap=entry.gap, align=entry.align)
         if hasattr(content, "set_caret_x"):
-            content.set_caret_x(spot.caret_x)
+            content.set_caret_x(spot.caret_x + inset)
         if hasattr(content, "set_flipped"):
             content.set_flipped(spot.flipped)
         entry.popover.present(spot.pos, int(surface.winId()))

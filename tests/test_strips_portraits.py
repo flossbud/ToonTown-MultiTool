@@ -99,6 +99,17 @@ def test_pose_comes_from_the_looks_store(toons):
     assert renders.asked[-1] == ("ttr", "Hector", other)
 
 
+def test_framing_comes_from_the_looks_store(toons):
+    looks = Looks()
+    provider = PortraitProvider(Renders(), looks)
+    assert provider.frame(toons["Hector"]) == (1.0, 0.0, 0.0, 0.0)
+    looks.entries[("ttr", "Hector")] = {"portrait": {"transform": {
+        "zoom": 1.5, "offset_x": 0.1, "offset_y": -0.2, "rotate": 15}}}
+    assert provider.frame(toons["Hector"]) == (1.5, 0.1, -0.2, 15.0)
+    looks.entries[("ttr", "Hector")] = {"portrait": {"transform": {"zoom": "big"}}}
+    assert provider.frame(toons["Hector"]) == (1.0, 0.0, 0.0, 0.0)
+
+
 class _Session(FakeToonSession):
     """The fake, with a looks store like the real session has."""
     looks = Looks()

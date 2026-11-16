@@ -481,3 +481,106 @@ def test_hiding_the_card_mid_capture_releases_the_keyboard(qapp):
     assert QWidget.keyboardGrabber() is None
     assert not chord_capture_state.is_active()
     card.deleteLater()
+
+
+# -- home panel -------------------------------------------------------------------
+
+from utils.strips.launcher_port import LaunchAccount, as_account, read_accounts  # noqa: E402
+from utils.strips.popovers.home import HomePanel                              # noqa: E402
+
+ACCOUNTS = (LaunchAccount("1", "ttr", "Main", "running", "Flossbud"),
+            LaunchAccount("2", "ttr", "Alt 3"),
+            LaunchAccount("3", "cc", "Clash alt", "launching"))
+
+
+def test_launcher_port_accepts_objects_and_dicts():
+    class Thing:
+        account_id, game, label, state, toon = 7, "cc", "Clash", "running", None
+
+    assert as_account(Thing()) == LaunchAccount("7", "cc", "Clash", "running", "")
+    assert as_account({"account_id": "x", "game": "ttr", "label": "A",
+                       "state": "nonsense"}).state == "idle"
+
+    class Port:
+        def accounts(self):
+            raise RuntimeError("launcher not ready")
+
+    assert read_accounts(Port()) == () and read_accounts(None) == ()
+
+
+def test_quick_menu_is_236_wide_with_five_rows(qapp):
+    panel = HomePanel("neon", accounts=ACCOUNTS)
+    assert panel.card_rect().width() == pytest.approx(236.0)
+    rows = [panel.zone_rect("row", k) for k in ("launch", "settings", "window",
+                                                 "toggle", "quit")]
+    assert all(r is not None and r.height() == pytest.approx(34.0) for r in rows)
+    assert rows[3].top() - rows[2].bottom() > 10        # the divider sits between
+    assert panel.rows()[0][3] == "1 running ›"
+
+
+def test_compact_launcher_is_260_wide_and_only_idle_accounts_have_a_button(qapp):
+    panel = HomePanel("neon", accounts=ACCOUNTS)
+    panel.set_view("launch")
+    assert panel.card_rect().width() == pytest.approx(260.0)
+    assert panel.zone_rect("go", "1") is None           # running
+    assert panel.zone_rect("go", "3") is None           # launching
+    button = panel.zone_rect("go", "2")
+    assert button is not None and button.height() == pytest.approx(24.0)
+    assert panel.zone_rect("back") is not None and panel.zone_rect("full") is not None
+
+
+def test_home_panel_paint_in_both_looks(qapp):
+    for look in ("neon", "flat"):
+        panel = HomePanel(look, accounts=ACCOUNTS)
+        image = render(panel, "render_panel")
+        card = panel.card_rect()
+        edge = image.pixelColor(int(card.center().x()), int(card.bottom() - 1))
+        assert close(edge, "#0077ff"), look
+        row = panel.zone_rect("row", "launch")
+        icon = image.pixelColor(int(row.left() + 6 + 5), int(row.center().y() - 7))
+        assert close(icon, "#E05252", 30), look          # the red power block
+        halo = image.pixelColor(int(card.left() - 6), int(card.center().y()))
+        assert (halo != MAGENTA) == (look == "neon")
+        panel.set_view("launch")
+        image = render(panel, "render_panel")
+        button = panel.zone_rect("go", "2")
+        assert close(image.pixelColor(int(button.center().x()), int(button.top() + 4)),
+                     "#4A8FE7", 30), look
+
+
+def test_stopped_service_offers_start(qapp):
+    panel = HomePanel("flat", running=False)
+    assert [label for key, _c, label, _h in panel.rows() if key][3] == "Start all toons"
+    panel.set_running(True)
+    assert [label for key, _c, label, _h in panel.rows() if key][3] == "Stop all toons"
+
+
+# -- popovers that had to open above their anchor --------------------------------------
+
+def test_flipped_menu_hangs_its_caret_underneath(qapp):
+    menu = PillMenu(ITEMS, "#E05252", "flat")
+    size = menu.sizeHint()
+    top_before = menu.pill_rect(0).top()
+    menu.set_flipped(True)
+    assert menu.sizeHint() == size                      # same footprint, mirrored
+    assert menu.pill_rect(0).top() > top_before
+    image = render(menu, "render_menu")
+    assert close(image.pixelColor(menu.width() // 2, menu.height() - 3), "#E05252")
+    assert image.pixelColor(menu.width() // 2, 3) == MAGENTA
+
+
+def test_flipped_cards_point_down_at_their_anchor(qapp):
+    for card in (KeysetEditor(MODEL, "list", "flat"), HomePanel("flat", accounts=ACCOUNTS)):
+        size = card.sizeHint()
+        up = card.card_rect()
+        card.set_flipped(True)
+        down = card.card_rect()
+        assert card.sizeHint() == size
+        assert down.top() > up.top() and down.height() == pytest.approx(up.height())
+        image = render(card, "render_panel" if isinstance(card, HomePanel) else "render_editor")
+        # Nothing above the card any more; the caret's tip is below it.
+        assert image.pixelColor(int(down.center().x()), int(down.top() - 4)) == MAGENTA
+        below = [image.pixelColor(x, int(down.bottom() + 3)) for x in range(card.width())]
+        assert any(c != MAGENTA for c in below)
+        # Its clickable parts moved with the card.
+        assert card.input_rects() == [down.toAlignedRect()]

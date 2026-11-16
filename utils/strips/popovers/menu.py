@@ -73,13 +73,16 @@ class PillMenu(QWidget):
             widths.append(w)
         widest = max(widths) if widths else 0.0
         full = max(widest, CARET_W) + 2 * MARGIN
-        y = CARET_H + CARET_TO_PILL
+        # Dropped below its anchor the caret is on top; flipped above it,
+        # the stack is mirrored and the caret hangs underneath.
+        y = MARGIN if self._flipped else CARET_H + CARET_TO_PILL
         self._pills = []
         for w in widths:
             self._pills.append(QRectF((full - w) / 2.0, y, w, height))
             y += height + PILL_GAP
-        self._design = QSize(int(round(full)),
-                             int(round(y - PILL_GAP + MARGIN)))
+        stack = y - PILL_GAP
+        self._design = QSize(int(round(full)), int(round(
+            stack + (CARET_TO_PILL + CARET_H if self._flipped else MARGIN))))
         self.setFixedSize(self.sizeHint())
         self.update()
 
@@ -94,11 +97,10 @@ class PillMenu(QWidget):
         self.update()
 
     def set_flipped(self, flipped: bool) -> None:
-        """Opened above its anchor (no room below): the caret, which only
-        points up, is left out."""
+        """Opened above its anchor (no room below): the caret points down."""
         if bool(flipped) != self._flipped:
             self._flipped = bool(flipped)
-            self.update()
+            self._relayout()
 
     def pill_rect(self, index: int) -> QRectF:
         r, k = self._pills[index], self._scale
@@ -119,9 +121,14 @@ class PillMenu(QWidget):
         p.setRenderHint(QPainter.TextAntialiasing, True)
         p.scale(self._scale, self._scale)
         cx = self._caret_x if self._caret_x is not None else self._design.width() / 2.0
-        if not self._flipped:
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor(c))
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(c))
+        if self._flipped:
+            tip = float(self._design.height())
+            p.drawPolygon(QPolygonF([QPointF(cx, tip),
+                                     QPointF(cx + CARET_W / 2.0, tip - CARET_H),
+                                     QPointF(cx - CARET_W / 2.0, tip - CARET_H)]))
+        else:
             p.drawPolygon(QPolygonF([QPointF(cx, 0.0),
                                      QPointF(cx + CARET_W / 2.0, CARET_H),
                                      QPointF(cx - CARET_W / 2.0, CARET_H)]))

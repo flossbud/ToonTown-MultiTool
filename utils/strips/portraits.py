@@ -12,7 +12,8 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QPixmap
 
-from utils.toon_customization_resolve import resolve_pose
+from utils.toon_customization_resolve import (resolve_portrait_transform,
+                                              resolve_pose)
 
 DEFAULT_POSE = "portrait"
 _MISSING = object()
@@ -50,14 +51,26 @@ class PortraitProvider(QObject):
         """The toon's look changed (pose, outfit): look it up again."""
         self._cache.pop((game, name), None)
 
+    def _look(self, game: str, name: str) -> dict:
+        if self._customizations is None:
+            return {}
+        try:
+            return self._customizations.get(game, name) or {}
+        except Exception:
+            return {}
+
     def pose_for(self, game: str, name: str) -> str:
-        entry = {}
-        if self._customizations is not None:
-            try:
-                entry = self._customizations.get(game, name) or {}
-            except Exception:
-                entry = {}
-        return resolve_pose(entry, DEFAULT_POSE)
+        return resolve_pose(self._look(game, name), DEFAULT_POSE)
+
+    def frame(self, toon) -> tuple:
+        """The saved framing of the toon's portrait: (zoom, offset x,
+        offset y, rotation). A cheap in-memory read."""
+        if not toon.name:
+            return (1.0, 0.0, 0.0, 0.0)
+        try:
+            return tuple(resolve_portrait_transform(self._look(toon.game, toon.name)))
+        except (TypeError, ValueError):
+            return (1.0, 0.0, 0.0, 0.0)
 
     def pixmap(self, toon) -> QPixmap | None:
         """The portrait for a ToonState, or None for the silhouette."""
