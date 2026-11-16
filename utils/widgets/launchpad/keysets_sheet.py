@@ -43,9 +43,10 @@ from utils.widgets.keysets.game_meta import GAME_META
 from utils.widgets.keysets.movement_key_field import DISPLAY_NAMES, MovementKeyField
 from utils.widgets.keysets.palette import conflict_banner_css, field_value
 from utils.widgets.keysets.split_editor import _CONFLICT_TEXT
+from utils.widgets.keysets import detect
 from utils.widgets.launchpad.material import (
-    AddRow, GroupCard, IconButton, ROW_MIN_H, ROW_RADIUS, SheetSegmented,
-    footer_label, note_label, qcolor, sheet_palette, sheet_stack,
+    AddRow, GroupCard, IconButton, ROW_MIN_H, ROW_RADIUS, SecondaryButton,
+    SheetSegmented, footer_label, note_label, qcolor, sheet_palette, sheet_stack,
 )
 
 IDENTITY = "#DAA520"
@@ -266,12 +267,14 @@ class KeysetRow(QWidget):
     edit_clicked = Signal(str)
     hide_clicked = Signal(str)
     delete_clicked = Signal(str)
+    detect_clicked = Signal(str)
     key_captured = Signal(str, str, str)       # set id, action, key
 
     def __init__(self, *, set_id: str, number: int, game: str, keys: dict,
                  hidden: bool, can_hide: bool, can_delete: bool, can_drag: bool,
                  expanded: bool, locked: bool, conflicts: set, warn_values: set,
-                 cross_notes: list, is_dark: bool, parent=None):
+                 cross_notes: list, is_dark: bool, can_detect: bool = False,
+                 detect_note: str = "", parent=None):
         super().__init__(parent)
         self.set_id = set_id
         self.number = number
@@ -279,6 +282,8 @@ class KeysetRow(QWidget):
         self.hidden = hidden
         self.expanded = expanded
         self.locked = locked
+        self.can_detect = can_detect
+        self._detect_note = detect_note
         self._keys = dict(keys)
         self._conflicts = set(conflicts)
         self._warn = set(warn_values)
@@ -386,6 +391,22 @@ class KeysetRow(QWidget):
             outer.addWidget(lock)
         else:
             self._lock_label = None
+        self.detect_btn = None
+        self.detect_label = None
+        if self.can_detect:
+            # The Settings Keysets page's Detect action: read the game's own
+            # settings file onto keyset 1 (utils/widgets/keysets/detect.py).
+            line = QHBoxLayout()
+            line.setSpacing(10)
+            self.detect_btn = SecondaryButton("Detect from game", self._is_dark, ed)
+            self.detect_btn.setToolTip(
+                "Read your key bindings from the game's own settings file")
+            self.detect_btn.clicked.connect(lambda: self.detect_clicked.emit(self.set_id))
+            line.addWidget(self.detect_btn)
+            self.detect_label = QLabel(self._detect_note, ed)
+            self.detect_label.setVisible(bool(self._detect_note))
+            line.addWidget(self.detect_label, 1)
+            outer.addLayout(line)
         return ed
 
     def apply_theme(self, is_dark: bool) -> None:
@@ -440,6 +461,11 @@ class KeysetRow(QWidget):
                 self._lock_label.setStyleSheet(
                     f"QLabel {{ font-size: 10.5px; color: {pal['meta']};"
                     " background: transparent; border: none; }")
+            if self.detect_btn is not None:
+                self.detect_btn.apply_theme(is_dark)
+                self.detect_label.setStyleSheet(
+                    f"QLabel {{ font-size: 10.5px; color: {pal['meta']};"
+                    " background: transparent; border: none; }")
 
 
 class KeysetsSheet(QWidget):
@@ -466,6 +492,7 @@ class KeysetsSheet(QWidget):
             default_locked = lambda g, sm=settings_manager: default_set_locked(g, sm)  # noqa: E731
         self._default_locked = default_locked
         self._expanded: set = set()
+        self._detect_note: tuple | None = None     # (game, text)
         self._rows: list[KeysetRow] = []
         self._drag = None
         self.setAttribute(Qt.WA_StyledBackground, False)
@@ -521,6 +548,7 @@ class KeysetsSheet(QWidget):
         if game not in GAMES or game == self._game:
             return
         self._game = game
+        self._detect_note = None
         self.game_pill.setCurrentIndex(GAMES.index(game))
         self.game_pill.set_fill(GAME_META[game].accent_c)
         self.refresh()
@@ -596,11 +624,15 @@ class KeysetsSheet(QWidget):
                 can_hide=is_hidden or visible > 1, can_delete=i > 0, can_drag=i > 0,
                 expanded=s["id"] in self._expanded, locked=locked0 and i == 0,
                 conflicts=conflicts, warn_values=warn, cross_notes=notes,
+                can_detect=i == 0,
+                detect_note=(self._detect_note[1] if i == 0 and self._detect_note
+                             and self._detect_note[0] == game else ""),
                 is_dark=self._is_dark, parent=self.rows_box)
             row.edit_clicked.connect(self._on_edit)
             row.hide_clicked.connect(self._on_hide)
             row.delete_clicked.connect(self._on_delete)
             row.key_captured.connect(self._on_key)
+            row.detect_clicked.connect(self._on_detect)
             row.grip.pressed.connect(lambda pos, sid=s["id"]: self._drag_start(sid, pos))
             row.grip.moved.connect(self._drag_move)
             row.grip.released.connect(self._drag_end)
@@ -630,6 +662,23 @@ class KeysetsSheet(QWidget):
 
     def _on_add(self) -> None:
         self._km.add_set(self._game)
+
+    def _on_detect(self, _set_id: str) -> None:
+        """Same call as the Settings Keysets page; the refresh that follows
+        re-reads the lock rule, so a newly found settings file locks keyset 1."""
+        game = self._game
+        try:
+            updates = detect.detect_settings_for_game(game, self._km, self._sm)
+        except Exception as e:
+            print(f"[Keysets] detect failed: {type(e).__name__}: {e}")
+            updates = 0
+        short = GAME_META[game].short
+        if updates:
+            text = f"Updated {updates} key{'s' if updates != 1 else ''} from {short}'s settings."
+        else:
+            text = f"No changes found in {short}'s settings."
+        self._detect_note = (game, text)
+        self.refresh()
 
     def _on_key(self, set_id: str, action: str, key: str) -> None:
         i = self._index(set_id)
