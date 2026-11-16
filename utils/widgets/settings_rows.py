@@ -61,6 +61,14 @@ class SettingsRowsMixin:
     credentials_manager, the five signals and _dialog_parent() /
     _dialog_window()."""
 
+    # Every card the builders make comes from here, named by `card_id`
+    # (appearance, updates, macos, ttr, cc, keep_alive, click_sync, hotkeys,
+    # chat_handling, diagnostics, storage). The shipped page gets its
+    # CardSurface; the launchpad Settings sheet overrides this to route the
+    # same rows into its own groups.
+    def _new_card(self, card_id: str, *args, **kwargs):
+        return CardSurface(*args, **kwargs)
+
 
     # ── v2 kit factories (register for theme propagation) ────────────────
     def _v2_switch(self, checked: bool, accent_key: str) -> Switch:
@@ -90,7 +98,7 @@ class SettingsRowsMixin:
         insert_at = lay.count() - 1
 
         # ── Appearance & behavior ────────────────────────────────────────
-        appearance = CardSurface("blue", title="Appearance & behavior",
+        appearance = self._new_card("appearance", "blue", title="Appearance & behavior",
                                  icon=make_sliders_icon(20))
         self._cards.append(appearance)
 
@@ -157,7 +165,7 @@ class SettingsRowsMixin:
         insert_at += 1
 
         # ── Updates ──────────────────────────────────────────────────────
-        updates = CardSurface("yellow", title="Updates", icon=make_download_icon(20))
+        updates = self._new_card("updates", "yellow", title="Updates", icon=make_download_icon(20))
         self._cards.append(updates)
 
         upd_row = self._v2_row(
@@ -186,7 +194,7 @@ class SettingsRowsMixin:
         if sys.platform == "darwin":
             insert_at += 1
             from utils.icon_factory import make_nav_gear
-            macos = CardSurface("blue", title="macOS", icon=make_nav_gear(20, None))
+            macos = self._new_card("macos", "blue", title="macOS", icon=make_nav_gear(20, None))
             self._cards.append(macos)
             perms_row = self._v2_row(
                 "Permissions",
@@ -221,7 +229,7 @@ class SettingsRowsMixin:
         insert_at = lay.count() - 1
 
         # ── TTR ──────────────────────────────────────────────────────────
-        ttr_card = CardSurface("ttr", title="Toontown Rewritten", sub=" ",
+        ttr_card = self._new_card("ttr", "ttr", title="Toontown Rewritten", sub=" ",
                                logo_path=self._asset_path("ttr.png"))
         self._cards.append(ttr_card)
         self._ttr_panel = ttr_card
@@ -264,7 +272,7 @@ class SettingsRowsMixin:
             self._refresh_game_path_display("ttr", current_ttr)
 
         # ── CC ───────────────────────────────────────────────────────────
-        cc_card = CardSurface("cc", title="Corporate Clash", sub=" ",
+        cc_card = self._new_card("cc", "cc", title="Corporate Clash", sub=" ",
                               logo_path=self._asset_path("cc.png"))
         self._cards.append(cc_card)
         self._cc_panel = cc_card
@@ -666,7 +674,7 @@ class SettingsRowsMixin:
         lay = page._panel_layout
         insert_at = lay.count() - 1
 
-        card = CardSurface("orange", title="Keep-Alive", icon=make_stopwatch_icon(20))
+        card = self._new_card("keep_alive", "orange", title="Keep-Alive", icon=make_stopwatch_icon(20))
         self._cards.append(card)
         self._keep_alive_panel = card
 
@@ -727,7 +735,7 @@ class SettingsRowsMixin:
         lay = page._panel_layout
         insert_at = lay.count() - 1
 
-        card = CardSurface("pink", title="Click Sync", icon=make_mouse_icon(20))
+        card = self._new_card("click_sync", "pink", title="Click Sync", icon=make_mouse_icon(20))
         self._cards.append(card)
         self._click_sync_panel = card
 
@@ -810,8 +818,8 @@ class SettingsRowsMixin:
         lay = page._panel_layout
         insert_at = lay.count() - 1
 
-        card = CardSurface(
-            "green", title="Hotkeys",
+        card = self._new_card(
+            "hotkeys", "green", title="Hotkeys",
             sub=("Trigger app actions from anywhere with keyboard shortcuts. "
                  "Shortcuts are grabbed system-wide while the app runs."),
             icon=make_nav_keyboard(20, None))
@@ -1036,7 +1044,7 @@ class SettingsRowsMixin:
         lay = page._panel_layout
         insert_at = lay.count() - 1
 
-        card = CardSurface("blue", title="Chat Handling",
+        card = self._new_card("chat_handling", "blue", title="Chat Handling",
                            sub="How chat input is forwarded to your toons.",
                            icon=make_chat_icon(20))
         self._cards.append(card)
@@ -1142,7 +1150,7 @@ class SettingsRowsMixin:
         insert_at = lay.count() - 1
 
         # ── Diagnostics & input ──────────────────────────────────────────
-        diag = CardSurface("teal", title="Diagnostics & input",
+        diag = self._new_card("diagnostics", "teal", title="Diagnostics & input",
                            icon=make_activity_icon(20))
         self._cards.append(diag)
 
@@ -1178,7 +1186,7 @@ class SettingsRowsMixin:
         insert_at += 1
 
         # ── Storage ──────────────────────────────────────────────────────
-        maint = CardSurface("red", title="Storage", icon=make_database_icon(20))
+        maint = self._new_card("storage", "red", title="Storage", icon=make_database_icon(20))
         self._cards.append(maint)
 
         clr_row = self._v2_row(
