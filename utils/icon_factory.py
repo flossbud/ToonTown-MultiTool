@@ -913,3 +913,35 @@ def make_arrow_down_icon(size: int = 10, color: QColor | None = None) -> QIcon:
     p.drawPath(path)
     p.end()
     return QIcon(pm)
+
+
+def _v2_polyline_icon(size: int, color, strokes) -> QIcon:
+    """Open strokes on the 24-unit viewBox, round caps and joins."""
+    pm, p = _v2_canvas(size)
+    p.setPen(_v2_pen(color, size))
+    p.setBrush(Qt.NoBrush)
+    s = size / 24.0
+    for points in strokes:
+        path = QPainterPath(QPointF(points[0][0] * s, points[0][1] * s))
+        for x, y in points[1:]:
+            path.lineTo(x * s, y * s)
+        p.drawPath(path)
+    p.end()
+    return QIcon(pm)
+
+
+def make_check_icon(size: int = 14, color: QColor | None = None) -> QIcon:
+    """Check mark (the toon an account already shows)."""
+    return _v2_polyline_icon(size, color, [[(5, 12.5), (10, 17.5), (19, 7)]])
+
+
+def make_chevron_down_icon(size: int = 12, color: QColor | None = None) -> QIcon:
+    """Down chevron: this control opens a list."""
+    return _v2_polyline_icon(size, color, [[(6, 9), (12, 15), (18, 9)]])
+
+
+def make_swap_icon(size: int = 13, color: QColor | None = None) -> QIcon:
+    """Two opposed arrows: swap the two ends."""
+    return _v2_polyline_icon(size, color, [
+        [(4, 8), (20, 8)], [(16, 4), (20, 8), (16, 12)],
+        [(20, 16), (4, 16)], [(8, 12), (4, 16), (8, 20)]])

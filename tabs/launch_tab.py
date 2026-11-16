@@ -64,8 +64,9 @@ from utils.widgets.confirm_dialog import ConfirmDialog
 from utils.widgets.error_modal import ErrorModal
 from utils.widgets.grandstand.party import LaunchParty
 from utils.widgets.grandstand.view import GrandstandView, grandstand_enabled
+from utils.widgets.grandstand.appearance_draft import AppearanceDraft
 from utils.widgets.grandstand.draft import (
-    MODE_ADD, MODE_EDIT, AccountDraft, unique_toons,
+    MODE_ADD, MODE_EDIT, AccountDraft, shown_record, unique_toons,
 )
 from utils.launch_tab_demo_mode import get_demo_fixtures
 
@@ -397,6 +398,10 @@ class LaunchTab(QWidget):
     # game, toon name, dna ("" when unknown), species | None. The window owns
     # the customizer overlay; the tab only says whose look to open.
     appearance_requested = Signal(str, str, str, object)
+    # game, toon name: a look was saved from the launcher's own appearance
+    # editor (Grandstand). The window refreshes the Multitoon slots playing
+    # that toon; this tab has already repainted its cards.
+    look_saved = Signal(str, str)
 
     LOADING_WINDOW_TIMEOUT_MS = 30000
 
@@ -1207,6 +1212,9 @@ class LaunchTab(QWidget):
         self.grandstand.account_save_requested.connect(self._on_account_save)
         self.grandstand.account_remove_requested.connect(self._on_account_remove)
         self.grandstand.toon_chosen.connect(self._on_toon_chosen)
+        # Sub-project B: the appearance editor's intents, on the same terms.
+        self.grandstand.appearance_save_requested.connect(self._on_appearance_save)
+        self.grandstand.subject_toon_chosen.connect(self._on_subject_toon_chosen)
         self._layout.addWidget(self.grandstand, 1)
         # The legacy sections remain parented for external callers, but without
         # a layout Qt shows them at (0, 0) over Grandstand when their parent is
@@ -1263,26 +1271,88 @@ class LaunchTab(QWidget):
         self.grandstand.set_main_toon_names(game, names)
 
     def _on_grandstand_edit(self, game: str, account_id: str, surface: str) -> None:
-        """The gear opens the account sheet; the pencil — and the sheet's
-        cross-link, which routes here with surface="appearance" — asks the
-        window for the appearance customizer."""
+        """The gear opens the account sheet; the pencil opens the appearance
+        editor. Each sheet's cross-link routes here too, asking for the
+        surface it is not on."""
         if not self._grandstand_mounted():
             self._on_tile_edit(game, account_id)
             return
         if surface == "account":
             self._open_account_sheet(game, account_id)
             return
-        self._request_appearance(game, account_id)
+        self._open_appearance_sheet(game, account_id)
+
+    def _open_appearance_sheet(self, game: str, account_id: str,
+                               identity_changed: bool = False) -> None:
+        """Build the appearance draft from the stores and enter focus mode on
+        the toon this account shows. A look is stored per toon
+        (`game::toon_name`), so an account with no discovered toon opens the
+        editor's explanatory state with nothing to edit or save."""
+        if not self._grandstand_mounted():
+            return
+        global_idx = self._global_index_of(account_id)
+        if global_idx is None:
+            return
+        acct = self.cred_manager.get_account(global_idx)
+        if acct is None:
+            return
+        if self._repair_renamed_primary(game, account_id):
+            self._render_grandstand(game)
+        records = self._recent_toons.list(account_id)
+        primary = self._recent_toons.primary_name(account_id)
+        # The same record the sheet, the browser and the card resolve to.
+        rec = shown_record(unique_toons(records), primary)
+        entry = {}
+        if self._customizations is not None and rec is not None:
+            entry = self._customizations.get(game, rec.toon_name) or {}
+        draft = AppearanceDraft.for_record(
+            account_id=account_id,
+            account_name=acct.label or acct.username or "",
+            game=game, rec=rec, entry=entry)
+        self.grandstand.open_appearance_sheet(
+            game, draft, records, primary, identity_changed=identity_changed)
+
+    def _on_appearance_save(self, game: str, draft) -> None:
+        """Appearance Save (sub-project B): the one place a look edited in
+        the launcher is written. The draft's changes are merged onto the
+        entry in the store *now*, so keys the editor does not expose, and a
+        look saved from the Multitoon tab while the sheet was open, survive.
+        Then both readers follow: this tab's cards, and through look_saved
+        the window's Multitoon slots playing that toon."""
+        if not self._grandstand_mounted():
+            return
+        if self._customizations is None or not draft.has_toon:
+            self.grandstand.close_sheet()
+            return
+        current = self._customizations.get(game, draft.toon_name)
+        entry = draft.apply_to(current)
+        if entry != current:
+            self._customizations.set(game, draft.toon_name, entry)
+            saved_line = f"[Grandstand] appearance saved: {draft.store_key}"
+            self.log(saved_line)
+            print(saved_line, flush=True)
+            self.on_customization_changed(game)
+            self.look_saved.emit(game, draft.toon_name)
+        self.grandstand.close_sheet()
+
+    def _on_subject_toon_chosen(self, game: str, account_id: str,
+                                toon_name: str) -> None:
+        """The appearance editor's toon switcher (handoff §4.3, §6.3): pin
+        the pick, rebuild the roster for the new identity, and re-enter the
+        editor on that toon's saved look. Unsaved edits to the previous
+        toon's look are dropped, as the switcher warned."""
+        if not self._grandstand_mounted():
+            return
+        self._recent_toons.set_primary(account_id, toon_name)
+        self._render_grandstand(game)
+        self._open_appearance_sheet(game, account_id, identity_changed=True)
 
     def _request_appearance(self, game: str, account_id: str) -> None:
-        """Ask the window to open the appearance customizer on the toon this
-        account shows. A look is stored per toon, so an account with no
-        discovered toon has nothing to edit yet; its pencil is disabled and
-        this is the backstop.
-
-        An open account sheet is left open underneath: the customizer is an
-        overlay on the window, so the draft the user typed is still there
-        when it closes."""
+        """Ask the window to open the legacy appearance customizer (the
+        overlay the Multitoon tab uses) on the toon this account shows. The
+        pencil no longer routes here: with Grandstand mounted it opens the
+        appearance editor in the sheet. Kept as the window's entry point for
+        opening the full customizer by toon identity."""
         rec = self._recent_toons.get(account_id)
         if rec is None or not rec.toon_name:
             self.log("[Grandstand] appearance: no toon discovered for this "

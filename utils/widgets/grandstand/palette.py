@@ -487,3 +487,288 @@ def browser_empty_ink(is_dark: bool) -> dict:
                 "body": QColor("#888888")}          # --text-muted
     return {"title": QColor("#0f172a"),             # text_primary (light)
             "body": QColor("#475569")}              # text_muted (light)
+
+
+# ── Appearance editor (2026-11-16 design note, sub-project B) ───────────────
+# Handoff §4.2, §4.3, §4.6. Light values are theme_manager's light tokens of
+# the same name (annotated); where a dark value is a white alpha over the
+# card, the light one is the slate alpha that reads the same on white.
+
+# User-content colours: what a look is made of. They are data the user saves,
+# so they do not change with the app theme (handoff §8, verbatim).
+SWATCHES = (
+    "#e74a4a", "#e7894a", "#d9a04e", "#e6d35a", "#56c856", "#4ae7d9",
+    "#4a8fe7", "#4a5fe7", "#b04ae7", "#e74ab0", "#7a7a8a", "#1a1d29",
+)
+
+# name, fill, start, end, pattern, pattern colour, accent (None = automatic).
+LOOKS = (
+    ("Sky",       "gradient", "#82a4ff", "#002a97", "stars",    "#ffffff", "#4a8fe7"),
+    ("Sunbeam",   "gradient", "#ffd76a", "#e7894a", None,       "#ffffff", "#e7894a"),
+    ("Bubblegum", "gradient", "#ff9ecf", "#b04ae7", "dots",     "#ffffff", "#e74ab0"),
+    ("Meadow",    "gradient", "#a8e063", "#56c856", "chevrons", "#ffffff", "#56c856"),
+    ("Lagoon",    "gradient", "#4ae7d9", "#4a8fe7", None,       "#ffffff", "#4ae7d9"),
+    ("Ember",     "gradient", "#e74a4a", "#7a1410", "chevrons", "#e6d35a", "#e74a4a"),
+    ("Midnight",  "gradient", "#4a5fe7", "#1a1d29", "dots",     "#ffffff", "#4a5fe7"),
+    ("Slate",     "solid",    "#7a7a8a", "#7a7a8a", None,       "#ffffff", None),
+)
+
+# What the wells start from when the stored look has no value of that kind
+# (the reference build's openSettings defaults).
+DEFAULT_GRADIENT = ("#4a8fe7", "#4a5fe7")
+DEFAULT_PATTERN_COLOR = "#ffffff"
+
+
+def portrait_fallback(is_dark: bool) -> QColor:
+    """The disc behind a portrait whose look sets no backdrop. Production's
+    badge falls back to its own neutral surface, so this is that neutral and
+    not a colour the editor invents."""
+    if is_dark:
+        return QColor("#4a4a4a")                    # ToonPortraitWidget._bg
+    return QColor("#cbd5e1")                        # border_light (light)
+
+
+def appearance_stage(is_dark: bool) -> dict:
+    """The framing canvas panel: `.pvstage`, hint, tag, sliders."""
+    if is_dark:
+        return {"bg": QColor("#2e2e2e"),            # --bg-card-inner
+                "border": QColor("#363636"),        # --border-card
+                "hint": QColor("#666666"),          # --text-disabled
+                "value": QColor("#888888"),         # --text-muted
+                "groove": with_alpha("#ffffff", 0.12),
+                "fill": QColor("#0077ff"),          # --blue
+                "handle": QColor("#ffffff"),
+                "handle_border": with_alpha("#000000", 0.35),
+                "tag_bg": with_alpha("#ffffff", 0.06),
+                "tag_border": with_alpha("#ffffff", 0.16),
+                "tag_ink": QColor("#888888")}       # --text-muted
+    return {"bg": QColor("#f1f5f9"),                # bg_card_inner (light)
+            "border": QColor("#e2e8f0"),            # border_card (light)
+            # text_muted, not text_disabled: the disabled slate is 4.3:1 on
+            # the inner card and this is a 10 px label.
+            "hint": QColor("#475569"),              # text_muted (light)
+            "value": QColor("#475569"),             # text_muted (light)
+            "groove": with_alpha("#0f172a", 0.14),
+            "fill": QColor("#0077ff"),
+            "handle": QColor("#ffffff"),
+            "handle_border": with_alpha("#0f172a", 0.40),
+            "tag_bg": with_alpha("#0f172a", 0.05),
+            "tag_border": with_alpha("#0f172a", 0.16),
+            "tag_ink": QColor("#475569")}           # text_muted (light)
+
+
+def appearance_group_ink(is_dark: bool) -> dict:
+    """Group headers, their right-aligned notes, hex readouts, body copy."""
+    if is_dark:
+        return {"label": QColor("#888888"),         # --text-muted
+                "note": QColor("#666666"),          # --text-disabled
+                "readout": QColor("#666666"),       # --text-disabled
+                "body": QColor("#666666"),          # --text-disabled
+                "scope": QColor("#888888")}         # --text-muted
+    return {"label": QColor("#475569"),             # text_muted (light)
+            "note": QColor("#64748b"),              # text_disabled (light)
+            "readout": QColor("#64748b"),           # text_disabled (light)
+            "body": QColor("#64748b"),              # text_disabled (light)
+            "scope": QColor("#475569")}             # text_muted (light)
+
+
+def appearance_chip(selected: bool, hover: bool, is_dark: bool) -> dict:
+    """`.chip` (handoff §4.2)."""
+    if is_dark:
+        if selected:
+            return {"bg": with_alpha("#3399ff", 0.16),
+                    "border": QColor("#3399ff"),    # --blue-border
+                    "ink": QColor("#cfe6ff")}
+        return {"bg": with_alpha("#000000", 0.0),
+                "border": QColor("#555555") if hover else QColor("#363636"),
+                "ink": QColor("#ffffff") if hover else QColor("#888888")}
+    if selected:
+        return {"bg": with_alpha("#0077ff", 0.12),
+                "border": QColor("#0077ff"),
+                "ink": QColor("#0058c0")}
+    return {"bg": with_alpha("#000000", 0.0),
+            "border": QColor("#94a3b8") if hover else QColor("#cbd5e1"),
+            "ink": QColor("#0f172a") if hover else QColor("#475569")}
+
+
+def appearance_disabled(is_dark: bool) -> dict:
+    """Controls that have nothing to act on (no toon discovered yet)."""
+    if is_dark:
+        return {"border": QColor("#2e2e2e"),        # --border-muted
+                "ink": QColor("#666666")}           # --text-disabled
+    return {"border": QColor("#e8ecf1"),            # border_muted (light)
+            "ink": QColor("#94a3b8")}
+
+
+def color_well(state: str, is_dark: bool) -> dict:
+    """`.well`: `state` is rest | hover | open. An unset well shows the
+    diagonal "automatic" hatch."""
+    if is_dark:
+        border = {"open": QColor("#ffffff"),
+                  "hover": with_alpha("#ffffff", 0.40)}.get(
+                      state, with_alpha("#ffffff", 0.18))
+        return {"border": border,
+                "inset": with_alpha("#000000", 0.35),
+                "hatch": with_alpha("#ffffff", 0.13)}
+    border = {"open": QColor("#0f172a"),
+              "hover": with_alpha("#0f172a", 0.50)}.get(
+                  state, with_alpha("#0f172a", 0.26))
+    return {"border": border,
+            "inset": with_alpha("#0f172a", 0.12),
+            "hatch": with_alpha("#0f172a", 0.16)}
+
+
+def gradient_bar_border(is_dark: bool) -> QColor:
+    if is_dark:
+        return with_alpha("#ffffff", 0.14)
+    return with_alpha("#0f172a", 0.18)
+
+
+def well_popover(is_dark: bool) -> dict:
+    """`.pop`: the swatch palette. Dark sits below the token scale on
+    purpose so it reads as floating (handoff §9)."""
+    if is_dark:
+        return {"bg": QColor("#171a24"),
+                "border": QColor("#555555"),        # --border-light
+                "shadow": with_alpha("#000000", 0.55),
+                "swatch_ring": QColor("#ffffff"),
+                "swatch_inset": with_alpha("#000000", 0.40),
+                "clear_border": QColor("#555555"),  # --border-light
+                "clear_ink": QColor("#888888"),     # --text-muted
+                "clear_hover": QColor("#ffffff")}
+    return {"bg": QColor("#ffffff"),                # bg_card (light)
+            "border": QColor("#cbd5e1"),            # border_light (light)
+            "shadow": with_alpha("#0f172a", 0.22),
+            "swatch_ring": QColor("#0f172a"),       # text_primary (light)
+            "swatch_inset": with_alpha("#0f172a", 0.25),
+            "clear_border": QColor("#94a3b8"),
+            "clear_ink": QColor("#475569"),         # text_muted (light)
+            "clear_hover": QColor("#0f172a")}       # text_primary (light)
+
+
+def swap_button(hover: bool, is_dark: bool) -> dict:
+    """`.swapbtn`: swap the two gradient ends."""
+    if is_dark:
+        return {"border": QColor("#555555") if hover else QColor("#363636"),
+                "ink": QColor("#ffffff") if hover else QColor("#888888")}
+    return {"border": QColor("#94a3b8") if hover else QColor("#cbd5e1"),
+            "ink": QColor("#0f172a") if hover else QColor("#475569")}
+
+
+def look_swatch(selected: bool, is_dark: bool) -> dict:
+    """A Look's label and its selected ring. `gap` is the panel showing
+    between the disc and the ring, so it is the sheet's own surface."""
+    gap = sheet_surface(is_dark)["bg"]
+    if is_dark:
+        return {"ink": QColor("#ffffff") if selected else QColor("#888888"),
+                "ring": QColor("#ffffff"), "gap": gap}
+    return {"ink": QColor("#0f172a") if selected else QColor("#475569"),
+            "ring": QColor("#0f172a"), "gap": gap}
+
+
+def pose_tile(selected: bool, hover: bool, is_dark: bool) -> dict:
+    """One tile of the pose strip (handoff §4.6)."""
+    if is_dark:
+        if selected:
+            return {"bg": with_alpha("#000000", 0.26),
+                    "border": QColor("#3399ff"),    # --blue-border
+                    "glow": with_alpha("#3399ff", 0.28),
+                    "ink": QColor("#cfe6ff")}
+        return {"bg": with_alpha("#000000", 0.26),
+                "border": QColor("#555555") if hover else QColor("#363636"),
+                "glow": None,
+                "ink": QColor("#888888")}           # --text-muted
+    if selected:
+        return {"bg": with_alpha("#0f172a", 0.06),
+                "border": QColor("#0077ff"),
+                "glow": with_alpha("#0077ff", 0.22),
+                "ink": QColor("#0058c0")}
+    return {"bg": with_alpha("#0f172a", 0.06),
+            "border": QColor("#94a3b8") if hover else QColor("#e2e8f0"),
+            "glow": None,
+            "ink": QColor("#475569")}               # text_muted (light)
+
+
+def pose_fade(is_dark: bool) -> tuple[QColor, QColor]:
+    """The strip's right-edge fade: the sheet surface dissolving."""
+    bg = sheet_surface(is_dark)["bg"]
+    return QColor(bg), with_alpha(bg.name(), 0.0)
+
+
+def standin(is_dark: bool) -> dict:
+    """`.standin`: the Portrait art panel (species mode)."""
+    if is_dark:
+        return {"bg": QColor("#2e2e2e"),            # --bg-card-inner
+                "border": QColor("#363636"),        # --border-card
+                "title": QColor("#ffffff"),
+                "body": QColor("#666666"),          # --text-disabled
+                "icon": QColor("#bbbbbb")}          # --text-secondary
+    return {"bg": QColor("#f1f5f9"),                # bg_card_inner (light)
+            "border": QColor("#e2e8f0"),            # border_card (light)
+            "title": QColor("#0f172a"),             # text_primary (light)
+            "body": QColor("#475569"),              # text_muted (light)
+            "icon": QColor("#475569")}              # text_muted (light)
+
+
+def subject_pill(hover: bool, is_dark: bool) -> dict:
+    """`.subj`: the pill that names the toon and opens the switcher."""
+    if is_dark:
+        return {"bg": with_alpha("#ffffff", 0.07) if hover else QColor("#2e2e2e"),
+                "border": QColor("#555555") if hover else QColor("#363636"),
+                "ink": QColor("#ffffff"),
+                "chevron": QColor("#888888"),       # --text-muted
+                "portrait_bg": with_alpha("#000000", 0.25),
+                "empty_ring": with_alpha("#ffffff", 0.30)}
+    return {"bg": QColor("#e2e8f0") if hover else QColor("#f1f5f9"),
+            "border": QColor("#94a3b8") if hover else QColor("#e2e8f0"),
+            "ink": QColor("#0f172a"),               # text_primary (light)
+            "chevron": QColor("#475569"),           # text_muted (light)
+            "portrait_bg": with_alpha("#0f172a", 0.08),
+            "empty_ring": with_alpha("#0f172a", 0.30)}
+
+
+def switcher_popover(is_dark: bool) -> dict:
+    """`.subjpop` and its rows. Dark sits below the token scale on purpose
+    (handoff §9); the warning is the gold that means "main" elsewhere."""
+    if is_dark:
+        return {"bg": QColor("#191b22"),
+                "border": QColor("#555555"),        # --border-light
+                "shadow": with_alpha("#000000", 0.55),
+                "heading": QColor("#666666"),       # --text-disabled
+                "row_hover": with_alpha("#ffffff", 0.07),
+                "row_current": with_alpha("#0077ff", 0.16),
+                "name": QColor("#ffffff"),
+                "meta": QColor("#666666"),          # --text-disabled
+                "check": QColor("#3399ff"),         # --blue-border
+                "note": QColor("#666666"),          # --text-disabled
+                "warn": QColor("#e8c14d")}          # --v2-yellow-b
+    return {"bg": QColor("#ffffff"),                # bg_card (light)
+            "border": QColor("#cbd5e1"),            # border_light (light)
+            "shadow": with_alpha("#0f172a", 0.22),
+            "heading": QColor("#64748b"),           # text_disabled (light)
+            "row_hover": with_alpha("#0f172a", 0.06),
+            "row_current": with_alpha("#0077ff", 0.12),
+            "name": QColor("#0f172a"),              # text_primary (light)
+            "meta": QColor("#475569"),              # text_muted (light)
+            "check": QColor("#0077ff"),
+            "note": QColor("#475569"),              # text_muted (light)
+            "warn": QColor("#8a6100")}
+
+
+def focus_ring(is_dark: bool) -> QColor:
+    """Keyboard focus on a painted control: handoff §5's 2 px --blue-border
+    outline. The light theme takes --blue, which holds 3:1 on white."""
+    if is_dark:
+        return QColor("#3399ff")                    # --blue-border
+    return QColor("#0077ff")                        # --blue
+
+
+def mini_link(gold: bool, hover: bool, is_dark: bool) -> QColor:
+    """`.minilink`: Surprise me (gold) and Reset all."""
+    if is_dark:
+        if hover:
+            return QColor("#ffffff")
+        return QColor("#e8c14d") if gold else QColor("#888888")
+    if hover:
+        return QColor("#0f172a")                    # text_primary (light)
+    return QColor("#8a6100") if gold else QColor("#475569")
