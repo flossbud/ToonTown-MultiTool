@@ -37,7 +37,9 @@ def spy(demo):
 
 
 def _public(cls):
-    return {name for name in vars(cls) if not name.startswith("_")}
+    # Constants (tunables of the real engine) are not part of the surface.
+    return {name for name in vars(cls)
+            if not name.startswith("_") and not name.isupper()}
 
 
 # ── Surface ────────────────────────────────────────────────────────────────
@@ -64,14 +66,6 @@ def test_fake_properties_are_read_only(demo):
         assert isinstance(getattr(FakeToonSession, name), property)
         with pytest.raises(AttributeError):
             setattr(demo, name, object())
-
-
-def test_real_session_is_a_stub_until_ported(qapp):
-    session = ToonSession()
-    with pytest.raises(NotImplementedError):
-        session.toons()
-    with pytest.raises(NotImplementedError):
-        session.start()
 
 
 def test_toon_state_is_immutable(demo):
@@ -272,6 +266,51 @@ def test_shutdown_stops_once(demo, spy):
     demo.shutdown()
     demo.shutdown()
     assert spy.events == [("running", False)]
+
+
+def test_toggle_running(demo, spy):
+    demo.toggle_running()
+    demo.toggle_running()
+    assert spy.events == [("running", False), ("running", True)]
+
+
+def test_toggle_keep_alive_all_turns_off_those_that_are_on(demo, spy):
+    demo.toggle_keep_alive_all()
+    assert [t.keep_alive for t in demo.toons()] == [False] * 4
+    assert spy.events == [("toon", "demo-1"), ("toon", "demo-2")]
+
+
+def test_toggle_keep_alive_all_turns_everything_on_when_none_is(demo, spy):
+    demo.toggle_keep_alive_all()
+    spy.events.clear()
+    demo.toggle_keep_alive_all()
+    assert [t.keep_alive for t in demo.toons()] == [True] * 4
+    assert len(spy.events) == 4
+
+
+def test_toggle_keep_alive_all_does_nothing_while_unavailable(demo, spy):
+    demo.set_features(keep_alive_available=False)
+    spy.events.clear()
+    demo.toggle_keep_alive_all()
+    assert [t.keep_alive for t in demo.toons()] == [True, True, False, False]
+    assert spy.events == []
+
+
+def test_click_sync_state_reads_like_the_service(demo):
+    assert demo.click_sync_state("demo-1") == "armed"      # the only member
+    demo.set_click_sync("demo-2", True)
+    assert demo.click_sync_state("demo-1") == "active"
+    assert demo.click_sync_state("demo-2") == "active"
+    assert demo.click_sync_state("demo-3") == "off"
+    assert demo.click_sync_state("gone") == "off"
+    demo.set_features(click_sync_available=False)
+    assert demo.click_sync_state("demo-1") == "off"
+
+
+def test_active_profile_follows_load(demo):
+    assert demo.active_profile == -1
+    demo.load_profile(3)
+    assert demo.active_profile == 3
 
 
 def test_refresh_is_recorded_and_silent(demo, spy):
