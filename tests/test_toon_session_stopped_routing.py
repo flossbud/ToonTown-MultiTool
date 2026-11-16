@@ -204,3 +204,78 @@ def test_suspending_twice_or_resuming_twice_does_nothing_more(stage):
 def test_an_input_service_is_not_suspended_unless_asked(stage):
     """The Multitoon tab never calls set_routing_suspended: unchanged for it."""
     assert stage.input._routing_suspended is False
+
+
+# ── Non-exclusive grabbers (Windows, macOS) ─────────────────────────────────
+#
+# There the hook withholds only the keys the grabber's should_suppress says
+# yes to, and every other key reaches the focused window natively. Suspended
+# must mean should_suppress is False for every movement key (nothing
+# withheld) AND nothing re-synthesized. These use the two real grabber
+# classes; they are pure state, the OS hook that consults them is not here.
+
+def _non_exclusive_grabbers():
+    from utils.macos_movement_grabber import MacOSMovementKeyGrabber
+    from utils.win32_movement_grabber import Win32MovementKeyGrabber
+    return [Win32MovementKeyGrabber, MacOSMovementKeyGrabber]
+
+
+@pytest.fixture(params=_non_exclusive_grabbers(), ids=["win32", "macos"])
+def hooked(stage, request):
+    grabber = request.param()
+    assert grabber.needs_focused_passthrough is False
+    # What prepare() does, minus its platform check.
+    grabber._should_consume = stage.input._should_consume_grabbed_key
+    grabber._on_grabs_changed = stage.input._on_grabs_changed
+    stage.input._key_grabber = grabber
+    stage.movement = sorted(stage.keymaps.get_keys_for_game("ttr"))
+    assert stage.movement
+    return stage
+
+
+def suppressed(rig):
+    return [key for key in rig.movement if rig.input._suppress_predicate(key)]
+
+
+def test_hook_baseline_withholds_the_bound_keys_and_redelivers(hooked):
+    focus(hooked, "a")
+    assert suppressed(hooked) == hooked.movement
+    assert hooked.input._strict_ttr_active() is True
+    assert {win for _action, win, _key in press_forward(hooked)} == {"a", "b"}
+
+
+def test_hook_withholds_nothing_while_stopped(hooked):
+    focus(hooked, "a")
+    hooked.session.stop()
+    assert suppressed(hooked) == []
+    assert hooked.input._key_grabber._grabbed_keysyms is None
+    assert hooked.input._strict_ttr_active() is False
+    assert press_forward(hooked) == []
+
+
+def test_hook_stays_off_across_focus_changes_while_stopped(hooked):
+    hooked.session.stop()
+    for window_id in ("a", "b", "", "b"):
+        focus(hooked, window_id)
+        assert suppressed(hooked) == []
+        assert press_forward(hooked) == []
+
+
+def test_hook_is_restored_on_start(hooked):
+    focus(hooked, "a")
+    hooked.session.stop()
+    focus(hooked, "b")
+    hooked.session.start()
+    assert suppressed(hooked) == hooked.movement
+    assert {win for _action, win, _key in press_forward(hooked)} == {"a", "b"}
+
+
+def test_the_consume_predicate_says_no_from_the_moment_routing_is_suspended(hooked):
+    """A grabber that takes its grabs down a moment later on its own thread
+    (X11) asks this per event in between; it must already say no."""
+    focus(hooked, "a")
+    key = hooked.movement[0]
+    assert hooked.input._should_consume_grabbed_key(key) is True
+    hooked.input._routing_suspended = True          # grabs not yet removed
+    assert hooked.input._should_consume_grabbed_key(key) is False
+    assert suppressed(hooked) == []
