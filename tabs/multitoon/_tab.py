@@ -12,7 +12,9 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QVariantAnimation, QEasingCurve, QRectF, QPointF, QSize
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPainterPath, QPixmap
+from services.chat_handling import compute_effective_chat_enabled
 from services.input_service import InputService
+from services.keep_alive import dispatch_keep_alive_cycle as _dispatch_keep_alive_cycle
 from services.sleep_inhibitor import SleepInhibitor
 from utils.theme_manager import (
     resolve_theme, get_theme_colors, apply_card_shadow,
@@ -1312,51 +1314,6 @@ class SetSelectorWidget(QWidget):
 
 
 # ── Main Tab ───────────────────────────────────────────────────────────────
-
-
-def compute_effective_chat_enabled(
-    mode: str,
-    raw_chat: list[bool],
-    enabled_toons: list[bool],
-    assignments: list[int],
-) -> list[bool]:
-    """Compute per-toon effective chat-broadcast state.
-
-    Expects an already-normalized mode (use normalize_chat_handling_mode
-    before calling). The four canonical modes behave as follows:
-
-    - per_toon:       returns raw_chat verbatim, length-normalized to
-                      len(enabled_toons); downstream InputService callers
-                      never read past the end of raw_chat.
-    - all_toons:      every enabled toon broadcasts chat (disabled -> False),
-                      regardless of keyset assignment or raw_chat.
-    - focused_only:   all False; chat is handled by the game's own focused
-                      window, not broadcast by TTMT.
-    - keyset_dynamic: (default / fallback) each toon is True iff the toon is
-                      enabled AND its assigned keyset index is 0. Assignments
-                      shorter than enabled_toons treat missing indices as
-                      non-default keyset (chat off).
-
-    Result length always equals len(enabled_toons).
-
-    See: docs/superpowers/specs/2026-06-09-chat-handling-logic-dropdown-design.md
-    """
-    from utils.settings_keys import (
-        CHAT_HANDLING_PER_TOON,
-        CHAT_HANDLING_ALL_TOONS,
-        CHAT_HANDLING_FOCUSED_ONLY,
-    )
-    n = len(enabled_toons)
-    if mode == CHAT_HANDLING_PER_TOON:
-        return [bool(raw_chat[i]) if i < len(raw_chat) else False for i in range(n)]
-    if mode == CHAT_HANDLING_ALL_TOONS:
-        return [bool(enabled_toons[i]) for i in range(n)]
-    if mode == CHAT_HANDLING_FOCUSED_ONLY:
-        return [False] * n
-    return [
-        bool(enabled_toons[i]) and i < len(assignments) and assignments[i] == 0
-        for i in range(n)
-    ]
 
 
 # Net-new keep-alive orange (the theme's accent_orange #c47a2a reads too brown
@@ -3219,7 +3176,7 @@ class MultitoonTab(QWidget):
         # spike-proven 2026-06-15); the resolver-safety overlay_wids() guard is
         # unused on darwin (the active-window source resolver never hit-tests
         # toplevels), so no extra wiring is needed there.
-        from tabs.multitoon._ghost_cursors import GhostCursorController
+        from utils.ghost_cursors import GhostCursorController
 
         def _cs_slot_rect(slot, _wid=_cs_slot_wid,
                           _g=_geom if _geom is not None else (lambda _w: None)):
@@ -4373,62 +4330,3 @@ class MultitoonTab(QWidget):
             self.click_sync_service.shutdown()
         if self._click_sync_backend is not None:
             self._click_sync_backend.disconnect()
-
-
-def _dispatch_keep_alive_cycle(action, fire_toons, window_manager, keymap_manager,
-                                input_service):
-    """Dispatch one keep-alive cycle to the requested toon slots.
-
-    Returns the number of toons that actually received a keypress (after
-    per-toon game / binding resolution). A return of 0 with a non-empty
-    fire_toons list means every candidate was skipped.
-
-    The key sent is ALWAYS the game client's own binding, mirroring the
-    router's outbound rule (_send_logical_action_km): CC movement uses the
-    WASD-lock canonical, everything else uses set 0 (the config-driven
-    Default that tracks the client's settings file). A toon's assigned SET
-    must never leak here - sets are an input-translation layer for what the
-    USER presses, not what the client understands. Resolving through the
-    set sent raw Alt_R (an Arrows-set jump rebind) to a TTR client whose
-    real jump is space, which the client read as its side-agnostic 'alt'
-    stickerBook binding: the book toggled open every keep-alive cycle.
-    """
-    from utils import cc_isolation
-
-    logical = "forward" if action == "up" else action
-    cc_canonical = cc_isolation.canonical_to_ttmt_keysyms(
-        cc_isolation.DEFAULT_CANONICAL
-    )
-    window_ids = window_manager.get_window_ids()
-    # Chat gate: keep-alive must never type its key into an open chat box
-    # (the focused toon's during a capture, or a bg box TTMT mirrored open).
-    # Fail-open via getattr so bare test stubs without the method keep the
-    # historical behavior.
-    chat_skip = getattr(input_service, "keep_alive_skip_window", None)
-    fired = 0
-    for i in fire_toons:
-        if i >= len(window_ids):
-            continue
-        wid = window_ids[i]
-        if chat_skip is not None:
-            try:
-                if chat_skip(wid):
-                    continue
-            except Exception:
-                pass
-        try:
-            game = GameRegistry.instance().get_game_for_window(str(wid))
-        except Exception:
-            game = None
-        if game not in ("ttr", "cc"):
-            continue
-        if not logical_actions.supports(game, logical):
-            continue
-        key = cc_canonical.get(logical) if game == "cc" else None
-        if not key:
-            key = keymap_manager.get_key_for_action(game, 0, logical)
-        if not key:
-            continue
-        input_service.send_keep_alive_to_window(wid, key)
-        fired += 1
-    return fired

@@ -52,7 +52,7 @@ def patch_registry(monkeypatch):
 
 def test_ttr_default_jump_fires_space_to_both(stub_input_service, stub_window_manager,
                                               real_keymap, patch_registry):
-    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    from services.keep_alive import dispatch_keep_alive_cycle as _dispatch_keep_alive_cycle
     patch_registry({"w1": "ttr", "w2": "ttr"})
     fired = _dispatch_keep_alive_cycle(
         action="jump",
@@ -70,7 +70,7 @@ def test_custom_set_never_participates(stub_input_service, stub_window_manager,
                                         real_keymap, patch_registry):
     """The toon's assigned set is irrelevant: even a set with no binding for
     the action sends the client's set-0 key."""
-    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    from services.keep_alive import dispatch_keep_alive_cycle as _dispatch_keep_alive_cycle
     real_keymap.add_set("ttr", name="Minimal")
     # Wipe the 'book' binding on the new set so set 1 has no book key.
     real_keymap.update_set_key("ttr", 1, "book", "")
@@ -91,7 +91,7 @@ def test_rebound_set_still_gets_client_key(stub_input_service, stub_window_manag
     not leak its own key to the client. The client's jump is space; a raw
     Alt_R reads as the side-agnostic 'alt' stickerBook binding and toggled
     the book open every keep-alive cycle on the live winbox."""
-    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    from services.keep_alive import dispatch_keep_alive_cycle as _dispatch_keep_alive_cycle
     real_keymap.add_set("ttr", name="Arrows")
     real_keymap.update_set_key("ttr", 1, "jump", "Alt_R")
     patch_registry({"w1": "ttr", "w2": "ttr"})
@@ -108,7 +108,7 @@ def test_rebound_set_still_gets_client_key(stub_input_service, stub_window_manag
 
 def test_unclassified_window_skipped(stub_input_service, stub_window_manager,
                                       real_keymap, patch_registry):
-    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    from services.keep_alive import dispatch_keep_alive_cycle as _dispatch_keep_alive_cycle
     patch_registry({"w1": "ttr"})  # w2 is intentionally not classified
     fired = _dispatch_keep_alive_cycle(
         action="jump",
@@ -124,7 +124,7 @@ def test_unclassified_window_skipped(stub_input_service, stub_window_manager,
 
 def test_missing_window_slot_skipped(stub_input_service, stub_window_manager,
                                       real_keymap, patch_registry):
-    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    from services.keep_alive import dispatch_keep_alive_cycle as _dispatch_keep_alive_cycle
     patch_registry({"w1": "ttr"})
     fired = _dispatch_keep_alive_cycle(
         action="jump",
@@ -141,7 +141,7 @@ def test_up_alias_resolves_to_forward(stub_input_service, stub_window_manager,
                                        real_keymap, patch_registry):
     """Settings UI stores the 'Move Forward' action as 'up'; the dispatcher
     must alias it to the logical action 'forward'."""
-    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    from services.keep_alive import dispatch_keep_alive_cycle as _dispatch_keep_alive_cycle
     patch_registry({"w1": "ttr"})
     _dispatch_keep_alive_cycle(
         action="up",
@@ -156,7 +156,7 @@ def test_up_alias_resolves_to_forward(stub_input_service, stub_window_manager,
 def test_zero_matches_returns_zero(stub_input_service, stub_window_manager,
                                     real_keymap, patch_registry):
     """All candidates unclassified -> dispatcher returns 0, no calls made."""
-    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    from services.keep_alive import dispatch_keep_alive_cycle as _dispatch_keep_alive_cycle
     patch_registry({})  # neither window is classified
     fired = _dispatch_keep_alive_cycle(
         action="jump",
@@ -171,7 +171,7 @@ def test_zero_matches_returns_zero(stub_input_service, stub_window_manager,
 
 def test_ttr_mixed_sets_forward(stub_input_service, stub_window_manager,
                                  real_keymap, patch_registry):
-    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    from services.keep_alive import dispatch_keep_alive_cycle as _dispatch_keep_alive_cycle
     real_keymap.add_set("ttr", name="Arrows")
     real_keymap.update_set_key("ttr", 1, "forward", "Up")
     patch_registry({"w1": "ttr", "w2": "ttr"})
@@ -188,7 +188,7 @@ def test_ttr_mixed_sets_forward(stub_input_service, stub_window_manager,
 
 def test_cc_default_jump_fires_space(stub_input_service, stub_window_manager,
                                       real_keymap, patch_registry):
-    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    from services.keep_alive import dispatch_keep_alive_cycle as _dispatch_keep_alive_cycle
     patch_registry({"w1": "cc", "w2": "cc"})
     _dispatch_keep_alive_cycle(
         action="jump",
@@ -203,7 +203,7 @@ def test_cc_default_jump_fires_space(stub_input_service, stub_window_manager,
 
 def test_cc_mixed_sets_forward(stub_input_service, stub_window_manager,
                                 real_keymap, patch_registry):
-    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    from services.keep_alive import dispatch_keep_alive_cycle as _dispatch_keep_alive_cycle
     real_keymap.add_set("cc", name="Arrows")
     real_keymap.update_set_key("cc", 1, "forward", "Up")
     patch_registry({"w1": "cc", "w2": "cc"})
@@ -220,7 +220,7 @@ def test_cc_mixed_sets_forward(stub_input_service, stub_window_manager,
 
 def test_mixed_ttr_cc_book(stub_input_service, stub_window_manager,
                             real_keymap, patch_registry):
-    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    from services.keep_alive import dispatch_keep_alive_cycle as _dispatch_keep_alive_cycle
     patch_registry({"w1": "ttr", "w2": "cc"})
     _dispatch_keep_alive_cycle(
         action="book",
@@ -235,7 +235,7 @@ def test_mixed_ttr_cc_book(stub_input_service, stub_window_manager,
 
 def test_mixed_ttr_cc_jump(stub_input_service, stub_window_manager,
                             real_keymap, patch_registry):
-    from tabs.multitoon._tab import _dispatch_keep_alive_cycle
+    from services.keep_alive import dispatch_keep_alive_cycle as _dispatch_keep_alive_cycle
     patch_registry({"w1": "ttr", "w2": "cc"})
     _dispatch_keep_alive_cycle(
         action="jump",

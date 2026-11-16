@@ -51,7 +51,7 @@ def _stub_darwin_snapshot(monkeypatch):
     -> intermittent isVisible() failures on macOS CI (test_core_focus_* flaked
     for months). Default the darwin snapshot to None (occlusion open); the
     occlusion tests set their own snapshot in-body, which overrides this."""
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     monkeypatch.setattr(gc, "_darwin_zorder_snapshot", lambda: None)
 
 
@@ -67,7 +67,7 @@ def core(qapp):
 
 
 def _hotpos(core, slot):
-    from tabs.multitoon._ghost_cursors import HOTSPOT
+    from utils.ghost_cursors import HOTSPOT
     ov = core._overlays[slot]
     return (ov.x() + HOTSPOT[0], ov.y() + HOTSPOT[1])
 
@@ -131,7 +131,7 @@ def test_core_quit_message_and_eof_request_quit(core):
 
 
 def test_core_occlusion_hides_fully_covered_glove(core, monkeypatch):
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     snap = [(FOREIGN, (0, 0, 1600, 1200), 555),
             (GAME, (0, 0, 1600, 1200), 777)]
     monkeypatch.setattr(gc, "_darwin_zorder_snapshot", lambda: snap)
@@ -250,7 +250,7 @@ class _FakeClient:
 def test_controller_never_spawns_off_cocoa(qapp):
     # Offscreen QPA: the spawn gate must refuse even on darwin - otherwise
     # every test suite would fork a helper process.
-    from tabs.multitoon._ghost_cursors import GhostCursorController
+    from utils.ghost_cursors import GhostCursorController
     svc = _FakeService()
     ctl = GhostCursorController(svc, None)
     assert ctl._renderer is None
@@ -258,7 +258,7 @@ def test_controller_never_spawns_off_cocoa(qapp):
 
 
 def test_controller_renderer_mode_feeds_and_skips_local_render(qapp):
-    from tabs.multitoon._ghost_cursors import GhostCursorController
+    from utils.ghost_cursors import GhostCursorController
     svc = _FakeService()
     ctl = GhostCursorController(svc, None,
                                 slot_window_resolver=lambda s: str(GAME))
@@ -279,7 +279,7 @@ def test_controller_renderer_mode_feeds_and_skips_local_render(qapp):
 
 
 def test_controller_falls_back_when_renderer_dies(qapp):
-    from tabs.multitoon._ghost_cursors import GhostCursorController
+    from utils.ghost_cursors import GhostCursorController
     svc = _FakeService()
     ctl = GhostCursorController(svc, None)
     fake = _FakeClient()
@@ -328,7 +328,7 @@ def test_core_parent_pid_windows_never_occlude(core, monkeypatch):
     windows, and with only the renderer's pid exempt they carved gloves to
     nothing. Windows of ANY exempt pid (the renderer AND its parent app)
     must never occlude; foreign windows still do."""
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     core._exempt_pids = frozenset({111111, 222222})
     app_card = (555, (0, 0, 1600, 1200), 222222)      # parent-app window
     snap = [app_card, (GAME, (0, 0, 1600, 1200), 777)]
@@ -353,7 +353,7 @@ def test_core_default_exempt_pids_cover_self_and_parent():
 
 
 def test_scan_region_inputs_accepts_pid_container():
-    from tabs.multitoon._ghost_cursors import _scan_region_inputs
+    from utils.ghost_cursors import _scan_region_inputs
     snap = [(555, (0, 0, 800, 600), 42),
             (GAME, (0, 0, 800, 600), 777)]
     ident = lambda a, b: (a, b)  # noqa: E731
@@ -367,7 +367,7 @@ def test_scan_region_inputs_accepts_pid_container():
 def test_core_inputs_cache_is_per_target(core, monkeypatch):
     """Multiple gloves alternate targets every tick: the inputs cache must
     hold one entry per target for a snapshot, not thrash on alternation."""
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     snap = [(GAME, (0, 0, 800, 600), 777),
             (555, (800, 0, 1600, 600), 888)]
     monkeypatch.setattr(gc, "_darwin_zorder_snapshot", lambda: snap)
@@ -526,7 +526,7 @@ def test_sprite_reports_global_position(core):
 
 def test_legacy_window_mode_kill_switch(qapp, monkeypatch):
     from utils import ghost_renderer as gr
-    from tabs.multitoon._ghost_cursors import GhostCursorOverlay
+    from utils.ghost_cursors import GhostCursorOverlay
     monkeypatch.setattr(gr, "CANVAS_MODE", False)
     c = GhostRendererCore()
     try:

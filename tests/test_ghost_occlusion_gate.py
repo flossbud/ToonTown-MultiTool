@@ -13,7 +13,7 @@ from PySide6.QtCore import QRect
 from PySide6.QtGui import QRegion
 from PySide6.QtWidgets import QApplication
 
-from tabs.multitoon._ghost_cursors import (
+from utils.ghost_cursors import (
     CURSOR_SIZE,
     HOTSPOT,
     GhostCursorController,
@@ -223,7 +223,7 @@ def _reset_darwin_snap_cache():
     """The darwin snapshot is TTL-cached (a CGWindowList probe per pointer
     event per glove saturated the GUI thread live); keep the cache from
     leaking between tests."""
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     gc._reset_darwin_snapshot_cache()
     yield
     gc._reset_darwin_snapshot_cache()
@@ -231,7 +231,7 @@ def _reset_darwin_snap_cache():
 
 def test_gate_armed_on_darwin_unconfined(qapp, monkeypatch):
     import sys as _sys
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     monkeypatch.setattr(_sys, "platform", "darwin")
     ctrl = GhostCursorController(service=None, settings_manager=None)
     assert ctrl._occlusion_gated is True
@@ -241,7 +241,7 @@ def test_gate_armed_on_darwin_unconfined(qapp, monkeypatch):
 
 def test_gate_armed_on_win32_unconfined_unchanged(qapp, monkeypatch):
     import sys as _sys
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     monkeypatch.setattr(_sys, "platform", "win32")
     ctrl = GhostCursorController(service=None, settings_manager=None)
     assert ctrl._occlusion_gated is True
@@ -254,7 +254,7 @@ def test_darwin_refresh_parses_bounds_pid_number_only(monkeypatch):
     degenerate/malformed records dropped. Only kCGWindowNumber /
     kCGWindowOwnerPID / kCGWindowBounds are consulted (kCGWindowName can
     demand the Screen Recording TCC prompt - the fakes simply omit it)."""
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     from utils import macos_discovery as md
 
     def _info(num, pid, x, y, w, h):
@@ -284,7 +284,7 @@ def test_darwin_refresh_excludes_system_chrome_layers(monkeypatch):
     snapshot; otherwise a full-screen (often transparent/click-through) overlay
     is counted as an occluder and masks EVERY ghost glove to nothing. Live
     packaged bug: an open Screenshot overlay carved all gloves."""
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     from utils import macos_discovery as md
 
     def _info(num, pid, x, y, w, h, layer):
@@ -311,7 +311,7 @@ def test_darwin_refresh_error_keeps_previous_snapshot(monkeypatch):
     """A transient window-server error must not blank the mask basis: the
     previous snapshot stays in place (stale beats blank; the next sweep or
     TTL expiry retries)."""
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     from utils import macos_discovery as md
     monkeypatch.setattr(md, "_raw_window_info", lambda: [])
     good = gc._refresh_darwin_snapshot()
@@ -328,7 +328,7 @@ def test_darwin_refresh_error_keeps_previous_snapshot(monkeypatch):
 def test_darwin_read_never_probes_fresh_cache(monkeypatch):
     """CP15/CP16 law: the frame path never talks to the window server.
     A FRESH cache is served without any refresh kick."""
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     from utils import macos_discovery as md
     monkeypatch.setattr(md, "_raw_window_info", lambda: [])
     snap = gc._refresh_darwin_snapshot()
@@ -342,7 +342,7 @@ def test_darwin_read_never_probes_fresh_cache(monkeypatch):
 def test_darwin_read_serves_stale_and_kicks_refresh(monkeypatch):
     """Expired cache: the read returns the STALE snapshot immediately (never
     blocks) and kicks exactly one background refresh."""
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     from utils import macos_discovery as md
     monkeypatch.setattr(md, "_raw_window_info", lambda: [])
     stale = gc._refresh_darwin_snapshot()
@@ -357,7 +357,7 @@ def test_darwin_read_serves_stale_and_kicks_refresh(monkeypatch):
 def test_darwin_read_before_first_refresh_fails_open(monkeypatch):
     """Empty cache (startup): None = fail open (gloves render unmasked for
     the first frames), refresh kicked."""
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     kicks = []
     monkeypatch.setattr(gc, "_kick_darwin_snapshot_refresh",
                         lambda: kicks.append(1))
@@ -369,7 +369,7 @@ def test_darwin_kick_spawns_single_refresh(monkeypatch):
     """The refreshing flag admits ONE in-flight refresh; the thread updates
     the cache and clears the flag (real-thread integration, bounded wait)."""
     import time as _time
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     from utils import macos_discovery as md
     monkeypatch.setattr(md, "_raw_window_info", lambda: [])
     gc._kick_darwin_snapshot_refresh()
@@ -381,7 +381,7 @@ def test_darwin_kick_spawns_single_refresh(monkeypatch):
 
 
 def test_darwin_kick_noop_while_refresh_in_flight(monkeypatch):
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     import threading as _threading
     spawned = []
     monkeypatch.setattr(
@@ -400,7 +400,7 @@ def test_set_visible_region_empty_hides_never_empty_masks(qapp):
     setMask - enforced inside set_visible_region so no call site can trip
     the trap."""
     from PySide6.QtGui import QPixmap
-    from tabs.multitoon._ghost_cursors import GhostCursorOverlay
+    from utils.ghost_cursors import GhostCursorOverlay
     ov = GhostCursorOverlay(QPixmap(32, 32))
     ov.show()
     ov.set_visible_region(QRegion())
@@ -416,7 +416,7 @@ def _sync_ghost_frames():
     frame cadence. This suite asserts synchronously after each emit, so
     flush the sampled points right after every pointer event; the paced
     path itself is pinned by tests/test_ghost_frame_pacing.py."""
-    from tabs.multitoon._ghost_cursors import GhostCursorController
+    from utils.ghost_cursors import GhostCursorController
     orig = GhostCursorController._on_pointer_event
 
     def synced(self, payload):

@@ -1,6 +1,6 @@
 """Glove echo layer: ghost cursors composited onto the cluster's own content.
 
-The confined click-sync ghost overlays (tabs.multitoon._ghost_cursors) stack
+The confined click-sync ghost overlays (utils.ghost_cursors) stack
 directly above their game window and BELOW everything else - including this
 DOCK-layer cluster window, whose cards deliberately float over the games. A
 glove that wanders over a card therefore vanishes under it, even though the

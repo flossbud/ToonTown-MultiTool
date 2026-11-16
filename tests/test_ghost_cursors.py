@@ -42,7 +42,7 @@ class StubSettings:
 
 @pytest.fixture
 def rig(qapp):
-    from tabs.multitoon._ghost_cursors import GhostCursorController
+    from utils.ghost_cursors import GhostCursorController
     svc = FakeService()
     settings = StubSettings()
     ctl = GhostCursorController(svc, settings)
@@ -61,7 +61,7 @@ def test_event_shows_overlay_at_hotspot_offset(rig):
 
 
 def test_each_slot_maps_to_its_toon_asset():
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     assert gc._cursor_path(0).endswith(
         os.path.join("assets", "cursors", "toon1.png"))
     assert gc._cursor_path(3).endswith(
@@ -104,7 +104,7 @@ def test_setting_off_hides_and_gates_live(rig):
 
 
 def test_persisted_off_respected_at_build(qapp):
-    from tabs.multitoon._ghost_cursors import GhostCursorController
+    from utils.ghost_cursors import GhostCursorController
     from utils.settings_keys import GHOST_CURSORS_ENABLED
     svc = FakeService()
     ctl = GhostCursorController(
@@ -114,7 +114,7 @@ def test_persisted_off_respected_at_build(qapp):
 
 
 def test_platform_support_matrix():
-    from tabs.multitoon._ghost_cursors import GhostCursorController
+    from utils.ghost_cursors import GhostCursorController
     assert GhostCursorController._platform_unsupported("wayland")
     assert GhostCursorController._platform_unsupported("xcb") is None
     assert GhostCursorController._platform_unsupported("windows") is None
@@ -123,7 +123,7 @@ def test_platform_support_matrix():
 
 def test_missing_asset_disables_quietly(rig, monkeypatch):
     svc, _, ctl = rig
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     monkeypatch.setattr(gc, "_cursor_path",
                         lambda slot: "/nonexistent/toon.png")
     svc.ghost_pointer_event.emit(("motion", [(2, 50, 50)]))
@@ -172,7 +172,7 @@ def test_show_at_during_inflight_fade_keeps_overlay_visible(rig):
 
 @pytest.fixture
 def focus_rig(qapp):
-    from tabs.multitoon._ghost_cursors import GhostCursorController
+    from utils.ghost_cursors import GhostCursorController
     svc = FakeService()
     slot_map = {0: "0xa", 1: "0xb"}
     ctl = GhostCursorController(
@@ -241,7 +241,7 @@ def test_focus_hide_lands_during_inflight_fade(focus_rig):
 
 
 def test_duplicate_wid_slots_all_suppressed(qapp):
-    from tabs.multitoon._ghost_cursors import GhostCursorController
+    from utils.ghost_cursors import GhostCursorController
     svc = FakeService()
     slot_map = {0: "0xa", 1: "0xa"}          # same window in both slots
     ctl = GhostCursorController(
@@ -282,13 +282,13 @@ class FakeScreen:
 
 
 def test_native_to_logical_identity_at_dpr_1():
-    from tabs.multitoon._ghost_cursors import _native_to_logical
+    from utils.ghost_cursors import _native_to_logical
     screens = [FakeScreen(0, 0, 1920, 1080, 1.0)]
     assert _native_to_logical(800, 600, screens) == (800, 600)
 
 
 def test_native_to_logical_scales_around_screen_origin():
-    from tabs.multitoon._ghost_cursors import _native_to_logical
+    from utils.ghost_cursors import _native_to_logical
     # 1920x1080 panel at 150% Windows scaling: logical size 1280x720.
     # The user-reported shape: native 970 rendered at ~1455 physical;
     # the correct logical position is 970/1.5.
@@ -297,7 +297,7 @@ def test_native_to_logical_scales_around_screen_origin():
 
 
 def test_native_to_logical_nonzero_screen_origin():
-    from tabs.multitoon._ghost_cursors import _native_to_logical
+    from utils.ghost_cursors import _native_to_logical
     # Mirrors the measured xcb probe: screen origin (0,1080), DPR 1.5,
     # native (800,1600) -> logical (533, 1080 + 520/1.5 = 1427).
     screens = [FakeScreen(0, 1080, 1707, 960, 1.5)]
@@ -305,7 +305,7 @@ def test_native_to_logical_nonzero_screen_origin():
 
 
 def test_native_to_logical_picks_containing_screen():
-    from tabs.multitoon._ghost_cursors import _native_to_logical
+    from utils.ghost_cursors import _native_to_logical
     # Mixed-DPI pair: 100% 1920-wide left, 200% panel right whose native
     # rect spans x 1920..3840.
     screens = [FakeScreen(0, 0, 1920, 1080, 1.0),
@@ -315,7 +315,7 @@ def test_native_to_logical_picks_containing_screen():
 
 
 def test_native_to_logical_fallback_first_screen_then_identity():
-    from tabs.multitoon._ghost_cursors import _native_to_logical
+    from utils.ghost_cursors import _native_to_logical
     # Point outside every native rect (transient geometry race): map via
     # the first listed screen rather than dropping the event.
     screens = [FakeScreen(0, 0, 1280, 720, 1.5)]
@@ -325,7 +325,7 @@ def test_native_to_logical_fallback_first_screen_then_identity():
 
 
 def test_pointer_event_positions_through_native_to_logical(rig, monkeypatch):
-    from tabs.multitoon import _ghost_cursors as gc
+    from utils import ghost_cursors as gc
     svc, _, ctl = rig
     # Pin to a non-darwin platform: this exercises the physical-pixel -> logical
     # DPR-division path; on darwin _emitted_to_logical is identity and bypasses
@@ -340,7 +340,7 @@ def test_pointer_event_positions_through_native_to_logical(rig, monkeypatch):
 
 
 def test_native_to_logical_screen_rects_are_half_open():
-    from tabs.multitoon._ghost_cursors import _native_to_logical
+    from utils.ghost_cursors import _native_to_logical
     # Native x exactly at the right screen's origin belongs to the RIGHT
     # screen (half-open rects): no off-by-one screen selection.
     screens = [FakeScreen(0, 0, 1920, 1080, 1.0),
@@ -349,7 +349,7 @@ def test_native_to_logical_screen_rects_are_half_open():
 
 
 def test_native_to_logical_negative_screen_origin():
-    from tabs.multitoon._ghost_cursors import _native_to_logical
+    from utils.ghost_cursors import _native_to_logical
     # Left-of-primary monitor: scaling anchors at -1920, not 0.
     # native (-1620, 300) -> (-1920 + 300/1.5, 200) = (-1720, 200)
     screens = [FakeScreen(-1920, 0, 1280, 720, 1.5)]
@@ -363,7 +363,7 @@ def _sync_ghost_frames():
     frame cadence. This suite asserts synchronously after each emit, so
     flush the sampled points right after every pointer event; the paced
     path itself is pinned by tests/test_ghost_frame_pacing.py."""
-    from tabs.multitoon._ghost_cursors import GhostCursorController
+    from utils.ghost_cursors import GhostCursorController
     orig = GhostCursorController._on_pointer_event
 
     def synced(self, payload):
