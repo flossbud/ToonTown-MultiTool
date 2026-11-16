@@ -14,10 +14,8 @@ CC_ENGINE_INSTALL_SET_HASH = "cc_engine_install_set_hash"
 CC_HIDE_LAUNCH_CONSOLE = "cc_hide_launch_console"
 CC_EXTERNAL_LOG_DIR = "cc_external_log_dir"
 LAUNCH_QUIT_CONFIRM_DISMISSED = "launch_quit_confirm_dismissed"
-SHOW_HINTS = "show_hints"
 REDUCE_MOTION = "reduce_motion"
 REDUCE_MOTION_SET_EXPLICITLY = "reduce_motion_set_explicitly"
-ADVANCED_COLLAPSED = "advanced_collapsed"
 
 # Update flow (added 2026-05-16)
 CHECK_FOR_UPDATES_AT_STARTUP = "check_for_updates_at_startup"
