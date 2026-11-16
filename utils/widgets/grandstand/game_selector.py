@@ -7,7 +7,7 @@ painted rather than styled because QSS cannot express `saturate()`.
 from __future__ import annotations
 
 from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QImage, QPainter, QPainterPath, QPixmap
+from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from utils.asset_paths import asset_path
@@ -125,7 +125,7 @@ class GameCard(QFrame):
             " font-weight: 800; letter-spacing: 0.13px;"
             " background: transparent;")
         self._meta.setStyleSheet(
-            f"color: {colors['meta_ink'].name()}; font-size: 10px;"
+            f"color: {colors['meta_ink'].name(QColor.HexArgb)}; font-size: 10px;"
             " font-weight: 600; letter-spacing: 0.8px;"
             " background: transparent;")
 

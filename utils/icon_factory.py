@@ -563,6 +563,44 @@ def make_trash_icon(size: int = 18, color: QColor = None) -> QIcon:
     return QIcon(pixmap)
 
 
+def make_eye_icon(size: int = 16, color: QColor = None,
+                  crossed: bool = False) -> QIcon:
+    """An eye outline for show/hide toggles; `crossed` strikes it through.
+
+    Painted rather than typed: the eye emoji is absent from the bundled UI
+    font, so as text it depended on whichever emoji font the host has and
+    drew an empty box where there was none.
+    """
+    if color is None:
+        color = QColor(255, 255, 255, 220)
+    pixmap = QPixmap(size, size)
+    pixmap.fill(QColor(0, 0, 0, 0))
+    p = QPainter(pixmap)
+    p.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(color, max(1.4, size * 0.09))
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    p.setBrush(Qt.NoBrush)
+
+    m = size * 0.08
+    cy = size / 2
+    lift = size * 0.30
+    lid = QPainterPath()
+    lid.moveTo(m, cy)
+    lid.quadTo(size / 2, cy - lift * 2, size - m, cy)
+    lid.quadTo(size / 2, cy + lift * 2, m, cy)
+    p.drawPath(lid)
+    r = size * 0.15
+    p.setBrush(color)
+    p.drawEllipse(QPointF(size / 2, cy), r, r)
+    if crossed:
+        p.setBrush(Qt.NoBrush)
+        p.drawLine(QPointF(size * 0.2, size * 0.84), QPointF(size * 0.8, size * 0.16))
+    p.end()
+    return QIcon(pixmap)
+
+
 def make_nav_keyboard(size: int = 22, color: QColor = None) -> QIcon:
     """Keyboard icon for Keymap nav."""
     color = color or QColor(200, 200, 200)

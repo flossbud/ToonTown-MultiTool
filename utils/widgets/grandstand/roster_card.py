@@ -30,6 +30,7 @@ CARD_W = 148
 CARD_H = 216
 CARD_RADIUS = 16
 PORTRAIT = 128
+FOOTER_PX = 11
 
 # Per-species head framing for the `head` pose (handoff §8): (scale, translateY%).
 HEAD_FIT = {
@@ -156,6 +157,12 @@ class RosterCard(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setFixedSize(CARD_W, CARD_H)
+        # The card paints its own rounded wash. Without this the app's global
+        # `QWidget { background-color }` rule fills the card's square first:
+        # the app background showed in all four corners, and the translucent
+        # wash was blended over it instead of over the chooser panel.
+        self.setObjectName("gs_card")
+        self.setStyleSheet("#gs_card { background: transparent; }")
         self.setFocusPolicy(Qt.StrongFocus)
         self.setCursor(Qt.PointingHandCursor)
 
@@ -208,8 +215,13 @@ class RosterCard(QFrame):
         self.footer = QLabel(self)
         self.footer.setObjectName("card_footer")
         self.footer.setGeometry(10, 178, CARD_W - 20, 14)
+        # The size has to be set twice. The app stylesheet's `QWidget
+        # { font-size: 12pt }` beats setFont() on any styled widget, so the
+        # label's own stylesheet carries the 11px that is drawn; the QFont
+        # carries the same 11px so the elision in _set_footer_text measures
+        # the glyphs that are drawn rather than the 12pt it would inherit.
         footer_font = self.footer.font()
-        footer_font.setPixelSize(11)
+        footer_font.setPixelSize(FOOTER_PX)
         self.footer.setFont(footer_font)
 
         self.action = _ActionButton(self, on_focus=self._refresh_controls)
@@ -484,7 +496,9 @@ class RosterCard(QFrame):
         otherwise cut it mid-glyph. Geometry must be assigned before calling
         this helper so the metrics use the status band's current width.
         """
-        metrics = QFontMetrics(self.footer.font())
+        font = self.footer.font()
+        font.setPixelSize(FOOTER_PX)
+        metrics = QFontMetrics(font)
         self.footer.setText(metrics.elidedText(
             text, Qt.ElideRight, self.footer.width()))
         tooltip = text if full_text is None else full_text
@@ -532,7 +546,7 @@ class RosterCard(QFrame):
             self.footer.setGeometry(10, status_y, CARD_W - 20, 14)
         ink = gp.status_ink(self._state, self._is_dark)
         self.footer.setStyleSheet(
-            f"color: {ink['text'].name()};"
+            f"color: {ink['text'].name()}; font-size: {FOOTER_PX}px;"
             " background: transparent;")
         footer_text = self._footer_for_state()
         full_text = self._message if self._state == "failed" and self._message \

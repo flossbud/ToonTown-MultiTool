@@ -74,6 +74,10 @@ class _ToonCard(QFrame):
     def __init__(self, parent: QWidget, game: str, rec, checked: bool) -> None:
         super().__init__(parent)
         self.setFixedSize(CARD_W, CARD_H)
+        # See RosterCard: the card paints its own rounded wash, so the app's
+        # global QWidget background must not fill its square first.
+        self.setObjectName("gs_browser_card")
+        self.setStyleSheet("#gs_browser_card { background: transparent; }")
         self.setFocusPolicy(Qt.StrongFocus)
         self.setCursor(Qt.ArrowCursor if checked else Qt.PointingHandCursor)
         self.setAccessibleName(rec.toon_name)

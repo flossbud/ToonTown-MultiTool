@@ -210,6 +210,16 @@ def test_danger_button_rest_and_hover():
     assert hover["ink"] == QColor("#ff9b9b")
 
 
+def test_danger_button_light_reds_hold_contrast_on_the_white_sheet():
+    """The dark reds measure about 3:1 on #ffffff; light takes darker steps."""
+    rest = gp.danger_button(False, False)
+    assert rest["ink"] == QColor("#c62828")
+    assert rest["border"] == with_alpha("#c62828", 0.38)
+    hover = gp.danger_button(True, False)
+    assert hover["ink"] == QColor("#a31515")
+    assert hover["border"] == QColor("#c62828")
+
+
 def test_sheet_chrome_button_rest_and_hover():
     """`.sheet-x` and the back arrow (handoff §4.5)."""
     rest = gp.sheet_chrome_button(False, True)
@@ -239,8 +249,8 @@ def test_browser_empty_ink():
 
 
 # Every sheet token, with the keys whose light branch must NOT be the dark
-# one. Two tokens are deliberately theme-independent and are listed apart:
-# the danger reds (danger_button's docstring) and the blue Save fill.
+# one. One token is deliberately theme-independent and is listed apart: the
+# blue Save fill.
 THEMED_SHEET_TOKENS = (
     (gp.sheet_surface, (), ("bg", "border")),
     (gp.sheet_ink, (), ("title", "sub")),
@@ -250,10 +260,10 @@ THEMED_SHEET_TOKENS = (
     (gp.sheet_chrome_button, (False,), ("bg", "border")),
     (gp.sheet_footer_button, (False, False), ("border", "ink")),
     (gp.browser_empty_ink, (), ("title", "body")),
+    (gp.danger_button, (False,), ("border", "ink")),
+    (gp.danger_button, (True,), ("border", "ink")),
 )
 UNTHEMED_SHEET_TOKENS = (
-    (gp.danger_button, (False,)),
-    (gp.danger_button, (True,)),
     (gp.sheet_footer_button, (True, False)),
     (gp.sheet_footer_button, (True, True)),
 )
@@ -297,9 +307,7 @@ def test_sheet_tokens_have_a_light_branch():
     assert gp.sheet_footer_button(False, False, False)["ink"] == QColor("#334155")
     assert gp.browser_empty_ink(False) == {"title": QColor("#0f172a"),
                                            "body": QColor("#475569")}
-    # Danger reds and Save's blue are theme-independent.
-    assert gp.danger_button(False, False) == gp.danger_button(False, True)
-    assert gp.danger_button(True, False) == gp.danger_button(True, True)
+    # Save's blue is theme-independent.
     assert gp.sheet_footer_button(True, False, False) == gp.sheet_footer_button(True, False, True)
     # And the light branch is a different surface, not the dark one renamed.
     assert gp.sheet_surface(False)["bg"] != gp.sheet_surface(True)["bg"]

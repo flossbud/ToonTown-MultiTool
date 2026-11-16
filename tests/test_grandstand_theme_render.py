@@ -169,11 +169,19 @@ def test_selector_logo_labels_do_not_paint_the_app_background(themed_app):
 
 def test_shelf_containers_do_not_paint_the_app_background(themed_app,
                                                            render_cache):
-    """The head and gaps between cards must reveal the shelf panel."""
+    """The head and gaps between cards must reveal the shelf panel.
+
+    The shelf is rendered inside a host, the way the view mounts it. As a
+    top-level window Qt fills a plain QWidget's stylesheet background for it,
+    which is how this test passed for weeks while the embedded shelf painted
+    no panel at all (found by rendering the whole view, 2026-11-16)."""
     _qapp, theme = themed_app
-    shelf = CardShelf()
+    host = QWidget()
+    shelf = CardShelf(host)
+    shelf.setGeometry(0, 0, 818, 300)
+    shelf.apply_theme(theme == "dark")
     shelf.set_entries([_entry("a"), _entry("b")])
-    img = _render(shelf, 818, 300)
+    img = _render(host, 818, 300)
     panel = gp.panel(theme == "dark")["bg"]
     probes = {
         "head": img.pixelColor(400, 20),
@@ -183,7 +191,40 @@ def test_shelf_containers_do_not_paint_the_app_background(themed_app,
         assert _distance(probe, panel) < 10, (
             f"{theme}: shelf {area} painted {probe.name()} over panel "
             f"{panel.name()}")
-    shelf.close()
+    host.close()
+
+
+def test_the_shelf_panel_differs_from_the_app_background_in_both_themes(
+        themed_app, render_cache):
+    """Guards the probe above against a vacuous pass: were the panel token
+    ever to equal the app background, 'reveals the panel' would be satisfied
+    by painting nothing."""
+    _qapp, theme = themed_app
+    host = QWidget()
+    bare = _render(host, 40, 40).pixelColor(20, 20)
+    panel = gp.panel(theme == "dark")["bg"]
+    assert _distance(bare, panel) >= 10, (theme, bare.name(), panel.name())
+    host.close()
+
+
+def test_card_corners_reveal_the_panel_not_the_app_background(
+        themed_app, render_cache):
+    """A card paints a rounded wash; its square corners must stay clear so
+    the panel shows through, and the wash blends over the panel."""
+    _qapp, theme = themed_app
+    host = QWidget()
+    shelf = CardShelf(host)
+    shelf.setGeometry(0, 0, 818, 300)
+    shelf.apply_theme(theme == "dark")
+    shelf.set_entries([_entry("a")])
+    img = _render(host, 818, 300)
+    card = shelf.cards()[0]
+    origin = card.mapTo(host, QPoint(0, 0))
+    corner = img.pixelColor(origin.x() + 1, origin.y() + 1)
+    panel = gp.panel(theme == "dark")["bg"]
+    assert _distance(corner, panel) < 10, (
+        f"{theme}: card corner painted {corner.name()} over panel {panel.name()}")
+    host.close()
 
 
 def test_card_portrait_is_the_disk_render_under_the_real_stylesheet(

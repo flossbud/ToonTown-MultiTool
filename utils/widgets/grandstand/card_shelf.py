@@ -89,6 +89,11 @@ class CardShelf(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("gs_shelf")
+        # A plain QWidget subclass paints its stylesheet background only as a
+        # top-level window. Embedded in the view it painted nothing, so the
+        # chooser panel and its border never appeared and the edge fades drew
+        # a panel-coloured stripe over the bare app background.
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self._is_dark = True
         self._cards: dict[str, RosterCard] = {}
         self._order: list[str] = []
@@ -110,7 +115,7 @@ class CardShelf(QWidget):
         head.setContentsMargins(0, 0, 0, 0)
         head.setSpacing(14)
         self.title = QLabel(TITLE, self)
-        head.addWidget(self.title, 1, Qt.AlignTop)
+        head.addWidget(self.title, 1, Qt.AlignVCenter)
 
         self.clear_selection_link = QPushButton("Clear selection", self)
         self.clear_main_link = QPushButton("Clear main", self)
@@ -121,7 +126,7 @@ class CardShelf(QWidget):
             btn.setFlat(True)
             btn.setCursor(Qt.PointingHandCursor)
             btn.clicked.connect(sig.emit)
-            head.addWidget(btn, 0, Qt.AlignTop)
+            head.addWidget(btn, 0, Qt.AlignVCenter)
         root.addWidget(self.head)
 
         self.scroll = QScrollArea(self)
@@ -135,7 +140,7 @@ class CardShelf(QWidget):
         self._strip.setStyleSheet(
             "#gs_shelf_strip { background: transparent; }")
         self._row = QHBoxLayout(self._strip)
-        self._row.setContentsMargins(2, 16, 2, 12)
+        self._row.setContentsMargins(2, 6, 2, 12)
         self._row.setSpacing(SHELF_GAP)
         # The strip must never be squeezed below its cards. QScrollArea with
         # widgetResizable=True otherwise resizes the strip down to the viewport
@@ -346,4 +351,5 @@ class CardShelf(QWidget):
             colour = gp.head_link(btn.isEnabled(), gold, self._is_dark)
             btn.setStyleSheet(
                 "QPushButton { background: transparent; border: none;"
+                " padding: 0; min-height: 0;"
                 f" color: {colour.name()}; font-size: 11px; font-weight: 500; }}")

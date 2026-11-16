@@ -10,13 +10,14 @@ from __future__ import annotations
 import dataclasses
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QToolButton, QVBoxLayout, QWidget,
 )
 
+from utils.icon_factory import make_eye_icon, make_trash_icon
 from utils.toon_customization_resolve import resolve_accent
 from utils.toon_renders import AWAITING_RENDER_TOOLTIP, ToonRenders
 from utils.toon_silhouette import paint_race_silhouette
@@ -58,8 +59,8 @@ FROW_NO_TOON = "No toon yet"                  # model.footer_text's toonless cop
 FROW_SUB_NONE = "play once to discover"
 KEYRING_UNREADABLE = "Stored password can't be read right now"   # spec §4
 ADD_TITLE = "Add account"                     # spec is silent on add-mode copy
-TRASH_GLYPH = "🗑"
-EYE_GLYPH = "👁"
+EYE_ICON_PX = 16
+TRASH_ICON_PX = 14
 
 
 def title_for(draft: AccountDraft) -> str:
@@ -112,14 +113,36 @@ class _PasswordEdit(QLineEdit):
         self.eye.setCursor(Qt.PointingHandCursor)
         self.eye.setFocusPolicy(Qt.TabFocus)
         self.eye.setCheckable(True)
-        self.eye.setText(EYE_GLYPH)
+        self.eye.setIconSize(QSize(EYE_ICON_PX, EYE_ICON_PX))
         self.eye.setToolTip("Show password")
+        self.eye.setAccessibleName("Show password")
         self.eye.toggled.connect(self._on_toggled)
         self.setTextMargins(0, 0, EYE_SIZE + 8, 0)
+        self._eye_rest = gp.sheet_ink(True)["sub"]
+        self._eye_on = gp.sheet_input(False, True)["focus_border"]
+        self._paint_eye()
+
+    def set_eye_inks(self, rest: QColor, on: QColor) -> None:
+        """The eye is a painted icon, so its two inks arrive from the palette
+        rather than through a stylesheet `color:`."""
+        self._eye_rest, self._eye_on = QColor(rest), QColor(on)
+        self._paint_eye()
+
+    def _paint_eye(self) -> None:
+        # Open eye while the password shows, struck through while it is
+        # masked: the icon states what you see now, the tooltip what a click
+        # does.
+        revealed = self.eye.isChecked()
+        self.eye.setIcon(make_eye_icon(
+            EYE_ICON_PX, self._eye_on if revealed else self._eye_rest,
+            crossed=not revealed))
 
     def _on_toggled(self, revealed: bool) -> None:
         self.setEchoMode(QLineEdit.Normal if revealed else QLineEdit.Password)
-        self.eye.setToolTip("Hide password" if revealed else "Show password")
+        tip = "Hide password" if revealed else "Show password"
+        self.eye.setToolTip(tip)
+        self.eye.setAccessibleName(tip)
+        self._paint_eye()
 
     def set_revealed(self, value: bool) -> None:
         self.eye.setChecked(bool(value))
@@ -327,11 +350,14 @@ class AccountSheet(QWidget):
         self.remove_button.clicked.connect(self.remove_requested.emit)
         danger_col.addWidget(self.remove_button)
 
-        grid.addWidget(self.label_field, 0, 0)
-        grid.addWidget(self.username_field, 0, 1)
-        grid.addWidget(self.password_field, 1, 0)
-        grid.addWidget(self.frow_field, 1, 1)
-        grid.addWidget(self.danger_field, 2, 0)
+        # Top-aligned: the toon row is taller than a text field, and a block
+        # stretched to its row's height spreads its caption and its input
+        # apart (the password input sat 18px below its own label).
+        grid.addWidget(self.label_field, 0, 0, Qt.AlignTop)
+        grid.addWidget(self.username_field, 0, 1, Qt.AlignTop)
+        grid.addWidget(self.password_field, 1, 0, Qt.AlignTop)
+        grid.addWidget(self.frow_field, 1, 1, Qt.AlignTop)
+        grid.addWidget(self.danger_field, 2, 0, Qt.AlignTop)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
         grid.setRowStretch(3, 1)
@@ -392,7 +418,7 @@ class AccountSheet(QWidget):
         self.password_helper.setVisible(not draft.keyring_readable)
         add = draft.mode == MODE_ADD
         self.danger_field.setVisible(not add)
-        self.remove_button.setText(f"{TRASH_GLYPH}  {remove_label_for(draft)}")
+        self.remove_button.setText(remove_label_for(draft))
         self.choose_button.setEnabled(not add)
         self._errors = {}
         self._render_errors()
@@ -585,12 +611,11 @@ class AccountSheet(QWidget):
         self.password_helper.setStyleSheet(
             f"color: {ink['sub'].name()}; font-size: 10px; background: transparent;")
         self._render_errors()               # restyles every input, errors kept
-        eye_rest = gp.sheet_ink(is_dark)["sub"].name()
-        eye_on = gp.sheet_input(False, is_dark)["focus_border"].name()
         self.password_input.eye.setStyleSheet(
-            "QToolButton { background: transparent; border: none;"
-            f" color: {eye_rest}; font-size: 13px; }}"
-            f" QToolButton:checked {{ color: {eye_on}; }}")
+            "QToolButton { background: transparent; border: none; padding: 0; }")
+        self.password_input.set_eye_inks(
+            gp.sheet_ink(is_dark)["sub"],
+            gp.sheet_input(False, is_dark)["focus_border"])
         f = gp.frow(is_dark)
         self.frow.setStyleSheet(
             f"QFrame#gs_frow {{ background: {f['bg'].name()};"
@@ -611,6 +636,8 @@ class AccountSheet(QWidget):
             " font-size: 11px; font-weight: 600; }")
         rest = gp.danger_button(False, is_dark)
         hover = gp.danger_button(True, is_dark)
+        self.remove_button.setIcon(make_trash_icon(TRASH_ICON_PX, rest["ink"]))
+        self.remove_button.setIconSize(QSize(TRASH_ICON_PX, TRASH_ICON_PX))
         self.remove_button.setStyleSheet(
             "QPushButton {"
             f" background: {rest['bg'].name(QColor.HexArgb)};"

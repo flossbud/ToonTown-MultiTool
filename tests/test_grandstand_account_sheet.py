@@ -17,9 +17,9 @@ from utils.recent_toons import ToonRecord
 from utils.widgets.grandstand import palette as gp
 from utils.widgets.grandstand.account_sheet import (
     ADD_TITLE, CAPTION, CHOOSE_TOON, COL_GAP, CROSS_LINK, DANGER_FIELD,
-    EYE_GLYPH, EYE_SIZE, FROW_FIELD, FROW_H, FROW_NO_TOON, FROW_PORTRAIT,
+    EYE_SIZE, FROW_FIELD, FROW_H, FROW_NO_TOON, FROW_PORTRAIT,
     FROW_SUB_NONE, INPUT_H, LABEL_FIELD, LABEL_PLACEHOLDER, LINKBTN_H,
-    PASSWORD_FIELD, PREVIEW_COL_W, TRASH_GLYPH, USERNAME_FIELD, AccountSheet,
+    PASSWORD_FIELD, PREVIEW_COL_W, USERNAME_FIELD, AccountSheet,
     frow_sub_for, note_for, remove_label_for, subtitle_for, title_for,
 )
 from utils.widgets.grandstand.draft import (
@@ -153,9 +153,12 @@ def test_field_labels_are_the_handoff_copy(sheet):
     assert CROSS_LINK == "✏ Customize appearance"
     assert ADD_TITLE == "Add account"
     assert title_for(_draft(MODE_ADD)) == ADD_TITLE
-    assert TRASH_GLYPH == "🗑"
-    assert EYE_GLYPH == "👁"
-    assert sheet.password_input.eye.text() == EYE_GLYPH
+    # The eye and the trash can are painted icons, never emoji text: neither
+    # glyph is in the bundled UI font, so as text each drew an empty box on a
+    # host with no emoji font.
+    assert sheet.password_input.eye.text() == ""
+    assert not sheet.password_input.eye.icon().isNull()
+    assert not sheet.remove_button.icon().isNull()
 
 
 def test_password_is_masked_with_a_22px_eye_toggle(sheet):
@@ -220,10 +223,9 @@ def test_choose_toon_and_remove_emit(sheet):
 
 def test_remove_button_names_the_account(sheet):
     _open(sheet)
-    assert sheet.remove_button.text().startswith(TRASH_GLYPH)
-    assert sheet.remove_button.text().endswith("Remove Gag alt from the launcher")
+    assert sheet.remove_button.text() == "Remove Gag alt from the launcher"
     _open(sheet, draft=_draft(label=""))
-    assert sheet.remove_button.text().endswith("Remove flossbud from the launcher")
+    assert sheet.remove_button.text() == "Remove flossbud from the launcher"
 
 
 # ── pure copy ───────────────────────────────────────────────────────────────

@@ -328,7 +328,7 @@ def test_a_short_window_scrolls_the_tab_rather_than_clipping_the_cards(
         shelf = tab.grandstand.shelf
         viewport = shelf.scroll.viewport()
         strip_min = shelf._strip.minimumSizeHint().height()
-        assert strip_min == 244                      # cards 216 + 16 + 12
+        assert strip_min == 234                      # cards 216 + 6 + 12
         cards = shelf.cards()
         assert len(cards) == 4
         for card in cards:

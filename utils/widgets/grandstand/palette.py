@@ -1,9 +1,11 @@
 """Theme-aware colours for the Grandstand launcher (2026-08-14 spec).
 
 One pure function per surface. Dark branches return the design handoff's §9
-token literals byte-for-byte so the reference build and the app agree; the
-light branch is a later task (spec Q8) and lives behind the same signatures,
-which is why every function already takes `is_dark`.
+token literals byte-for-byte so the reference build and the app agree. Light
+branches use theme_manager's light tokens of the same name (annotated), so the
+roster reads as one surface with the rest of the light app. Surfaces that sit
+on game artwork (hero, active game card, lineup) answer to the art and its
+scrim, not to the app theme, and have no light branch on purpose.
 
 Token comments name the handoff variable so a token rename is greppable.
 Leaf module: QColor + utils.color_math only.
@@ -45,14 +47,37 @@ def game_card(game: str, active: bool, is_dark: bool) -> dict:
     """Game selector card (handoff §4.1a). Inactive cards desaturate and drop
     their backdrop art to .34; active cards take the game's identity border."""
     g = _GAME[game]
+    if active:
+        # The active card is game art under white copy in either theme. Its
+        # meta line sits on that art, so it is a white alpha, not --text-muted
+        # (grey on the TTR blue measured 2.3:1).
+        return {
+            "bg": QColor(g["card_bg"]),
+            "border": QColor(g["identity"]),
+            "inset": with_alpha(g["identity"], 0.35),
+            "name_ink": QColor("#ffffff"),
+            "meta_ink": with_alpha("#ffffff", 0.74),
+            "art_opacity": 0.72,
+            "saturation": 1.0,
+        }
+    if is_dark:
+        return {
+            "bg": QColor("#252525"),                # --bg-card
+            "border": QColor("#363636"),            # --border-card
+            "inset": None,
+            "name_ink": QColor("#ffffff"),
+            "meta_ink": QColor("#888888"),          # --text-muted
+            "art_opacity": 0.34,
+            "saturation": 0.45,
+        }
     return {
-        "bg": QColor(g["card_bg"]) if active else QColor("#252525"),  # --bg-card
-        "border": QColor(g["identity"]) if active else QColor("#363636"),
-        "inset": with_alpha(g["identity"], 0.35) if active else None,
-        "name_ink": QColor("#ffffff"),
-        "meta_ink": QColor("#888888"),                       # --text-muted
-        "art_opacity": 0.72 if active else 0.34,
-        "saturation": 1.0 if active else 0.45,
+        "bg": QColor("#ffffff"),                    # bg_card (light)
+        "border": QColor("#e2e8f0"),                # border_card (light)
+        "inset": None,
+        "name_ink": QColor("#334155"),              # text_secondary (light)
+        "meta_ink": QColor("#475569"),              # text_muted (light)
+        "art_opacity": 0.20,
+        "saturation": 0.45,
     }
 
 
@@ -91,35 +116,59 @@ def play_button(enabled: bool, is_dark: bool) -> dict:
 
 def panel(is_dark: bool) -> dict:
     """Chooser panel and any card-level surface."""
-    return {"bg": QColor("#252525"),            # --bg-card
-            "border": QColor("#363636")}        # --border-card
+    if is_dark:
+        return {"bg": QColor("#252525"),        # --bg-card
+                "border": QColor("#363636")}    # --border-card
+    return {"bg": QColor("#ffffff"),            # bg_card (light)
+            "border": QColor("#e2e8f0")}        # border_card (light)
 
 
 def card_surface(accent: str, selected: bool, is_dark: bool) -> dict:
     """Roster card body: an accent-tinted vertical wash (handoff §4.1d)."""
+    if is_dark:
+        return {
+            "top": with_alpha(accent, 0.26),
+            "bot": with_alpha("#000000", 0.30),
+            "border": QColor("#3399ff") if selected else QColor("#363636"),
+        }
+    # Light: the same accent wash, falling to a faint slate so the card still
+    # has a floor on the white panel instead of dissolving into it.
     return {
-        "top": with_alpha(accent, 0.26),
-        "bot": with_alpha("#000000", 0.30),
-        "border": QColor("#3399ff") if selected else QColor("#363636"),
+        "top": with_alpha(accent, 0.22),
+        "bot": with_alpha("#0f172a", 0.05),
+        "border": QColor("#0077ff") if selected else QColor("#cbd5e1"),
     }
 
 
 def card_ink(selected: bool, is_dark: bool) -> dict:
-    return {"name": QColor("#ffffff"),
-            "user": QColor("#888888"),          # --text-muted
-            "foot": QColor("#9fc9f5") if selected else QColor("#888888")}
+    if is_dark:
+        return {"name": QColor("#ffffff"),
+                "user": QColor("#888888"),      # --text-muted
+                "foot": QColor("#9fc9f5") if selected else QColor("#888888")}
+    return {"name": QColor("#0f172a"),          # text_primary (light)
+            "user": QColor("#475569"),          # text_muted (light)
+            "foot": QColor("#0058c0") if selected else QColor("#475569")}
 
 
 def control_chip(hover: bool, is_dark: bool) -> dict:
     """Pencil / gear / ribbon backing."""
-    return {"bg": with_alpha("#000000", 0.55 if hover else 0.35),
-            "ink": QColor("#ffffff") if hover else QColor("#888888")}
+    if is_dark:
+        return {"bg": with_alpha("#000000", 0.55 if hover else 0.35),
+                "ink": QColor("#ffffff") if hover else QColor("#888888")}
+    return {"bg": with_alpha("#0f172a", 0.14 if hover else 0.07),
+            "ink": QColor("#0f172a") if hover else QColor("#475569")}
 
 
 def card_star(starred: bool, is_dark: bool) -> dict:
     """Card star chip. Gold once it marks the game-wide main (handoff §4.1d)."""
-    return {"bg": with_alpha("#000000", 0.35),
-            "ink": QColor("#e8c14d") if starred else QColor("#888888")}
+    if is_dark:
+        return {"bg": with_alpha("#000000", 0.35),
+                "ink": QColor("#e8c14d") if starred else QColor("#888888")}
+    # --v2-yellow is 2.4:1 on white; the starred chip carries a gold fill and
+    # a darker gold ink so it still reads as "the gold one" in light.
+    if starred:
+        return {"bg": with_alpha("#d4a017", 0.24), "ink": QColor("#8a6100")}
+    return {"bg": with_alpha("#0f172a", 0.07), "ink": QColor("#475569")}
 
 
 # Card footer status colours, keyed by the LoginState the tile already uses.
@@ -134,9 +183,25 @@ _STATUS = {
 }
 
 
+# The same states on a light card. The dark hues are tuned to glow on a dark
+# wash and fall under 3:1 on white, so each is the darker step of its hue.
+_STATUS_LIGHT = {
+    "running":    ("#15803d", "#16a34a"),
+    "failed":     ("#c62828", "#dc2626"),
+    "need_2fa":   ("#0058c0", "#0077ff"),
+    "queued":     ("#8a6100", "#d4a017"),
+    "logging_in": ("#8a6100", "#d4a017"),
+    "launching":  ("#8a6100", "#d4a017"),
+    "loading":    ("#0058c0", "#0077ff"),
+}
+
+
 def status_ink(state: str, is_dark: bool) -> dict:
     """Footer text + dot for one card state. Unknown/idle falls to muted."""
-    text, dot = _STATUS.get(state, ("#888888", "#555555"))  # --text-muted/-idle
+    if is_dark:
+        text, dot = _STATUS.get(state, ("#888888", "#555555"))  # --text-muted/-idle
+    else:
+        text, dot = _STATUS_LIGHT.get(state, ("#475569", "#94a3b8"))
     return {"text": QColor(text), "dot": QColor(dot)}
 
 
@@ -163,28 +228,42 @@ def card_action(state: str, accent: str, is_dark: bool) -> dict:
 def head_link(enabled: bool, gold: bool, is_dark: bool) -> QColor:
     """Chooser head-row links. `Clear main` is gold; all disable to
     --text-disabled with no underline (handoff §4.1c)."""
+    if is_dark:
+        if not enabled:
+            return QColor("#666666")            # --text-disabled
+        return QColor("#e8c14d") if gold else QColor("#888888")
     if not enabled:
-        return QColor("#666666")                # --text-disabled
-    return QColor("#e8c14d") if gold else QColor("#888888")
+        return QColor("#94a3b8")
+    return QColor("#8a6100") if gold else QColor("#475569")
 
 
 def advisory_strip(is_dark: bool) -> dict:
     """Slim non-blocking credential bar above the selector (spec Q6)."""
-    return {"bg": with_alpha("#e8c14d", 0.14),
-            "border": with_alpha("#e8c14d", 0.34),
-            "ink": QColor("#e8c14d")}
+    if is_dark:
+        return {"bg": with_alpha("#e8c14d", 0.14),
+                "border": with_alpha("#e8c14d", 0.34),
+                "ink": QColor("#e8c14d")}
+    return {"bg": with_alpha("#d4a017", 0.16),
+            "border": with_alpha("#d4a017", 0.50),
+            "ink": QColor("#6b4b00")}
 
 
 def shelf_head_ink(is_dark: bool) -> dict:
     """Chooser head row: uppercase title and its explanatory sub-line."""
-    return {"title": QColor("#bbbbbb"),        # --text-secondary
-            "sub": QColor("#888888")}          # --text-muted
+    if is_dark:
+        return {"title": QColor("#bbbbbb"),    # --text-secondary
+                "sub": QColor("#888888")}      # --text-muted
+    return {"title": QColor("#334155"),        # text_secondary (light)
+            "sub": QColor("#475569")}          # text_muted (light)
 
 
 def add_tile(is_dark: bool) -> dict:
     """The dashed 'Add account' tile that always ends the shelf."""
-    return {"ink": QColor("#888888"),          # --text-muted
-            "border": QColor("#555555")}       # --border-light
+    if is_dark:
+        return {"ink": QColor("#888888"),      # --text-muted
+                "border": QColor("#555555")}   # --border-light
+    return {"ink": QColor("#475569"),          # text_muted (light)
+            "border": QColor("#94a3b8")}
 
 
 def shelf_scroll(is_dark: bool) -> dict:
@@ -192,7 +271,8 @@ def shelf_scroll(is_dark: bool) -> dict:
     panel's own background dissolving to nothing, so it reads as the panel
     covering the cards rather than as a grey wash of its own."""
     bg = panel(is_dark)["bg"]
-    return {"thumb": QColor("#555555"),                 # --border-light
+    thumb = QColor("#555555") if is_dark else QColor("#cbd5e1")  # --border-light
+    return {"thumb": thumb,
             "fade_in": QColor(bg),
             "fade_out": with_alpha(bg.name(), 0.0)}
 
@@ -204,9 +284,13 @@ def ribbon(selected: bool, is_dark: bool) -> dict:
         return {"bg": QColor("#0077ff"),       # --blue
                 "border": QColor("#3399ff"),   # --blue-border
                 "ink": QColor("#ffffff")}
-    return {"bg": with_alpha("#000000", 0.35),
-            "border": with_alpha("#ffffff", 0.18),
-            "ink": QColor("#888888")}          # --text-muted
+    if is_dark:
+        return {"bg": with_alpha("#000000", 0.35),
+                "border": with_alpha("#ffffff", 0.18),
+                "ink": QColor("#888888")}      # --text-muted
+    return {"bg": with_alpha("#ffffff", 0.80),
+            "border": with_alpha("#0f172a", 0.22),
+            "ink": QColor("#475569")}          # text_muted (light)
 
 
 def lineup_ink(is_dark: bool) -> dict:
@@ -238,10 +322,8 @@ def hero_ghost_button(is_dark: bool) -> dict:
 
 
 # ── Account sheet + toon browser (2026-09-22 spec, sub-project C) ───────────
-# The sheet is the first grandstand surface with a light branch. Light values
-# are theme_manager's light tokens of the same name (annotated), so the sheet
-# reads as one surface with the rest of the light app; the roster's own light
-# pass (sub-project A, spec Q8) will bring the panel/card tokens above in line.
+# Light values are theme_manager's light tokens of the same name (annotated),
+# so the sheet reads as one surface with the rest of the light app.
 
 
 def sheet_surface(is_dark: bool) -> dict:
@@ -314,14 +396,23 @@ def link_button(is_dark: bool) -> dict:
 
 
 def danger_button(hover: bool, is_dark: bool) -> dict:
-    """The remove button (handoff §4.4). Danger reds are theme-independent."""
+    """The remove button (handoff §4.4). The dark reds are tuned to glow on a
+    dark sheet and fall to 3:1 on white, so light takes the darker step."""
+    if is_dark:
+        if hover:
+            return {"bg": with_alpha("#e05252", 0.14),
+                    "border": QColor("#e05252"),
+                    "ink": QColor("#ff9b9b")}
+        return {"bg": with_alpha("#000000", 0.0),
+                "border": with_alpha("#e07878", 0.32),
+                "ink": QColor("#e07878")}
     if hover:
-        return {"bg": with_alpha("#e05252", 0.14),
-                "border": QColor("#e05252"),
-                "ink": QColor("#ff9b9b")}
+        return {"bg": with_alpha("#e05252", 0.10),
+                "border": QColor("#c62828"),
+                "ink": QColor("#a31515")}
     return {"bg": with_alpha("#000000", 0.0),
-            "border": with_alpha("#e07878", 0.32),
-            "ink": QColor("#e07878")}
+            "border": with_alpha("#c62828", 0.38),
+            "ink": QColor("#c62828")}
 
 
 def sheet_chrome_button(hover: bool, is_dark: bool) -> dict:
