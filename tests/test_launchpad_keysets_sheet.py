@@ -367,3 +367,25 @@ def test_detect_with_nothing_found_says_so(qapp, km, monkeypatch):
     s.set_game("ttr")
     s.expand_index(0)
     assert not s.rows()[0].detect_label.isVisibleTo(s.rows()[0])
+
+
+def test_sheet_does_not_load_the_old_keysets_page():
+    """The sheet survives the Settings Keysets page: importing it must not
+    pull in the old page's modules (they are deleted at cut-over)."""
+    import subprocess
+    import sys
+    code = ("import sys; import utils.widgets.launchpad.keysets_sheet; "
+            "old = ['keysets_page', 'split_editor', 'game_picker', 'inline_name_edit', "
+            "'set_list', 'visual_keyboard', 'keyboard_data']; "
+            "print([m for m in old if 'utils.widgets.keysets.' + m in sys.modules])")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                         env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+                         cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "[]"
+
+
+def test_rules_are_shared_with_the_old_page():
+    from utils.widgets.keysets import keysets_page, rules, split_editor
+    assert keysets_page.default_set_locked is rules.default_set_locked
+    assert split_editor._CONFLICT_TEXT == rules.CONFLICT_TEXT
