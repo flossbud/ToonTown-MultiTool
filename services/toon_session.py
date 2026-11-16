@@ -566,29 +566,44 @@ class ToonSession(QObject):
         self._autosave_active_profile()     # the one being switched away from
         profile = manager.get_profile(index)
         self._active_profile = index
-        enabled = profile.enabled_toons
-        modes = profile.movement_modes
-        keep_alive = profile.keep_alive or []
-        rapid_fire = profile.rapid_fire or []
         for wid in self._order:
-            toon = self._toons[wid]
-            slot = toon.slot
-            state = bool(enabled[slot]) if slot < len(enabled) else False
-            toon.enabled = state
-            toon.chat = state
-            mode = modes[slot] if slot < len(modes) else "Default"
-            keyset_id = self._keysets.id_for_name(toon.game, mode)
-            if keyset_id is not None and keyset_id != toon.keyset_id:
-                toon.keyset_id = keyset_id
-                toon.keyset_chosen = True
-                self._prefs.update(toon_identity(toon.game, toon.name),
-                                   keyset_id=keyset_id)
-            # Flags are taken as stored even while keep-alive is unavailable:
-            # the loop only runs once the feature is on.
-            toon.keep_alive = bool(keep_alive[slot]) if slot < len(keep_alive) else False
-            toon.rapid_fire = bool(rapid_fire[slot]) if slot < len(rapid_fire) else False
+            self._apply_profile_slot(self._toons[wid], profile)
         self._publish()
         self._log(f"[Profile] Loaded '{manager.get_name(index)}'")
+
+    def _active_profile_data(self):
+        """The profile in force, or None when no profile is active."""
+        manager = self._profile_manager
+        if self._active_profile < 0 or not manager:
+            return None
+        try:
+            return manager.get_profile(self._active_profile)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _apply_profile_slot(self, toon: _Toon, profile) -> None:
+        """Give a toon what ``profile`` holds for its slot: enabled, keyset
+        (profiles name sets, and only a name the toon's game has applies),
+        keep-alive and rapid fire."""
+        slot = toon.slot
+        enabled = profile.enabled_toons or []
+        modes = profile.movement_modes or []
+        keep_alive = profile.keep_alive or []
+        rapid_fire = profile.rapid_fire or []
+        state = bool(enabled[slot]) if slot < len(enabled) else False
+        toon.enabled = state
+        toon.chat = state
+        mode = modes[slot] if slot < len(modes) else "Default"
+        keyset_id = self._keysets.id_for_name(toon.game, mode)
+        if keyset_id is not None and keyset_id != toon.keyset_id:
+            toon.keyset_id = keyset_id
+            toon.keyset_chosen = True
+            self._prefs.update(toon_identity(toon.game, toon.name),
+                               keyset_id=keyset_id)
+        # Flags are taken as stored even while keep-alive is unavailable:
+        # the loop only runs once the feature is on.
+        toon.keep_alive = bool(keep_alive[slot]) if slot < len(keep_alive) else False
+        toon.rapid_fire = bool(rapid_fire[slot]) if slot < len(rapid_fire) else False
 
     def customization_changed(self, game: str | None = None,
                               name: str | None = None) -> None:
@@ -823,6 +838,13 @@ class ToonSession(QObject):
     def _new_toon(self, window_id: str, slot: int) -> _Toon:
         game = self._game_of(window_id)
         toon = _Toon(window_id, slot, game, self._keysets.lowest_visible(game))
+        profile = self._active_profile_data()
+        if profile is not None:
+            # A profile describes four slots. A toon started after it was
+            # loaded takes its slot's setup, exactly as the toons running at
+            # the time did; otherwise the next autosave would write this
+            # toon's defaults over the profile.
+            self._apply_profile_slot(toon, profile)
         carried = self._refresh_carry.pop(window_id, None)
         if carried is not None:
             keyset_id, counters_locked = carried
@@ -865,7 +887,9 @@ class ToonSession(QObject):
         stored = self._prefs.get(identity)
         if toon.keyset_chosen:
             self._prefs.update(identity, keyset_id=toon.keyset_id)
-        else:
+        elif self._active_profile_data() is None:
+            # The remembered keyset applies only while no profile is in
+            # force: a profile decides the keyset of its slots.
             keyset_id = stored.get("keyset_id")
             if isinstance(keyset_id, str) and self._keysets.usable(toon.game, keyset_id):
                 toon.keyset_id = keyset_id
@@ -889,6 +913,13 @@ class ToonSession(QObject):
             toon.counters_chosen = False
             toon.counters_locked = False
             toon.keyset_id = self._keysets.lowest_visible(toon.game)
+            profile = self._active_profile_data()
+            if profile is not None:
+                modes = profile.movement_modes or []
+                mode = modes[toon.slot] if toon.slot < len(modes) else "Default"
+                keyset_id = self._keysets.id_for_name(toon.game, mode)
+                if keyset_id is not None and self._keysets.usable(toon.game, keyset_id):
+                    toon.keyset_id = keyset_id
         toon.named_as = name
         self._adopt_identity(toon)
 
