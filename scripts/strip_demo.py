@@ -66,6 +66,8 @@ import argparse
 import os
 import shutil
 import signal
+import json
+from dataclasses import fields
 import subprocess
 import sys
 import tempfile
@@ -261,6 +263,9 @@ def main() -> int:
     ap.add_argument("--wid", action="append", default=[],
                     help="window id (decimal or 0x hex); repeat for up to four strips")
     ap.add_argument("--style", default="neon", choices=("neon", "flat"))
+    from utils import settings_keys
+    ap.add_argument("--size", choices=settings_keys.FLOAT_STRIP_SIZE_VALUES,
+                    default=settings_keys.FLOAT_STRIP_SIZE_DEFAULT)
     ap.add_argument("--config-dir", default=None,
                     help="settings folder to use and keep (default: a temporary one)")
     ap.add_argument("--trace", action="store_true",
@@ -310,7 +315,7 @@ def main() -> int:
             session.remove_toon(wid)
         launcher = DemoLauncher()
         controller = StripController(session, keymap_manager=keymaps,
-                                     style=args.style, launcher=launcher)
+                                     style=args.style, size=args.size, launcher=launcher)
         state.update(controller=controller, session=session, launcher=launcher)
         follower, popovers = controller.follower, controller.popovers
         log_keymaps(keymaps)
@@ -340,6 +345,15 @@ def main() -> int:
             if surface is None or not TRACE:
                 return
             dpr = surface.devicePixelRatioF()
+            from utils.strips import paint, tokens
+            model = surface.strip.model()
+            say("STRIP model", json.dumps({
+                "wid": wid, "scale": surface.strip.scale(), "dpr": dpr,
+                "style": surface.strip.style_name(),
+                "name_width": paint.measure_name(tokens.style_for(surface.strip.style_name()), model.name),
+                "model": {f.name: getattr(model, f.name) for f in fields(model)
+                          if f.name != "portrait"},
+            }, separators=(",", ":")))
             for b in surface.strip.strip_layout().blocks:
                 r = surface.strip.block_rect(b.kind, b.number)
                 say("STRIP block", wid, b.kind, b.number, f"{r.x():.1f}", f"{r.y():.1f}",
@@ -415,6 +429,7 @@ def main() -> int:
                               say("STRIP popover-closed", wid, tag)))
         controller.start()
         for wid, surface in follower.surfaces().items():
+            surface.geometry_applied.connect(lambda wid=wid: report_blocks(wid))
             surface.strip.clicked.connect(
                 lambda kind, n, wid=wid: say("STRIP click", wid, kind, n))
             surface.presentation_changed.connect(

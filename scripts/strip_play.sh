@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Start, watch or stop the float-strip playground on a Linux desktop session.
 #
-#   scripts/strip_play.sh start [neon|flat]   open it (as a user service)
+#   scripts/strip_play.sh start [neon|flat] [--size small|medium|large]
 #   scripts/strip_play.sh log                 follow what the clicks do
 #   scripts/strip_play.sh stop                end it; nothing is left running
 #
@@ -16,6 +16,12 @@ RUNTIME="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
 case "${1:-}" in
   start)
+    shift
+    strip_style=neon
+    if [[ "${1:-}" == neon || "${1:-}" == flat ]]; then
+      strip_style="$1"
+      shift
+    fi
     systemctl --user stop "$UNIT" 2>/dev/null || true
     systemctl --user reset-failed "$UNIT" 2>/dev/null || true
     XAUTH="${XAUTHORITY:-$(ls "$RUNTIME"/xauth_* 2>/dev/null | head -1)}"
@@ -25,7 +31,7 @@ case "${1:-}" in
       -E DBUS_SESSION_BUS_ADDRESS="unix:path=$RUNTIME/bus" \
       -E QT_QPA_PLATFORM=xcb -E PYTHONUNBUFFERED=1 \
       --working-directory="$(dirname "$HERE")" \
-      "$PYTHON" "$HERE/strip_demo.py" --play --style "${2:-neon}"
+      "$PYTHON" "$HERE/strip_demo.py" --play --style "$strip_style" "$@"
     echo "started; '$0 log' shows the actions, '$0 stop' ends it"
     ;;
   log)
