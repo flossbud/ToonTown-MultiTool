@@ -17,7 +17,11 @@ from utils.strips.follow import StripFollower
 from utils.strips.model import StripModel
 from utils.strips.popovers import editor as editor_mod
 from utils.strips.popovers.counters import CountersModel
+from utils.strips.launcher_port import read_accounts
+from utils.strips.popovers import home as home_mod
 from utils.strips.popovers.editor import EditorModel, KeysetEditor
+from utils.strips.popovers.home import HomePanel
+from utils.strips.popovers.placement import LEFT
 from utils.strips.popovers.manager import IDENTITY, StripPopovers
 from utils.strips.popovers.menu import MenuItem
 
@@ -183,7 +187,7 @@ class StripController(QObject):
     # What a strip cannot do alone: the shell connects these.
     appearance_requested = Signal(str, str)     # game, toon name: open the looks editor
     open_window_requested = Signal(str)         # WINDOW_MAIN | _SETTINGS | _LAUNCHER
-    home_clicked = Signal(str)
+    quit_requested = Signal()                   # the home menu's Quit MultiTool
     home_moved = Signal(str)                    # window id now carrying the home block
     _keymaps_changed = Signal()
     _style_changed = Signal(str)
@@ -194,7 +198,11 @@ class StripController(QObject):
                  portrait_fn: Callable | None = None,
                  popovers: StripPopovers | None = None,
                  today_fn: Callable | None = None,
+                 launcher=None,
                  parent: QObject | None = None) -> None:
+        """`launcher` is the compact launcher's source (see
+        utils/strips/launcher_port.py); without one "Launch accounts" asks
+        the shell for the full launcher instead."""
         super().__init__(parent)
         self._session = session
         self._keymap_manager = keymap_manager
@@ -218,6 +226,14 @@ class StripController(QObject):
         self._today_fn = today_fn
         self._popovers = popovers if popovers is not None else StripPopovers(
             self._follower, parent=self)
+        self._launcher = launcher
+        if launcher is not None:
+            try:
+                launcher.changed.connect(self._refresh_home_panel)
+            except Exception:
+                pass
+        self._popovers.opened.connect(self._popover_opened)
+        self._popovers.closed.connect(self._popover_closed)
         self._popovers.lock_toggled.connect(self._toggle_lock)
         self._popovers.menu_chosen.connect(self._on_menu)
         self._keymaps_changed.connect(self._refresh_editors)
@@ -229,6 +245,7 @@ class StripController(QObject):
         session.toons_changed.connect(self._sync)
         session.toon_changed.connect(self._refresh_one)
         session.running_changed.connect(lambda _on: self._refresh_all())
+        session.running_changed.connect(lambda _on: self._refresh_home_panel())
         session.features_changed.connect(self._refresh_all)
         # Membership of the click-sync group, or its error, changed: any
         # strip's Click Sync block may read differently.
@@ -440,7 +457,88 @@ class StripController(QObject):
             elif self._keymap_manager is not None:
                 self._keymap_manager.add_set(toon.game)
         elif kind == L.HOME:
-            self.home_clicked.emit(wid)
+            self.toggle_home_panel(wid)
+
+    # -- home block: quick menu and compact launcher -----------------------------
+
+    def toggle_home_panel(self, wid: str) -> HomePanel | None:
+        if self._popovers.open_tag(wid) == "home":
+            self._popovers.close(wid)
+            return None
+        surface = self._follower.surface(wid)
+        if surface is None:
+            return None
+        panel = HomePanel(surface.strip.style_name(), surface.strip.scale(),
+                          running=self._session.is_running(),
+                          accounts=read_accounts(self._launcher),
+                          can_launch=self._launcher is not None)
+        panel.row_chosen.connect(lambda key, wid=wid: self._home_row(wid, key))
+        panel.launch_requested.connect(self._launch_account)
+        panel.full_launcher_requested.connect(
+            lambda wid=wid: self._leave_for(wid, WINDOW_LAUNCHER))
+        panel.view_changed.connect(lambda _view, wid=wid: self._popovers.refit(wid))
+        if self._popovers.open_card(wid, "home", L.HOME, 0, panel, align=LEFT) is None:
+            return None
+        return panel
+
+    def _leave_for(self, wid: str, target: str) -> None:
+        self._popovers.close(wid)
+        self.open_window_requested.emit(target)
+
+    def _home_row(self, wid: str, key: str) -> None:
+        if key == home_mod.SETTINGS:
+            self._leave_for(wid, WINDOW_SETTINGS)
+        elif key == home_mod.OPEN_WINDOW:
+            self._leave_for(wid, WINDOW_MAIN)
+        elif key == home_mod.TOGGLE_RUNNING:
+            self._popovers.close(wid)
+            self._toggle_running()
+        elif key == home_mod.QUIT:
+            self._popovers.close(wid)
+            self.quit_requested.emit()
+
+    def _toggle_running(self) -> None:
+        toggle = getattr(self._session, "toggle_running", None)
+        if callable(toggle):
+            toggle()
+        elif self._session.is_running():
+            self._session.stop()
+        else:
+            self._session.start()
+
+    def _launch_account(self, account_id: str) -> None:
+        if self._launcher is None:
+            return
+        try:
+            self._launcher.launch(account_id)
+        except Exception as exc:
+            print(f"[Strips] launch of account {account_id} failed: {exc}")
+        self._refresh_home_panel()
+
+    def _home_panel(self) -> HomePanel | None:
+        if self._home_wid is None or self._popovers.open_tag(self._home_wid) != "home":
+            return None
+        panel = self._popovers.open_content(self._home_wid)
+        return panel if isinstance(panel, HomePanel) else None
+
+    def _refresh_home_panel(self) -> None:
+        """Accounts or the service changed while the panel is open."""
+        panel = self._home_panel()
+        if panel is None:
+            return
+        before = panel.sizeHint()
+        panel.set_running(self._session.is_running())
+        panel.set_accounts(read_accounts(self._launcher))
+        if panel.sizeHint() != before:
+            self._popovers.refit(self._home_wid)
+
+    def _popover_opened(self, wid: str, tag: str) -> None:
+        if tag == "home":
+            self.set_home_open(True)
+
+    def _popover_closed(self, wid: str, tag: str) -> None:
+        if tag == "home":
+            self.set_home_open(False)
 
     # -- menus ----------------------------------------------------------------
 
@@ -480,10 +578,7 @@ class StripController(QObject):
                 if toon.name:
                     self.appearance_requested.emit(toon.game, toon.name)
             elif key == "stop":
-                if self._session.is_running():
-                    self._session.stop()
-                else:
-                    self._session.start()
+                self._toggle_running()
             elif key == "open":
                 self.open_window_requested.emit(WINDOW_MAIN)
         elif tag.startswith("set:"):

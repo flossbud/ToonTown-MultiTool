@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QWidget
 from utils.strips.popovers import menu as menu_mod
 from utils.strips.popovers.counters import CountersModel, CountersView
 from utils.strips.popovers.menu import PillMenu
-from utils.strips.popovers.placement import CENTER, place_popover
+from utils.strips.popovers.placement import CENTER, LEFT, place_popover
 from utils.strips.popovers.pointer_watch import PointerWatch
 from utils.strips.popovers.surface import PopoverSurface
 
@@ -290,10 +290,15 @@ class StripPopovers(QObject):
         if rect is None or surface is None or entry.popover is None:
             return False
         content = entry.popover.content
-        spot = place_popover(rect, content.sizeHint(), self._screen_rect(rect),
-                             gap=entry.gap, align=entry.align)
+        # A left-aligned card lines its CARD up with the anchor; the halo
+        # margin around it hangs out to the left.
+        inset = 0
+        if entry.align == LEFT:
+            inset = int(round(getattr(content, "LEFT_INSET", 0) * surface.strip.scale()))
+        spot = place_popover(rect.translated(-inset, 0), content.sizeHint(),
+                             self._screen_rect(rect), gap=entry.gap, align=entry.align)
         if hasattr(content, "set_caret_x"):
-            content.set_caret_x(spot.caret_x)
+            content.set_caret_x(spot.caret_x + inset)
         if hasattr(content, "set_flipped"):
             content.set_flipped(spot.flipped)
         entry.popover.present(spot.pos, int(surface.winId()))

@@ -752,15 +752,150 @@ def test_edit_is_disabled_without_a_keymap_manager(rig):
     assert [i.disabled for i in items] == [True, True]
 
 
-def test_home_click_is_reported(rig):
-    _session, controller, _rects = rig()
-    homes = []
-    controller.home_clicked.connect(homes.append)
+# -- home block: quick menu and compact launcher -----------------------------------
+
+from PySide6.QtCore import QObject, Signal                              # noqa: E402
+
+from utils.strips.launcher_port import LaunchAccount                     # noqa: E402
+
+
+class Launcher(QObject):
+    changed = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.list = [
+            LaunchAccount("a1", "ttr", "Main", "running", "Flossbud"),
+            LaunchAccount("a2", "ttr", "Alt 1", "running", "Hector"),
+            LaunchAccount("a3", "ttr", "Alt 3"),
+            {"account_id": "c1", "game": "cc", "label": "Clash alt", "state": "idle"},
+        ]
+        self.launched = []
+
+    def accounts(self):
+        return list(self.list)
+
+    def launch(self, account_id):
+        self.launched.append(account_id)
+        self.list[2] = LaunchAccount("a3", "ttr", "Alt 3", "launching")
+        self.changed.emit()
+
+
+@pytest.fixture
+def home_rig(rig, qapp):
+    def _make(launcher=None):
+        session, controller, rects = rig()
+        controller._launcher = launcher
+        if launcher is not None:
+            launcher.changed.connect(controller._refresh_home_panel)
+        return session, controller
+    return _make
+
+
+def press(panel, *zone):
+    QTest.mouseClick(panel, Qt.LeftButton, Qt.NoModifier,
+                     panel.zone_rect(*zone).center().toPoint())
+    settle()
+
+
+def test_home_block_opens_the_quick_menu_under_itself(home_rig):
+    _session, controller = home_rig(Launcher())
     click(controller, "101", L.HOME)
-    assert homes == ["101"]
-    controller.set_home_open(True)
-    assert model(controller, "101").home_open
+    pops = controller.popovers
+    assert pops.open_tag("101") == "home"
+    assert model(controller, "101").home_open              # the ring is drawn
+    panel = pops.open_content("101")
+    labels = [label for key, _c, label, _h in panel.rows() if key]
+    assert labels == ["Launch accounts", "Settings", "Open MultiTool",
+                      "Stop all toons", "Quit MultiTool"]
+    assert panel.rows()[0][3] == "2 running \u203a"
+    # The card's left edge lines up with the block; it hangs 10 px below.
+    block = pops.anchor_rect("101", L.HOME)
+    card = panel.card_rect().toAlignedRect().translated(pops.open_surface("101").pos())
+    assert abs(card.left() - block.left()) <= 1
+    assert card.top() - (block.top() + block.height()) == 10
+    # A second click closes it and the ring goes.
+    click(controller, "101", L.HOME)
+    assert pops.open_tag("101") == "" and not model(controller, "101").home_open
+
+
+def test_quick_menu_rows(home_rig):
+    session, controller = home_rig(Launcher())
+    windows, quits = [], []
+    controller.open_window_requested.connect(windows.append)
+    controller.quit_requested.connect(lambda: quits.append(1))
+
+    def choose(key):
+        click(controller, "101", L.HOME)
+        press(controller.popovers.open_content("101"), "row", key)
+        assert controller.popovers.open_tag("101") == ""       # every row closes it
+
+    choose("settings")
+    choose("window")
+    assert windows == ["settings", "main"]
+    choose("toggle")
+    assert session.is_running() is False
+    click(controller, "101", L.HOME)
+    panel = controller.popovers.open_content("101")
+    assert [label for key, _c, label, _h in panel.rows() if key][3] == "Start all toons"
+    press(panel, "row", "toggle")
+    assert session.is_running() is True
+    choose("quit")
+    assert quits == [1]
+
+
+def test_compact_launcher_lists_accounts_and_launches(home_rig):
+    launcher = Launcher()
+    _session, controller = home_rig(launcher)
+    click(controller, "101", L.HOME)
+    pops = controller.popovers
+    panel = pops.open_content("101")
+    menu_height = pops.open_surface("101").height()
+    press(panel, "row", "launch")
+    assert panel.view() == "launch" and pops.open_tag("101") == "home"
+    assert pops.open_surface("101").height() != menu_height    # the card was refitted
+    assert [a.label for a in panel.accounts()] == ["Main", "Alt 1", "Alt 3", "Clash alt"]
+    # Running accounts have no button; idle ones do.
+    assert panel.zone_rect("go", "a1") is None
+    assert panel.zone_rect("go", "a3") is not None and panel.zone_rect("go", "c1") is not None
+    press(panel, "go", "a3")
+    assert launcher.launched == ["a3"]
+    assert panel.accounts()[2].state == "launching"            # followed the launcher
+    assert panel.zone_rect("go", "a3") is None
+    press(panel, "back")
+    assert panel.view() == "menu"
+
+
+def test_open_full_launcher_and_no_launcher_at_all(home_rig):
+    _session, controller = home_rig(Launcher())
+    windows = []
+    controller.open_window_requested.connect(windows.append)
+    click(controller, "101", L.HOME)
+    panel = controller.popovers.open_content("101")
+    press(panel, "row", "launch")
+    press(panel, "full")
+    assert windows == ["launcher"] and controller.popovers.open_tag("101") == ""
+    # Without a launcher source the row goes straight to the full launcher.
+    _session, controller = home_rig(None)
+    windows = []
+    controller.open_window_requested.connect(windows.append)
+    click(controller, "101", L.HOME)
+    panel = controller.popovers.open_content("101")
+    assert panel.rows()[0][3] == ""
+    press(panel, "row", "launch")
+    assert windows == ["launcher"]
+
+
+def test_home_panel_goes_with_its_strip(home_rig):
+    session, controller = home_rig(Launcher())
+    click(controller, "101", L.HOME)
+    session.remove_toon("101")
+    settle()
+    assert controller.home_window() == "102"
     assert not model(controller, "102").home_open
+    click(controller, "102", L.HOME)
+    assert controller.popovers.open_tag("102") == "home"
+    assert model(controller, "102").home_open
 
 
 def test_build_model_is_pure():
