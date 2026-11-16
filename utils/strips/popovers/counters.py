@@ -173,6 +173,7 @@ class CountersView(QWidget):
         lock = self._lock.translated(0.0, 1.0 if self._pressed else 0.0)
         if neon:
             radius = self._pill.height() / 2.0
+            paint.paint_drop_shadow(p, self._pill, radius)
             if m.locked:
                 paint.paint_glow(p, lock, LOCK / 2.0, tr(m.accent, 50), 6.0)
             p.fillPath(paint.rounded(self._pill, radius), tokens.rgba(0, 0, 0, 0.6))

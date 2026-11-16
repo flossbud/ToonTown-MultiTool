@@ -323,6 +323,8 @@ class HomePanel(QWidget):
             fill = QBrush(tokens.css_gradient(card, tokens.BODY_ANGLE, dk(BLUE, 24), dk(BLUE, 11)))
             caret_fill = QColor(dk(BLUE, 22))
         else:
+            # Flat has no halo; the card still lifts off the game.
+            paint.paint_drop_shadow(p, card, radius)
             fill = QBrush(QColor(tokens.POPOVER_BASE))
             caret_fill = QColor(tokens.POPOVER_BASE)
         p.fillPath(paint.rounded(card, radius), fill)

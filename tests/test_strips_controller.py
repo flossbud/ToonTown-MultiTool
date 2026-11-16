@@ -98,7 +98,10 @@ def settle():
 def rig(qapp):
     made = []
 
-    def _rig(session=None, keymaps=None, settings=None, today=None, widths=None):
+    def _rig(session=None, keymaps=None, settings=None, today=None, widths=None,
+             size="small"):
+        """`size` None leaves the strip size to the settings, as the app
+        does; the geometry these tests pin is the small strip's."""
         session = session or FakeToonSession.demo(window_ids=WIDS)
         rects = {wid: (100 + 900 * i, 50, (widths or {}).get(wid, 800), 600)
                  for i, wid in enumerate(WIDS)}
@@ -107,7 +110,7 @@ def rig(qapp):
         controller = StripController(
             session, follower, keymap_manager=keymaps, settings_manager=settings,
             keyset_ids=None if keymaps is not None else DEMO_KEYSET_IDS,
-            today_fn=(lambda: today) if today is not None else None)
+            today_fn=(lambda: today) if today is not None else None, size=size)
         controller.start()
         follower.tracker.stop()          # tests sample by hand
         follower.tracker.sample_now()

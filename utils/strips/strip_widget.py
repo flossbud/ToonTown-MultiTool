@@ -16,9 +16,13 @@ from utils.strips import layout as L
 from utils.strips import paint, tokens
 from utils.strips.model import StripModel
 
-# Room around the row for the Neon halos (3 sigma of the widest, 9 px blur).
+# Room around the row for the Neon halos (3 sigma of the widest, 9 px blur)
+# and for the drop shadow under every block (11 px at its longest, below).
 # Kept in both looks so switching look never moves the blocks.
 MARGIN = 14.0
+
+# The blocks that dim with a disabled toon: their shadows weaken with them.
+_DIMMING = (L.PORTRAIT, L.NAME, L.KEEP_ALIVE, L.CLICK_SYNC, L.KEYSET, L.ADD)
 
 # State changes cross-fade: fills and glows in 140 ms, the dim of a disabled
 # toon in 200 ms. Nothing moves, so there is nothing to animate when the
@@ -62,8 +66,12 @@ class StripWidget(QWidget):
         super().__init__(parent)
         self._model = StripModel()
         self._style = tokens.NEON_STYLE
-        self._painter = paint.painter_for(self._style)
         self._scale = 1.0
+        # The look's metrics on this strip's device pixel grid, the painter
+        # that draws with them, and the margin on the same grid.
+        self._grid = self._style
+        self._painter = paint.painter_for(self._style)
+        self._margin = MARGIN
         self._client_width: float | None = None
         self._layout = None
         self._hover: tuple[str, int] | None = None
@@ -145,7 +153,6 @@ class StripWidget(QWidget):
         if style is self._style:
             return
         self._style = style
-        self._painter = paint.painter_for(style)
         self._relayout()
 
     def scale(self) -> float:
@@ -173,11 +180,22 @@ class StripWidget(QWidget):
     def strip_layout(self) -> L.StripLayout:
         return self._layout
 
+    def device_scale(self) -> float:
+        """Device pixels per design pixel: the strip's scale times the
+        screen's pixel ratio."""
+        return self._scale * (self.devicePixelRatioF() or 1.0)
+
     def _relayout(self) -> None:
+        ds = self.device_scale()
+        grid = tokens.snapped_style(self._style, ds)
+        if grid is not self._grid or self._painter.style is not grid:
+            self._grid = grid
+            self._painter = paint.painter_for(grid)
+        self._margin = tokens.snap(MARGIN, ds)
         self._layout = L.fit_strip(
-            self._model, self._style,
+            self._model, grid,
             lambda text: paint.measure_name(self._style, text),
-            self._client_width)
+            self._client_width, ds)
         hint = self.sizeHint()
         if self.size() != hint:
             self.setFixedSize(hint)
@@ -185,15 +203,15 @@ class StripWidget(QWidget):
 
     def sizeHint(self) -> QSize:
         k = self._scale
-        return QSize(int(round((self._layout.width + 2 * MARGIN) * k)),
-                     int(round((self._layout.height + 2 * MARGIN) * k)))
+        return QSize(int(round((self._layout.width + 2 * self._margin) * k)),
+                     int(round((self._layout.height + 2 * self._margin) * k)))
 
     def minimumSizeHint(self) -> QSize:
         return self.sizeHint()
 
     def row_offset(self) -> QPointF:
         """Widget-local position of the row's top-left corner."""
-        return QPointF(MARGIN * self._scale, MARGIN * self._scale)
+        return QPointF(self._margin * self._scale, self._margin * self._scale)
 
     def row_size(self) -> QSize:
         """Size of the row itself (halo margins excluded), widget px."""
@@ -202,8 +220,8 @@ class StripWidget(QWidget):
                      int(round(self._layout.height * k)))
 
     def _to_widget(self, rect: QRectF) -> QRectF:
-        k = self._scale
-        return QRectF((rect.x() + MARGIN) * k, (rect.y() + MARGIN) * k,
+        k, m = self._scale, self._margin
+        return QRectF((rect.x() + m) * k, (rect.y() + m) * k,
                       rect.width() * k, rect.height() * k)
 
     def block_rect(self, kind: str, number: int = 0) -> QRectF | None:
@@ -226,26 +244,18 @@ class StripWidget(QWidget):
     def shape_region(self):
         """What the strip paints solid, widget-local: used as the window's
         shape where there is no compositor to make the rest transparent."""
-        from PySide6.QtGui import QPainterPath, QRegion
+        from PySide6.QtGui import QRegion
         region = QRegion()
-        k, st = self._scale, self._style
+        k, m = self._scale, self._margin
         for b in self._layout.blocks:
-            rect = b.rect.translated(MARGIN, MARGIN)
-            if b.kind in (L.PORTRAIT, L.HOME):
-                path = QPainterPath()
-                path.addEllipse(rect)
-            elif b.kind == L.NAME:
-                path = paint.right_rounded(rect, st.radius)
-            elif b.kind == L.SEPARATOR:
-                path = paint.rounded(rect, 1.0)
-            else:
-                path = paint.rounded(rect, st.radius)
+            path = paint.block_path(self._grid, b.kind, b.rect.translated(m, m))
             region = region.united(paint.path_region(path, k))
         return region
 
     def _hit(self, pos) -> L.Block | None:
         k = self._scale
-        return self._layout.hit(pos.x() / k - MARGIN, pos.y() / k - MARGIN)
+        return self._layout.hit(pos.x() / k - self._margin,
+                                pos.y() / k - self._margin)
 
     # -- painting -----------------------------------------------------------
 
@@ -292,13 +302,20 @@ class StripWidget(QWidget):
         p.setRenderHint(QPainter.Antialiasing, True)
         p.setRenderHint(QPainter.TextAntialiasing, True)
         p.scale(self._scale, self._scale)
-        p.translate(MARGIN, MARGIN)
+        p.translate(self._margin, self._margin)
 
         dim = m.dimmed
         tone = (tokens.css_saturate_brightness
                 if dim and s.is_neon else paint.identity)
         portrait = lay.find(L.PORTRAIT)
         name = lay.find(L.NAME)
+
+        # Pass 0: the drop shadow of every block, under everything, so the
+        # row reads over a bright game scene. The halos go over it.
+        for b in lay.blocks:
+            weak = dim and b.kind in _DIMMING
+            pt.shadow(p, b.kind, self._nudged(b),
+                      paint.SHADOW_DIMMED if weak else 1.0)
 
         # Pass 1: halos, under every block.
         for b in lay.blocks:
@@ -343,9 +360,10 @@ class StripWidget(QWidget):
         p.restore()
 
     def _nudged(self, block: L.Block) -> QRectF:
-        """A pressed block sits one pixel lower."""
+        """A pressed block sits one pixel lower (a whole device pixel)."""
         if self._pressed == block.key:
-            return block.rect.translated(0.0, 1.0)
+            return block.rect.translated(
+                0.0, tokens.snap(1.0, self.device_scale()))
         return block.rect
 
     def _paint_dimmable(self, p: QPainter, tone) -> None:
@@ -378,11 +396,11 @@ class StripWidget(QWidget):
         lp.setRenderHint(QPainter.Antialiasing, True)
         lp.setRenderHint(QPainter.TextAntialiasing, True)
         lp.scale(k, k)
-        lp.translate(MARGIN, MARGIN)
+        lp.translate(self._margin, self._margin)
         self._paint_dimmable(lp, paint.identity)
         lp.end()
         p.save()
-        p.translate(-MARGIN, -MARGIN)
+        p.translate(-self._margin, -self._margin)
         p.scale(1.0 / k, 1.0 / k)
         p.setOpacity(p.opacity() * tokens.FLAT_DIM_OPACITY)
         p.drawPixmap(QPointF(0.0, 0.0), layer)
@@ -429,6 +447,8 @@ class StripWidget(QWidget):
             self.clicked.emit(block.kind, block.number)
 
     def event(self, event) -> bool:
+        if event.type() == getattr(QEvent, "DevicePixelRatioChange", None):
+            self._relayout()        # another screen: another pixel grid
         if event.type() == QEvent.ToolTip:
             block = self._hit(event.pos())
             text = self.tooltip_for(block) if block else ""

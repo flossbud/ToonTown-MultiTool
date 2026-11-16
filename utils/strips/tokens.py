@@ -6,6 +6,7 @@ in the handoff's computed table.
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 from dataclasses import dataclass
 
@@ -188,3 +189,50 @@ FLAT_STYLE = StripStyle(
 
 def style_for(name: str | None) -> StripStyle:
     return FLAT_STYLE if str(name or "").lower() == FLAT else NEON_STYLE
+
+
+# -- the device pixel grid --------------------------------------------------
+# A strip is scaled (true size on the game window, times the size the user
+# picked), so a 28 px block or a 6 px gap is rarely a whole number of device
+# pixels: 6 px at 1.25 is 7.5. Left alone, every edge after it lands between
+# two pixels and is drawn soft. The metrics that place an edge are therefore
+# rounded to whole device pixels before the row is laid out.
+
+_GRID_METRICS = ("gap", "block", "portrait", "portrait_border", "name_h",
+                 "name_min_w", "name_tuck", "name_border", "sep_w", "sep_h",
+                 "sep_margin", "home", "home_margin")
+
+
+def snap(value: float, device_scale: float) -> float:
+    """`value` (design px) moved to the nearest whole device pixel; never
+    rounded away to nothing."""
+    if device_scale <= 0 or value == 0:
+        return value
+    px = math.floor(abs(value) * device_scale + 0.5)
+    return math.copysign(max(1.0, px) / device_scale, value)
+
+
+def snap_up(value: float, device_scale: float) -> float:
+    """`value` grown to the next whole device pixel."""
+    if device_scale <= 0:
+        return value
+    return math.ceil(value * device_scale - 1e-6) / device_scale
+
+
+_snapped: dict[tuple, StripStyle] = {}
+
+
+def snapped_style(style: StripStyle, device_scale: float) -> StripStyle:
+    """`style` with every edge-placing metric a whole number of device
+    pixels at `device_scale` (design px to device px). At 1.0 that is the
+    style itself."""
+    key = (style, round(device_scale, 4))
+    hit = _snapped.get(key)
+    if hit is None:
+        hit = dataclasses.replace(style, **{
+            name: snap(getattr(style, name), device_scale)
+            for name in _GRID_METRICS})
+        if len(_snapped) > 64:
+            _snapped.clear()
+        _snapped[key] = hit
+    return hit

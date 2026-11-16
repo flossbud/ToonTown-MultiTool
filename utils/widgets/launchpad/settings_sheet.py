@@ -7,7 +7,8 @@ page uses (utils/widgets/settings_rows.SettingsRows) and regrouped:
 
 - Features: Keep-Alive, Click Sync (with the ghost cursor rows), Hotkeys,
   Chat handling.
-- Float strips: strip style, hide this window once toons are up, tray icon.
+- Float strips: strip style, strip size, hide this window once toons are up,
+  tray icon.
 - Toontown Rewritten / Corporate Clash: the game rows that exist today.
 - App: appearance, reduce motion, system title bar, updates, verbose logging,
   input backend, storage, macOS permissions.
@@ -325,6 +326,7 @@ class SettingsSheet(QWidget):
         for row in self._strip_rows:
             row.apply_theme(self._is_dark)
         self._strip_style.apply_sheet_theme(self._is_dark)
+        self._strip_size.apply_sheet_theme(self._is_dark)
         for t in (self._hide_toggle, self._tray_toggle):
             t.apply_theme(self._is_dark)
         for lbl in self._captions:
@@ -426,6 +428,15 @@ class SettingsSheet(QWidget):
         self._strip_style.index_changed.connect(
             lambda i: self._sm.set(sk.FLOAT_STRIP_STYLE, sk.FLOAT_STRIP_STYLE_VALUES[i]))
         style_row.set_control(self._strip_style)
+        size_row = SheetRow("Strip size", "How large the strips are on the game window.",
+                            is_dark=self._is_dark)
+        self._strip_size = SheetSegmented(["Small", "Medium", "Large"], STRIPS[0],
+                                          is_dark=self._is_dark)
+        current = sk.normalize_float_strip_size(self._sm.get(sk.FLOAT_STRIP_SIZE))
+        self._strip_size.setCurrentIndex(sk.FLOAT_STRIP_SIZE_VALUES.index(current))
+        self._strip_size.index_changed.connect(
+            lambda i: self._sm.set(sk.FLOAT_STRIP_SIZE, sk.FLOAT_STRIP_SIZE_VALUES[i]))
+        size_row.set_control(self._strip_size)
         hide_row = SheetRow("Hide this window once toons are up",
                             "Bring it back from the home block or the tray icon.",
                             is_dark=self._is_dark)
@@ -444,7 +455,7 @@ class SettingsSheet(QWidget):
             is_dark=self._is_dark)
         self._tray_toggle.toggled.connect(lambda v: self._sm.set(sk.TRAY_ICON, bool(v)))
         tray_row.set_control(self._tray_toggle)
-        self._strip_rows = [style_row, hide_row, tray_row]
+        self._strip_rows = [style_row, size_row, hide_row, tray_row]
         for row in self._strip_rows:
             strips.add_row(row)
         lay.addWidget(strips)

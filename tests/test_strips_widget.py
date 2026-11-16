@@ -3,13 +3,14 @@
 The parent paints magenta, a colour no strip block uses: wherever the strip
 is supposed to be see-through, the grab must still be magenta.
 """
+import math
 import os
 from contextlib import contextmanager
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QColor, QPainter, QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
@@ -90,6 +91,13 @@ def close(a, b, tolerance=3):
             and abs(a.blue() - b.blue()) <= tolerance)
 
 
+def shade_only(colour):
+    """Magenta with nothing over it but the black drop shadow: darker, the
+    same hue, and never darker than the shadow can make it."""
+    return (colour.green() == 0 and colour.red() == colour.blue()
+            and 255 * (1.0 - paint.SHADOW_ALPHA) - 2 <= colour.red() <= 255)
+
+
 FLOSSBUD = StripModel(name="Flossbud", accent="#4a8fe7", species="rabbit")
 
 
@@ -99,7 +107,8 @@ def test_strip_has_no_background_between_blocks(mount):
     two, three = strip.block_rect(L.KEYSET, 2), strip.block_rect(L.KEYSET, 3)
     gap_x = (two.right() + three.left()) / 2.0
     p = strip.pos() + QPoint(int(gap_x), int(two.center().y()))
-    assert image.pixelColor(p) == MAGENTA
+    # Nothing between two blocks but their drop shadows.
+    assert shade_only(image.pixelColor(p)) and image.pixelColor(p) != MAGENTA
     # Corners of the widget, far outside any block.
     assert image.pixelColor(strip.pos() + QPoint(1, 1)) == MAGENTA
     assert image.pixelColor(strip.geometry().bottomRight() - QPoint(1, 1)) == MAGENTA
@@ -125,7 +134,7 @@ def test_neon_glow_spills_outside_a_lit_block_only(mount):
     halo = at(image, strip, lit, 14, -2)
     assert halo != MAGENTA and halo.green() > 20       # orange over magenta
     unlit = strip.block_rect(L.CLICK_SYNC)
-    assert at(image, strip, unlit, 14, 31) == MAGENTA
+    assert shade_only(at(image, strip, unlit, 14, 31))       # shadow, no halo
 
 
 def test_flat_fills_and_active_ring(mount):
@@ -137,8 +146,8 @@ def test_flat_fills_and_active_ring(mount):
     inactive = strip.block_rect(L.KEYSET, 2)
     assert close(at(image, strip, inactive, 5, 5), tokens.dk("#E05252", 46))
     assert close(at(image, strip, inactive, 13, 1), tokens.dk("#E05252", 46))
-    # No halo anywhere in Flat.
-    assert at(image, strip, active, 13, -2) == MAGENTA
+    # No halo anywhere in Flat: only the drop shadow shows outside a block.
+    assert shade_only(at(image, strip, active, 13, -2))
 
 
 def test_tools_off_are_unlit(mount):
@@ -210,7 +219,9 @@ def test_text_is_pixel_sized_by_the_strip_not_the_stylesheet(themed_app):
     strip = StripWidget(host)
     strip.set_model(FLOSSBUD.with_(name="A much longer toon name"))
     text_w = paint.measure_name(tokens.NEON_STYLE, "A much longer toon name")
-    assert strip.block_rect(L.NAME).width() == pytest.approx(2 + 18 + text_w + 10 + 2)
+    # The text's width, grown to a whole pixel so the blocks after the
+    # plate start on one.
+    assert strip.block_rect(L.NAME).width() == math.ceil(2 + 18 + text_w + 10 + 2)
     host.deleteLater()
 
 
@@ -259,7 +270,10 @@ def test_scale_keeps_the_strip_true_size(mount):
     every block is 1.25 times as large in widget px."""
     host, strip = mount(FLOSSBUD, scale=1.25)
     assert strip.block_rect(L.ENABLE).width() == pytest.approx(35.0)
-    assert strip.width() == round((strip.strip_layout().width + 2 * MARGIN) * 1.25)
+    # The margin is a whole number of pixels too: 14 * 1.25 = 17.5 -> 18.
+    assert strip.row_offset() == QPointF(18.0, 18.0)
+    assert strip.width() == strip.row_size().width() + 2 * 18
+    assert MARGIN == 14.0
     image = grab(host)
     assert close(at(image, strip, strip.block_rect(L.KEYSET, 1), 8, 8), "#4A8FE7")
 
@@ -429,4 +443,4 @@ def test_stopped_service_dims_the_home_icon(mount):
     a = at(grab(lit_host), lit, home, 14, 6)
     b = at(grab(dim_host), dim, home, 14, 6)
     assert b.red() + b.green() + b.blue() < a.red() + a.green() + a.blue()
-    assert at(grab(dim_host), dim, home, 1, 1) == MAGENTA      # still a circle
+    assert shade_only(at(grab(dim_host), dim, home, 1, 1))     # still a circle

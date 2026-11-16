@@ -198,10 +198,12 @@ class StripController(QObject):
     user_hidden_changed = Signal(bool)
     _keymaps_changed = Signal()
     _style_changed = Signal(str)
+    _size_changed = Signal(str)
 
     def __init__(self, session, follower: StripFollower | None = None,
                  keymap_manager=None, settings_manager=None,
-                 style: str | None = None, keyset_ids: dict | None = None,
+                 style: str | None = None, size: str | None = None,
+                 keyset_ids: dict | None = None,
                  portrait_fn: Callable | None = None,
                  popovers: StripPopovers | None = None,
                  today_fn: Callable | None = None,
@@ -227,9 +229,12 @@ class StripController(QObject):
             self._portraits.changed.connect(self._portrait_changed)
         if style is None:
             style = self._style_from_settings()
+        if size is None:
+            size = self._size_from_settings()
         self._follower = follower if follower is not None else StripFollower(
-            style=style, parent=self)
+            style=style, size=size, parent=self)
         self._follower.set_style(style)
+        self._follower.set_size(size)
         self._today_fn = today_fn
         self._popovers = popovers if popovers is not None else StripPopovers(
             self._follower, parent=self)
@@ -270,6 +275,7 @@ class StripController(QObject):
         if keymap_manager is not None:
             keymap_manager.on_change(self._keymaps_changed.emit)
         self._style_changed.connect(self.set_style)
+        self._size_changed.connect(self.set_size)
         if settings_manager is not None:
             settings_manager.on_change(self._on_setting)
 
@@ -335,13 +341,32 @@ class StripController(QObject):
         except Exception:
             return tokens.NEON
 
+    def _size_from_settings(self) -> str:
+        if self._settings is None:
+            return settings_keys.FLOAT_STRIP_SIZE_DEFAULT
+        try:
+            return settings_keys.normalize_float_strip_size(self._settings.get(
+                settings_keys.FLOAT_STRIP_SIZE,
+                settings_keys.FLOAT_STRIP_SIZE_DEFAULT))
+        except Exception:
+            return settings_keys.FLOAT_STRIP_SIZE_DEFAULT
+
     def _on_setting(self, key, value) -> None:
         if key == settings_keys.FLOAT_STRIP_STYLE:
             self._style_changed.emit(tokens.style_for(value).name)
+        elif key == settings_keys.FLOAT_STRIP_SIZE:
+            self._size_changed.emit(settings_keys.normalize_float_strip_size(value))
 
     def set_style(self, name: str) -> None:
         self._follower.set_style(name)
         self._popovers.set_style(tokens.style_for(name).name)
+
+    def set_size(self, name: str) -> None:
+        """Every strip, and whatever hangs off it, at a new size. Open menus
+        and cards were laid out for the old one: they close first."""
+        self._popovers.close_all()
+        self._follower.set_size(name)
+        self._popovers.rescale()
 
     def set_home_open(self, is_open: bool) -> None:
         """The quick menu opened or closed: the home block shows its ring."""
