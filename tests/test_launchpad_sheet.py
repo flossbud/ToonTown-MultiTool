@@ -331,3 +331,104 @@ def test_group_card_meta_and_rows(qapp):
     assert c.rows() == [b, a]
     c.remove_row(b)
     assert c.rows() == [a]
+
+
+# ── window-card corners ────────────────────────────────────────────────────
+
+DESKTOP = QColor("#ff00ff")
+
+
+class _Desktop(QWidget):
+    """Stands in for what is behind a frameless window: magenta, so any
+    pixel the sheet paints outside the rounded card shows."""
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.fillRect(self.rect(), DESKTOP)
+        p.end()
+
+
+def _window_card(is_dark):
+    """The launchpad window's rounded card, styled exactly as the window
+    styles it (card_qss + window_edge_colors, radius 16, 1 px outline)."""
+    from PySide6.QtWidgets import QVBoxLayout
+    from utils.widgets.window_chrome_style import (
+        RADIUS_NORMAL, card_qss, window_edge_colors,
+    )
+    bg = theme_manager.get_theme_colors(is_dark)["bg_app"]
+    desk = _Desktop()
+    desk.resize(880, 860)
+    lay = QVBoxLayout(desk)
+    lay.setContentsMargins(0, 0, 0, 0)
+    card = QWidget(desk)
+    card.setObjectName("app_card")
+    card.setAttribute(Qt.WA_StyledBackground, True)
+    card.setStyleSheet(card_qss("app_card", bg, RADIUS_NORMAL,
+                                window_edge_colors(bg)["outline"]))
+    lay.addWidget(card)
+    return desk, card
+
+
+@pytest.mark.parametrize("theme", ["dark", "light"])
+def test_sheet_keeps_the_window_cards_rounded_corners(qapp, reduced, theme):
+    from utils.widgets.window_chrome_style import RADIUS_NORMAL, STROKE_INSET
+    with _theme(qapp, theme):
+        is_dark = theme == "dark"
+        desk, card = _window_card(is_dark)
+        host = SlideSheetHost(card, is_dark=is_dark, inset=STROKE_INSET,
+                              bottom_radius=RADIUS_NORMAL - STROKE_INSET)
+        host.open(QWidget(), "#DAA520", "K")
+        desk.show()
+        qapp.processEvents()
+        img = desk.grab().toImage()
+        W, H = 880, 860
+        # The desktop still shows in both bottom corners, outside the curve.
+        for x, y in ((0, H - 1), (2, H - 2), (4, H - 2), (2, H - 4),
+                     (W - 1, H - 1), (W - 3, H - 2), (W - 5, H - 2), (W - 3, H - 4)):
+            assert img.pixelColor(x, y) == DESKTOP, (x, y, img.pixelColor(x, y).name())
+        # The card's 1 px outline stays visible on the left, right and bottom.
+        outline_left = img.pixelColor(0, 600)
+        outline_bottom = img.pixelColor(W - 100, H - 1)
+        panel = m.qcolor(m.sheet_palette(is_dark)["bg_app"])
+        assert not _near(outline_bottom, panel, 1)
+        assert outline_left != DESKTOP
+        # Just inside the curve the scrim and the panel are there.
+        inside_left = img.pixelColor(RADIUS_NORMAL + 4, H - RADIUS_NORMAL - 4)
+        assert inside_left != DESKTOP
+        assert _near(img.pixelColor(W - RADIUS_NORMAL - 4, H - RADIUS_NORMAL - 4), panel)
+        # Geometry: inside the stroke on three sides and under the header.
+        assert host.geometry().left() == STROKE_INSET
+        assert host.geometry().right() == W - 1 - STROKE_INSET
+        assert host.geometry().bottom() == H - 1 - STROKE_INSET
+        assert host.geometry().top() == HEADER_H + STROKE_INSET
+        desk.close()
+
+
+def test_square_frame_paints_the_corners(qapp, reduced):
+    """The unrounded host (maximized window) does paint into the corners:
+    proof the rounded test above would catch a square sheet."""
+    desk, card = _window_card(True)
+    host = SlideSheetHost(card, is_dark=True)
+    host.open(QWidget(), "#DAA520", "K")
+    desk.show()
+    qapp.processEvents()
+    img = desk.grab().toImage()
+    assert img.pixelColor(879, 859) != DESKTOP
+    assert host.mask().isEmpty()
+    desk.close()
+
+
+def test_set_frame_switches_between_rounded_and_square(qapp, reduced):
+    from utils.widgets.window_chrome_style import RADIUS_NORMAL, STROKE_INSET
+    desk, card = _window_card(True)
+    desk.show()
+    qapp.processEvents()
+    host = SlideSheetHost(card, is_dark=True)
+    host.set_frame(STROKE_INSET, RADIUS_NORMAL - STROKE_INSET)
+    assert not host.mask().isEmpty()
+    assert not host.mask().contains(QPoint(0, host.height() - 1))
+    assert host.mask().contains(QPoint(host.width() // 2, host.height() - 1))
+    host.set_frame(0, 0)
+    assert host.mask().isEmpty()
+    assert host.geometry().left() == 0
+    desk.close()
