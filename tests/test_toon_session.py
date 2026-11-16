@@ -754,6 +754,23 @@ def test_refresh_restarts_the_router_and_redetects(make):
     assert rig.input.calls == ["stop", "start"]
 
 
+def test_restart_router_restarts_the_thread_and_nothing_else(make):
+    rig = make(windows=["a"], activate=True)
+    rig.session.set_enabled("a", False)
+    rig.spy.events.clear()
+    rig.session.restart_router()
+    assert rig.input.calls == ["start", "stop", "start"]
+    assert rig.wm.calls == ["enable_detection"]         # the window list is kept
+    assert rig.spy.events == []
+    assert rig.session.toon("a").enabled is False
+
+
+def test_restart_router_before_activation_is_a_no_op(make):
+    rig = make(windows=["a"])
+    rig.session.restart_router()
+    assert rig.input.calls == []
+
+
 def test_refresh_works_the_same_while_stopped(make):
     rig = make(windows=["a"])
     rig.session.stop()

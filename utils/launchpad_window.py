@@ -179,6 +179,11 @@ class LaunchpadWindow(QMainWindow):
 
         self._wire_input_service()
 
+        # The launcher as the strips' compact launcher sees it.
+        from utils.launcher_port import LauncherPort
+        self.launcher_port = LauncherPort(self.launch_tab, parent=self)
+        self.strips = self._build_strips()
+
         # ── Layout: header, banners, the launcher ─────────────────────────
         root = QVBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
@@ -232,9 +237,13 @@ class LaunchpadWindow(QMainWindow):
         QApplication.instance().installEventFilter(self)
 
         self._wire_hotkeys()
+        self._build_settings_sheet()
 
         self.session.toons_changed.connect(self._refresh_session_status)
         self.session.keep_alive_inhibit_status.connect(self._on_keep_alive_inhibit_status)
+
+        if self.strips is not None:
+            self.strips.start()
 
         self.log(f"[Debug] {app_name()} launched.")
         self._maybe_show_admin_notice()
@@ -382,6 +391,112 @@ class LaunchpadWindow(QMainWindow):
         already repainted its own cards. The session re-resolves the accent
         of the toons playing it, for the strips."""
         self.session.customization_changed(game, toon_name)
+        if self.strips is not None:
+            self.strips.customization_changed(game, toon_name)
+
+    # ── Strips ─────────────────────────────────────────────────────────────
+
+    def _build_strips(self):
+        """One float strip per toon, driven by the session. Built here and
+        started once the window is assembled; None if they cannot be built
+        (the window still works as a launcher)."""
+        try:
+            import inspect
+            from utils.strips.controller import StripController
+            kwargs = {"keymap_manager": self.keymap_manager,
+                      "settings_manager": self.settings_manager, "parent": self}
+            if "launcher" in inspect.signature(StripController.__init__).parameters:
+                kwargs["launcher"] = self.launcher_port
+            strips = StripController(self.session, **kwargs)
+        except Exception as e:  # noqa: BLE001
+            print(f"[NextUI] float strips unavailable: {e!r}")
+            return None
+        strips.appearance_requested.connect(self._on_strip_appearance)
+        strips.open_window_requested.connect(self._on_strip_open_window)
+        quit_requested = getattr(strips, "quit_requested", None)
+        if quit_requested is not None:
+            quit_requested.connect(self.quit_app)
+        set_chat = getattr(strips, "set_chat_active", None)
+        if set_chat is not None:
+            self.chat_active_changed.connect(set_chat)
+        return strips
+
+    def show_window(self) -> None:
+        """Bring the window in front of the user, from hidden or minimized."""
+        if self.isMinimized():
+            self.showNormal()
+        else:
+            self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _on_strip_open_window(self, target: str) -> None:
+        self.show_window()
+        if target == "settings":
+            self.open_sheet(SHEET_SETTINGS)
+        elif target == "launcher":
+            self.open_sheet(None)
+
+    def _on_strip_appearance(self, game: str, toon_name: str) -> None:
+        """A strip's "Change color": this window, on that toon's look."""
+        self.show_window()
+        self.open_sheet(None)
+        if not self.launch_tab.open_appearance_for_toon(game, toon_name):
+            self.log(f"[NextUI] no saved account has {toon_name}: "
+                     "its look opens once it has been seen on an account")
+
+    def quit_app(self) -> None:
+        """Quit for good: the same route as closing the window."""
+        self.close()
+
+    # ── Settings sheet ─────────────────────────────────────────────────────
+
+    def _build_settings_sheet(self) -> None:
+        """The Settings sheet, wired the way the classic window wires its
+        Settings tab."""
+        from utils.widgets.launchpad.settings_sheet import SettingsSheet
+        sheet = SettingsSheet(
+            self.settings_manager, self.keymap_manager,
+            self.launch_tab.cred_manager,
+            logs_widget=getattr(self.debug_tab, "card", None),
+            is_dark=self._is_dark())
+        self.settings_sheet = sheet
+        rows = sheet.rows
+        # main.py reaches the settings rows through this name (the Corporate
+        # Clash install picker refreshes them after a pick).
+        self.settings_tab = rows
+        self.register_sheet(SHEET_SETTINGS, sheet)
+        sheet.header_changed.connect(self._on_settings_header)
+
+        # Theme and verbose logging are written to settings by the rows and
+        # handled once in _on_setting_changed; connecting the rows' own
+        # signals as well would run each handler twice.
+        rows.input_backend_changed.connect(self.session.restart_router)
+        rows.clear_credentials_requested.connect(self._on_clear_credentials)
+        # chat_handling_mode_changed has no listener: the session reads the
+        # mode from settings on every keystroke, and there are no chat
+        # buttons here to show or hide.
+        rows.set_hotkey_accounts_provider(
+            lambda: self.launch_tab.cred_manager.get_accounts_basic())
+        if self.hotkeys is not None:
+            self.hotkeys.status_changed.connect(self._on_hotkey_status)
+        if hasattr(rows, "set_update_checker"):
+            rows.set_update_checker(self.update_checker)
+
+    def _on_settings_header(self, title: str, sub: str) -> None:
+        if self.open_sheet_name() == SHEET_SETTINGS:
+            self.sheet_host.set_header(title, sub)
+
+    def _on_hotkey_status(self, failures) -> None:
+        try:
+            self.settings_sheet.rows.set_hotkey_status(failures)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _on_clear_credentials(self) -> None:
+        self.launch_tab.clear_all_credentials()
+        self.log("[Credentials] All stored credentials have been cleared from "
+                 "Keyring and session memory.")
 
     # ── Sheets ─────────────────────────────────────────────────────────────
 
@@ -439,11 +554,12 @@ class LaunchpadWindow(QMainWindow):
             # Opens on the game the launcher is showing.
             content.set_game(self._launcher_game())
         title, sub = SHEET_TITLES[name]
+        sub_of = getattr(content, "sub", None)
         self.sheet_host.open(
             content,
             getattr(content, "IDENTITY", SHEET_IDENTITY[name]),
             getattr(content, "TITLE", title),
-            getattr(content, "SUB", sub))
+            sub_of() if callable(sub_of) else getattr(content, "SUB", sub))
 
     def _on_sheet_button(self, name: str) -> None:
         self.open_sheet(next_open_sheet(self.open_sheet_name(), name))
@@ -582,6 +698,7 @@ class LaunchpadWindow(QMainWindow):
                 if root is not None:
                     root.setContentsMargins(
                         STROKE_INSET, STROKE_INSET, STROKE_INSET, BOTTOM_INSET)
+                self._frame_sheet_host(STROKE_INSET, RADIUS_NORMAL - STROKE_INSET)
             else:
                 self.container.setStyleSheet(
                     card_qss("app_card", bg, RADIUS_MAXIMIZED, None) + cascade)
@@ -589,7 +706,14 @@ class LaunchpadWindow(QMainWindow):
                     header_top_radius_qss(colors["header_bg"], None, RADIUS_MAXIMIZED))
                 if root is not None:
                     root.setContentsMargins(0, 0, 0, 0)
+                self._frame_sheet_host(0, 0)
         self._update_window_mask()
+
+    def _frame_sheet_host(self, inset: int, bottom_radius: int) -> None:
+        """The sheet and its scrim follow the card's rounded bottom corners."""
+        host = getattr(self, "sheet_host", None)
+        if host is not None and hasattr(host, "set_frame"):
+            host.set_frame(inset, bottom_radius)
 
     def _update_window_mask(self) -> None:
         """Opaque-chrome experiment only (TTMT_OPAQUE_MASK_CHROME): mask the
@@ -794,6 +918,7 @@ class LaunchpadWindow(QMainWindow):
         # getattr guard covers a quit that lands while __init__ is still
         # partway through.
         for label, attribute, method in (
+            ("strips", "strips", "shutdown"),
             ("hotkeys", "hotkeys", "stop"),
             ("launch_tab", "launch_tab", "shutdown"),
             ("session", "session", "shutdown"),
