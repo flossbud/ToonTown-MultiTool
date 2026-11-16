@@ -66,12 +66,13 @@ def next_open_sheet(current: str | None, clicked: str) -> str | None:
     return None if current == clicked else clicked
 
 
-def session_status_text(toon_count: int) -> str:
+def session_status_text(toon_count: int, running: bool = True) -> str:
+    """"N toons" while the broadcast runs, "N toons · stopped" while it is
+    stopped, and nothing at all with no toons."""
     if toon_count <= 0:
-        return "No toons running"
-    if toon_count == 1:
-        return "1 toon running"
-    return f"{toon_count} toons running"
+        return ""
+    text = "1 toon" if toon_count == 1 else f"{toon_count} toons"
+    return text if running else f"{text} \u00b7 stopped"
 
 
 def _mix(a: QColor, b: QColor, t: float) -> QColor:
@@ -240,22 +241,34 @@ class SheetButtonRow(QWidget):
 
 
 class SessionStatus(QWidget):
-    """"No toons running" with a grey dot, or "N toons running" with a green
-    one."""
+    """"N toons" with a green dot while the broadcast runs, "N toons ·
+    stopped" with a grey one while it is stopped; hidden with no toons."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self._count = 0
+        self._running = True
         self._dark = True
         self._resize()
+        self.setVisible(False)
 
     def _font(self) -> QFont:
         return _ui_font(STATUS_FONT_PX, QFont.Weight.Normal)
 
     def text(self) -> str:
-        return session_status_text(self._count)
+        return session_status_text(self._count, self._running)
+
+    def is_running(self) -> bool:
+        return self._running
+
+    def set_running(self, running: bool) -> None:
+        running = bool(running)
+        if running != self._running:
+            self._running = running
+            self._resize()
+            self.update()
 
     def toon_count(self) -> int:
         return self._count
@@ -266,6 +279,7 @@ class SessionStatus(QWidget):
             self._count = count
             self._resize()
             self.update()
+        self.setVisible(count > 0)
 
     def set_dark(self, is_dark: bool) -> None:
         if is_dark != self._dark:
@@ -281,7 +295,7 @@ class SessionStatus(QWidget):
     def paintEvent(self, _event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
-        running = self._count > 0
+        running = self._count > 0 and self._running
         dot = QColor("#4fc95c") if running else QColor("#777777")
         p.setPen(Qt.NoPen)
         p.setBrush(dot)
@@ -345,6 +359,11 @@ class LaunchpadHeader(QFrame):
 
     def set_toon_count(self, count: int) -> None:
         self.status.set_toon_count(count)
+        self._place()
+
+    def set_running(self, running: bool) -> None:
+        """The broadcast service's state: "N toons" or "N toons · stopped"."""
+        self.status.set_running(running)
         self._place()
 
     def set_hints_enabled(self, enabled: bool) -> None:

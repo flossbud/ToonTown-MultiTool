@@ -245,6 +245,8 @@ class LaunchpadWindow(QMainWindow):
         self._build_settings_sheet()
 
         self.session.toons_changed.connect(self._refresh_session_status)
+        self.session.running_changed.connect(self.header.set_running)
+        self.header.set_running(self.session.is_running())
         self.session.keep_alive_inhibit_status.connect(self._on_keep_alive_inhibit_status)
 
         if self.strips is not None:
