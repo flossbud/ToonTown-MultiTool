@@ -87,6 +87,12 @@ def test_open_customization_no_op_when_overlay_already_visible(qapp, tmp_path, m
     # exercises the function without building the full MultiToonTool.
     from main import MultiToonTool
     win.open_customization = MultiToonTool.open_customization.__get__(win, type(win))
+    # open_customization builds the overlay through this helper, which wires
+    # a save to the window's router (both tabs draw a saved look).
+    win._ensure_customization_overlay = (
+        MultiToonTool._ensure_customization_overlay.__get__(win, type(win)))
+    win._on_customization_changed = (
+        MultiToonTool._on_customization_changed.__get__(win, type(win)))
 
     win.open_customization(0)
     assert win.customization_overlay is not None

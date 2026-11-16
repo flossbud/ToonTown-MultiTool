@@ -405,13 +405,20 @@ def test_save_with_errors_does_not_emit(roster):
 
 
 def test_the_cross_link_routes_to_the_appearance_editor(roster):
-    """Until sub-project B the cross-link does what the pencil does."""
+    """The cross-link does what the pencil does."""
     seen = []
     roster.edit_requested.connect(lambda g, a, s: seen.append((g, a, s)))
-    roster.open_account_sheet("ttr", _draft(), [], None)
+    roster.open_account_sheet("ttr", _draft(), _toons(), "Flossbud")
     assert roster.sheet.header.cross_link_text() == "✏ Customize appearance"
     roster.sheet.header.cross_link.click()
     assert seen == [("ttr", "a", "appearance")]
+
+
+def test_no_cross_link_for_an_account_with_no_discovered_toon(roster):
+    """A look is stored per toon; with none there is nothing to link to."""
+    roster.open_account_sheet("ttr", _draft(), [], None)
+    assert roster.sheet.header.cross_link_text() == ""
+    assert roster.sheet.header.cross_link.isVisibleTo(roster.sheet) is False
 
 
 def test_a_game_click_in_focus_mode_closes_the_sheet_first(roster):

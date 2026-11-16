@@ -372,6 +372,9 @@ class MultiToonTool(QMainWindow):
             window_manager=self.window_manager,
         )
         self.customization_overlay: ToonCustomizationOverlay | None = None
+        # (game, toon name) of a look opened from the launcher, where no
+        # Multitoon slot identifies it.
+        self._customization_toon: tuple = (None, None)
         self.launch_tab = LaunchTab(settings_manager=self.settings_manager, logger=self.logger, window_manager=self.window_manager)
         # Bridge resolved in-world toon names to the launching account's
         # recent_toons record (radial-menu last-toon capture).
@@ -379,6 +382,7 @@ class MultiToonTool(QMainWindow):
         # Share the Multitoon tab's ToonCustomizationsManager so the Launch tab's
         # primary-toon portraits render the saved pose (matching the radial menu).
         self.launch_tab.set_customizations_manager(self.multitoon_tab.customizations)
+        self.launch_tab.appearance_requested.connect(self.open_customization_for_toon)
         self.settings_tab = SettingsTab(
             self.settings_manager,
             keymap_manager=self.keymap_manager,
@@ -1643,8 +1647,6 @@ class MultiToonTool(QMainWindow):
         constructs the overlay on first call; subsequent calls reuse
         the same instance. Returns immediately (no-op) if the overlay
         is already visible."""
-        from utils.widgets.customization_overlay import ToonCustomizationOverlay
-
         if (
             self.customization_overlay is not None
             and self.customization_overlay.isVisible()
@@ -1667,20 +1669,69 @@ class MultiToonTool(QMainWindow):
         )
         skin = badge.cc_skin if game == "cc" else None
 
-        if self.customization_overlay is None:
-            self.customization_overlay = ToonCustomizationOverlay(
-                self.centralWidget()
-            )
-            self.customization_overlay.customization_changed.connect(
-                tab._on_customization_saved
-            )
-
-        self.customization_overlay.open_for(
+        self._ensure_customization_overlay().open_for(
             slot=slot, game=game, toon_name=toon_name,
             manager=tab.customizations,
             dna=badge._dna, skin_color=skin, auto_stem=auto_stem,
             settings=tab.settings_manager,
         )
+
+    # The customizer reports a save as (slot, game). A look opened from the
+    # launcher belongs to no Multitoon slot, so it reports this instead.
+    LAUNCHER_SLOT = -1
+
+    def _ensure_customization_overlay(self):
+        from utils.widgets.customization_overlay import ToonCustomizationOverlay
+        if self.customization_overlay is None:
+            self.customization_overlay = ToonCustomizationOverlay(
+                self.centralWidget()
+            )
+            self.customization_overlay.customization_changed.connect(
+                self._on_customization_changed
+            )
+        return self.customization_overlay
+
+    def open_customization_for_toon(self, game: str, toon_name: str,
+                                    dna: str = "", species=None) -> None:
+        """Open the customizer on a toon by identity rather than by Multitoon
+        slot: the launcher's pencil, where the toon need not be running."""
+        if (
+            self.customization_overlay is not None
+            and self.customization_overlay.isVisible()
+        ):
+            return
+        if not toon_name or game not in ("cc", "ttr"):
+            return
+        from utils import cc_race_assets
+        auto_stem = (
+            cc_race_assets.asset_stem_for_species(species)
+            if game == "cc" else None
+        )
+        tab = self.multitoon_tab
+        self._customization_toon = (game, toon_name)
+        self._ensure_customization_overlay().open_for(
+            slot=self.LAUNCHER_SLOT, game=game, toon_name=toon_name,
+            manager=tab.customizations,
+            dna=dna or None, skin_color=None, auto_stem=auto_stem,
+            settings=tab.settings_manager,
+        )
+
+    def _on_customization_changed(self, slot: int, game: str) -> None:
+        """One look was saved. Both tabs draw it, whichever one opened the
+        customizer: the Multitoon slots playing that toon, and the launcher's
+        cards."""
+        tab = self.multitoon_tab
+        if slot >= 0:
+            slots = [slot]
+        else:
+            _game, name = self._customization_toon
+            slots = [i for i, live in enumerate(tab.toon_names)
+                     if live and live == name
+                     and i < len(tab.slot_badges)
+                     and tab.slot_badges[i].game == game]
+        for index in slots:
+            tab._on_customization_saved(index, game)
+        self.launch_tab.on_customization_changed(game)
 
     # ── Theme ──────────────────────────────────────────────────────────────
 

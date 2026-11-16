@@ -32,6 +32,11 @@ CARD_RADIUS = 16
 PORTRAIT = 128
 FOOTER_PX = 11
 
+PENCIL_TOOLTIP = "Customize appearance"
+GEAR_TOOLTIP = "Account settings"
+PENCIL_NO_TOON_TOOLTIP = (
+    "Launch this account and play a toon once, then you can customize its look")
+
 # Per-species head framing for the `head` pose (handoff §8): (scale, translateY%).
 HEAD_FIT = {
     "cat": (0.92, 4), "dog": (1.08, 11), "duck": (1.06, 11), "mouse": (0.95, 10),
@@ -204,6 +209,8 @@ class RosterCard(QFrame):
         self.gear.setObjectName("card_gear")
         self.gear.move(CARD_W - 24 - 6, CARD_H - 24 - 6)
         self.gear.setText("⚙")
+        self.gear.setToolTip(GEAR_TOOLTIP)
+        self.pencil.setToolTip(PENCIL_TOOLTIP)
         self.gear.clicked.connect(lambda: self._emit(self.gear_clicked))
 
         self.name = QLabel(self)
@@ -261,6 +268,15 @@ class RosterCard(QFrame):
         self._entry = entry
         self.name.setText(entry.display_name)
         self.user.setText(entry.username)
+        # A look is stored per toon. With no toon discovered there is nothing
+        # for the pencil to open, and the card says why instead of going
+        # quiet on a click.
+        has_toon = entry.toon_name is not None
+        self.pencil.setEnabled(has_toon)
+        self.pencil.setToolTip(
+            PENCIL_TOOLTIP if has_toon else PENCIL_NO_TOON_TOOLTIP)
+        self.pencil.setCursor(
+            Qt.PointingHandCursor if has_toon else Qt.ArrowCursor)
         self._load_portrait()
         self._restyle()
         self.set_state(entry.state, entry.message, entry.raw_error)
@@ -581,7 +597,7 @@ class RosterCard(QFrame):
         # ribbon turns blue when the card is on stage, the star turns gold when
         # it marks the game-wide main, and pencil/gear brighten on hover.
         for btn, size in ((self.pencil, 13), (self.gear, 14)):
-            chip = gp.control_chip(btn.hovered, self._is_dark)
+            chip = gp.control_chip(btn.hovered, self._is_dark, btn.isEnabled())
             btn.setStyleSheet(
                 "QToolButton {"
                 f" background: {chip['bg'].name(QColor.HexArgb)};"

@@ -1273,68 +1273,111 @@ def test_an_unreadable_keyring_opens_the_sheet_with_an_empty_password(
         tab.close()
 
 
-def test_the_pencil_still_opens_todays_editor(monkeypatch, qapp):
-    """Sub-project B owns the appearance surface; until then the pencil is
-    untouched and the sheet's cross-link routes to the same place."""
+def _tab_with_a_discovered_toon(monkeypatch, account_ids=("a",)):
+    """A flagged tab whose account "a" has been seen playing Flossbud."""
+    tab, cred = _make_grandstand_launch_tab(
+        monkeypatch, list(account_ids), blocked=False)
+    tab._recent_toons = _recent_toons_store()
+    tab._recent_toons.record("a", "Flossbud", "ttr", "7400", species="cat")
+    tab._render_grandstand("ttr")
+    return tab, cred
+
+
+def test_the_pencil_asks_for_the_look_of_the_toon_the_account_shows(
+        monkeypatch, qapp, capsys):
+    """The pencil is the appearance control. It used to fall through to the
+    account dialog (label, username, password), which is the gear's job."""
     EditorStub = _stub_editor(monkeypatch)
-    tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    tab, _cred = _tab_with_a_discovered_toon(monkeypatch)
+    seen = []
+    tab.appearance_requested.connect(lambda *a: seen.append(a))
     try:
         tab.grandstand.shelf.card_for("a").edit_clicked.emit("a")
-        assert len(EditorStub.opened) == 1
-        assert EditorStub.opened[0]["mode"] == "edit"
+        assert seen == [("ttr", "Flossbud", "7400", "cat")]
+        assert EditorStub.opened == []                    # never the dialog
         assert tab.grandstand.in_focus_mode() is False
-        _open_sheet_via_gear(tab)
-        assert tab.grandstand.in_focus_mode() is True    # the gear did NOT
-        assert len(EditorStub.opened) == 1                # open the editor
-        tab.grandstand.sheet.header.cross_link.click()
-        assert len(EditorStub.opened) == 2
-        assert EditorStub.opened[1]["mode"] == "edit"
+        # Running-code proof for live validation.
+        assert "[Grandstand] appearance: ttr::Flossbud" in capsys.readouterr().out
     finally:
         tab.shutdown()
         tab.close()
 
 
-def test_the_cross_link_hands_the_dialog_what_was_typed(monkeypatch, qapp):
-    """Whole-branch review I4: the cross-link drops the draft on its way out,
-    so unless the typed values ride along they vanish with no warning — the
-    dialog would open on the stored account and the user would retype."""
+def test_a_toonless_account_has_no_look_to_open(monkeypatch, qapp):
+    """A look is stored per toon. With none discovered the pencil is
+    disabled and says why; a stray signal opens nothing."""
+    from utils.widgets.grandstand.roster_card import PENCIL_NO_TOON_TOOLTIP
     EditorStub = _stub_editor(monkeypatch)
     tab, _cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+    seen = []
+    tab.appearance_requested.connect(lambda *a: seen.append(a))
+    try:
+        card = tab.grandstand.shelf.card_for("a")
+        assert card.pencil.isEnabled() is False
+        assert card.pencil.toolTip() == PENCIL_NO_TOON_TOOLTIP
+        card.edit_clicked.emit("a")
+        assert seen == []
+        assert EditorStub.opened == []
+        # And the sheet offers no cross-link to a look that does not exist.
+        _open_sheet_via_gear(tab)
+        assert tab.grandstand.sheet.header.cross_link_text() == ""
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_the_cross_link_opens_the_look_over_the_sheet_and_keeps_the_draft(
+        monkeypatch, qapp):
+    """The customizer is an overlay on the window, not a page of the sheet,
+    so the sheet stays open underneath and what was typed is still there
+    when the overlay closes."""
+    EditorStub = _stub_editor(monkeypatch)
+    tab, cred = _tab_with_a_discovered_toon(monkeypatch)
+    seen = []
+    tab.appearance_requested.connect(lambda *a: seen.append(a))
     try:
         sheet = _open_sheet_via_gear(tab)
         sheet.label_input.setText("Gag grind alt")
-        sheet.username_input.setText("floss2")
-        sheet.password_input.setText("typed-pw")
         tab.grandstand.sheet.header.cross_link.click()
-        assert len(EditorStub.opened) == 1
-        opened = EditorStub.opened[0]
-        assert opened["initial_label"] == "Gag grind alt"
-        assert opened["initial_username"] == "floss2"
-        assert opened["initial_password"] == "typed-pw"
-        assert opened["mode"] == "edit" and opened["game"] == "ttr"
-        assert tab.grandstand.in_focus_mode() is False     # the draft still goes
+        assert seen == [("ttr", "Flossbud", "7400", "cat")]
+        assert EditorStub.opened == []
+        assert tab.grandstand.in_focus_mode() is True
+        assert sheet.draft().label == "Gag grind alt"
+        tab.grandstand.sheet.save_button.click()
+        cred.update_account.assert_called_once()
+        assert cred.update_account.call_args.kwargs["label"] == "Gag grind alt"
     finally:
         tab.shutdown()
         tab.close()
 
 
-def test_the_cross_link_closes_the_sheet_before_the_legacy_editor_opens(
-        monkeypatch, qapp):
-    """The dialog edits the sheet's own three fields. Left open behind it,
-    the sheet would still hold the pre-dialog label, and a Save afterwards
-    would write that stale label back over what the dialog just saved."""
-    EditorStub = _stub_editor(monkeypatch)
-    tab, cred = _make_grandstand_launch_tab(monkeypatch, ["a"], blocked=False)
+def test_a_saved_look_repaints_the_card(monkeypatch, qapp):
+    """The window calls on_customization_changed after any customizer save;
+    the card must take the new accent without a restart."""
+    tab, _cred = _tab_with_a_discovered_toon(monkeypatch)
+    looks = {}
+    tab._customizations = SimpleNamespace(
+        get=lambda game, name: looks.get((game, name), {}))
     try:
-        _open_sheet_via_gear(tab)
-        assert tab.grandstand.in_focus_mode() is True
-        tab.grandstand.sheet.header.cross_link.click()
-        assert len(EditorStub.opened) == 1                # the dialog ran
-        assert tab.grandstand.in_focus_mode() is False    # over the roster
-        # Nothing is left behind that could still write: the draft is gone,
-        # so the footer's Save is inert.
-        tab.grandstand.sheet.save_button.click()
-        cred.update_account.assert_not_called()
+        tab._render_grandstand("ttr")
+        before = tab.grandstand.entry_for("ttr", "a").accent
+        looks[("ttr", "Flossbud")] = {"accent": "#ff00aa"}
+        tab.on_customization_changed("ttr")
+        after = tab.grandstand.entry_for("ttr", "a").accent
+        assert before != after
+        assert after == "#ff00aa"
+        assert tab.grandstand.shelf.card_for("a").entry().accent == "#ff00aa"
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
+def test_on_customization_changed_is_inert_without_grandstand(monkeypatch, qapp):
+    tab, _cred = _make_launch_tab(monkeypatch, ["a"], blocked=False, flagged=False)
+    try:
+        tab._render_grandstand = MagicMock()
+        tab.on_customization_changed("ttr")
+        tab._render_grandstand.assert_not_called()
     finally:
         tab.shutdown()
         tab.close()

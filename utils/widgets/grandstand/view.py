@@ -516,7 +516,10 @@ class GrandstandView(QWidget):
         if live is not None:
             self.account_sheet.set_account_state(*live)
         self.sheet.set_header(title_for(draft), subtitle_for(draft))
-        self.sheet.set_cross_link("" if draft.mode == MODE_ADD else CROSS_LINK)
+        # The cross-link opens the look of the toon this account shows; with
+        # no toon discovered there is no look to open, so it is not offered.
+        self.sheet.set_cross_link(
+            CROSS_LINK if draft.mode != MODE_ADD and toons else "")
         self.sheet.set_note(note_for(self.account_sheet.toon_count()))
         self._go_to_page(PAGE_SHEET)
         self.account_sheet.focus_first()
@@ -619,7 +622,7 @@ class GrandstandView(QWidget):
 
     def _on_sheet_cross_link(self) -> None:
         """One cross-link, pointing at the surface you are not on (handoff
-        §4.5). Until sub-project B it routes exactly where the pencil does."""
+        §4.5). It routes exactly where the pencil does."""
         draft = self.account_sheet.draft()
         if draft is None or self._sheet_game is None or not draft.id:
             return

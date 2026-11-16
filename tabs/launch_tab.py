@@ -390,6 +390,9 @@ class LaunchTab(QWidget):
     # from the keyring probe worker thread; auto-connected to the main-
     # thread DebugTab.append_log slot. See the __init__ comment below.
     _log_to_debug_tab = Signal(str)
+    # game, toon name, dna ("" when unknown), species | None. The window owns
+    # the customizer overlay; the tab only says whose look to open.
+    appearance_requested = Signal(str, str, str, object)
 
     LOADING_WINDOW_TIMEOUT_MS = 30000
 
@@ -1250,61 +1253,41 @@ class LaunchTab(QWidget):
         self.grandstand.set_main_toon_names(game, names)
 
     def _on_grandstand_edit(self, game: str, account_id: str, surface: str) -> None:
-        """The gear opens the account sheet (sub-project C). The pencil — and
-        the sheet's cross-link, which routes here with surface="appearance" —
-        keeps today's editor until sub-project B lands the Appearance surface
-        in the sheet shell."""
-        if surface == "account" and self._grandstand_mounted():
+        """The gear opens the account sheet; the pencil — and the sheet's
+        cross-link, which routes here with surface="appearance" — asks the
+        window for the appearance customizer."""
+        if not self._grandstand_mounted():
+            self._on_tile_edit(game, account_id)
+            return
+        if surface == "account":
             self._open_account_sheet(game, account_id)
             return
-        # The cross-link is the only way in here with the sheet open, and the
-        # dialog it opens edits the sheet's own three fields. Drop the draft
-        # first: a Save behind the dialog would write the stale label back
-        # over whatever the dialog just saved. Carry the typed values across
-        # so dropping it costs the user nothing.
-        if self._grandstand_mounted() and self.grandstand.in_focus_mode():
-            draft = self.grandstand.sheet_draft()
-            self.grandstand.close_sheet()
-            if draft is not None and draft.id == account_id:
-                self._open_appearance_editor(game, account_id, draft)
-                return
-        self._on_tile_edit(game, account_id)
+        self._request_appearance(game, account_id)
 
-    def _open_appearance_editor(self, game: str, account_id: str, draft) -> None:
-        """The sheet's cross-link into the legacy editor. Mirrors
-        _on_tile_edit line for line — that method stays untouched for the
-        unflagged launcher — except the dialog opens on the draft's values
-        rather than the stored account's, so a label, username or password
-        typed in the sheet survives the hop instead of vanishing unwarned."""
-        global_idx = self._global_index_of(account_id)
-        if global_idx is None:
+    def _request_appearance(self, game: str, account_id: str) -> None:
+        """Ask the window to open the appearance customizer on the toon this
+        account shows. A look is stored per toon, so an account with no
+        discovered toon has nothing to edit yet; its pencil is disabled and
+        this is the backstop.
+
+        An open account sheet is left open underneath: the customizer is an
+        overlay on the window, so the draft the user typed is still there
+        when it closes."""
+        rec = self._recent_toons.get(account_id)
+        if rec is None or not rec.toon_name:
+            self.log("[Grandstand] appearance: no toon discovered for this "
+                     "account yet")
             return
-        acct = self.cred_manager.get_account(global_idx)
-        if acct is None:
-            return
-        editor = AccountEditor(
-            game=game, mode="edit",
-            initial_label=draft.label,
-            initial_username=draft.username,
-            initial_password=draft.password,
-            parent=self.window(),
-        )
+        print(f"[Grandstand] appearance: {game}::{rec.toon_name}", flush=True)
+        self.appearance_requested.emit(
+            game, rec.toon_name, rec.dna or "", rec.species)
 
-        def _save(label: str, username: str, password: str):
-            # Empty password means "keep current"; pass None to preserve
-            # the existing stored password.
-            pw = password if password else None
-            self.cred_manager.update_account(
-                global_idx, label=label, username=username, password=pw,
-            )
-            self._reconcile_slots()
-            self._render_current_view(game)
-            self.refresh_theme()
-            game_label = "TTR" if game == "ttr" else "CC"
-            self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)} updated.")
-
-        editor.account_saved.connect(_save)
-        editor.exec()
+    def on_customization_changed(self, game: str) -> None:
+        """A toon's look was saved somewhere (the customizer, from either
+        tab). Rebuild the game's entries so the accent and pose follow; the
+        view re-seeds an open sheet's preview from the fresh entry."""
+        if self._grandstand_mounted() and game in ("ttr", "cc"):
+            self._render_grandstand(game)
 
     def _open_account_sheet(self, game: str, account_id: str) -> None:
         """Build the edit draft from the store (spec §3 "Open (edit)") and

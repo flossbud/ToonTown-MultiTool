@@ -150,8 +150,16 @@ def card_ink(selected: bool, is_dark: bool) -> dict:
             "foot": QColor("#0058c0") if selected else QColor("#475569")}
 
 
-def control_chip(hover: bool, is_dark: bool) -> dict:
-    """Pencil / gear / ribbon backing."""
+def control_chip(hover: bool, is_dark: bool, enabled: bool = True) -> dict:
+    """Pencil / gear / ribbon backing. A disabled chip (the pencil on an
+    account with no discovered toon) keeps its backing and drops its ink to
+    the disabled text token, so it reads as present but unavailable."""
+    if not enabled:
+        if is_dark:
+            return {"bg": with_alpha("#000000", 0.22),
+                    "ink": QColor("#666666")}       # --text-disabled
+        return {"bg": with_alpha("#0f172a", 0.04),
+                "ink": QColor("#94a3b8")}
     if is_dark:
         return {"bg": with_alpha("#000000", 0.55 if hover else 0.35),
                 "ink": QColor("#ffffff") if hover else QColor("#888888")}
