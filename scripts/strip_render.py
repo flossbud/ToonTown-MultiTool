@@ -34,8 +34,6 @@ def _parse(argv):
 
 ARGS = _parse(sys.argv[1:])
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-if ARGS.scale != 1.0:
-    os.environ["QT_SCALE_FACTOR"] = f"{ARGS.scale:g}"
 
 from PySide6.QtCore import QPoint, QRect, Qt                      # noqa: E402
 from PySide6.QtGui import (QColor, QFontDatabase, QImage,          # noqa: E402
@@ -111,7 +109,13 @@ def render_state(style: str, model: StripModel, width: int) -> QImage:
     strip.move(int(round((width - row.width()) / 2 - MARGIN)), int(10 - MARGIN))
     view.show()
     QApplication.processEvents()
-    image = view.grab().toImage()
+    dpr = ARGS.scale
+    image = QImage(int(round(width * dpr)), int(round(CROP_H * dpr)),
+                   QImage.Format_ARGB32_Premultiplied)
+    image.setDevicePixelRatio(dpr)
+    image.fill(Qt.transparent)
+    view.render(image)
+    image.setDevicePixelRatio(1.0)
     view.close()
     view.deleteLater()
     return image
