@@ -114,6 +114,12 @@ CASES = {
         ("started", (), SHOW_LAUNCHER),
         ("requested", ("nonsense",), SHOW_LAUNCHER),
     ],
+    "open as it was left": [
+        ("started", (), SHOW_LAUNCHER),
+        ("windows", (1,), []),
+        ("close_requested", (), HIDE),
+        ("requested", ("current",), [Command("show", "current")]),
+    ],
     "a request while visible still opens the sheet": [
         ("started", (), SHOW_LAUNCHER),
         ("requested", (KEYSETS,), [Command("show", KEYSETS)]),
@@ -250,3 +256,13 @@ def test_constructor_carries_the_inputs():
     lc.windows(1)
     assert lc.close_requested() == MIN
     assert lc.window == MINIMIZED
+
+
+def test_observed_keeps_the_state_true():
+    lc = WindowLifecycle()
+    lc.started()
+    lc.windows(1)
+    assert lc.observed(MINIMIZED) == []          # the user minimized it
+    assert lc.windows(0) == SHOW_LAUNCHER         # so it comes back
+    lc.observed("nonsense")
+    assert lc.window == VISIBLE
