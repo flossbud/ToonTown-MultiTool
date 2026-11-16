@@ -315,7 +315,11 @@ class SlideSheetHost(QWidget):
         pal = sheet_palette(self._is_dark)
         self.scrim.set_colors(qcolor(pal["scrim"]), qcolor(pal["shadow"]))
         self.panel.apply_theme(pal)
-        install_modern_scrollbar(self.panel.scroll, is_dark=self._is_dark)
+        bar = getattr(self.panel.scroll, "_auto_hide_scrollbar", None)
+        if bar is None:
+            install_modern_scrollbar(self.panel.scroll, is_dark=self._is_dark)
+        else:
+            bar.set_theme(self._is_dark)
         if self._content is not None and hasattr(self._content, "apply_theme"):
             self._content.apply_theme(self._is_dark)
 
