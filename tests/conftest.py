@@ -132,3 +132,16 @@ class _NeverRuns:
     def submit(self, fn, *a):
         from concurrent.futures import Future
         return Future()
+
+
+@pytest.fixture(autouse=True)
+def _previous_launcher_unless_asked(monkeypatch):
+    """Grandstand is the shipped default, but this suite was written while it
+    sat behind TTMT_GRANDSTAND=1: hundreds of launcher tests leave the
+    variable unset and mean the previous launcher. Pin that meaning here, so
+    a test gets Grandstand only by asking for it. Returns the shipped value
+    for the one test that checks it."""
+    import utils.widgets.grandstand.view as view
+    shipped = view.GRANDSTAND_DEFAULT
+    monkeypatch.setattr(view, "GRANDSTAND_DEFAULT", False)
+    return shipped

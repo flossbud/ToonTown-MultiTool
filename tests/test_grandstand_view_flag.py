@@ -23,8 +23,33 @@ from utils.widgets.grandstand.view import (
 
 
 def test_flag_defaults_off(monkeypatch):
+    """Inside the suite: conftest pins the default off, so every test written
+    before Grandstand became the default still means what it said."""
     monkeypatch.delenv("TTMT_GRANDSTAND", raising=False)
     assert grandstand_enabled() is False
+
+
+def test_grandstand_is_the_shipped_default(monkeypatch,
+                                           _previous_launcher_unless_asked):
+    """A build with nothing set opens on Grandstand; 0 is the way back."""
+    import utils.widgets.grandstand.view as view
+    assert _previous_launcher_unless_asked is True       # what ships
+    monkeypatch.setattr(view, "GRANDSTAND_DEFAULT", True)
+    monkeypatch.delenv("TTMT_GRANDSTAND", raising=False)
+    assert grandstand_enabled() is True
+    monkeypatch.setenv("TTMT_GRANDSTAND", "")
+    assert grandstand_enabled() is True
+    monkeypatch.setenv("TTMT_GRANDSTAND", "0")
+    assert grandstand_enabled() is False
+    monkeypatch.setenv("TTMT_GRANDSTAND", "1")
+    assert grandstand_enabled() is True
+
+
+def test_the_stamp_says_default_when_nothing_selected_it(qapp, monkeypatch, capsys):
+    monkeypatch.delenv("TTMT_GRANDSTAND", raising=False)
+    GrandstandView(LaunchParty(None))
+    assert ("[Grandstand] view active — default, TTMT_GRANDSTAND=0 restores the "
+            "previous launcher (milestone 1)") in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("value,expected", [("1", True), ("0", False), ("", False)])
@@ -33,10 +58,11 @@ def test_flag_reads_the_env_var(monkeypatch, value, expected):
     assert grandstand_enabled() is expected
 
 
-def test_init_emits_the_startup_stamp(qapp):
+def test_init_emits_the_startup_stamp(qapp, monkeypatch):
     """Running-code proof: never let the operator validate without evidence
     of which path is live. A human greps this exact line during live
     validation, so it is pinned verbatim, not by prefix."""
+    monkeypatch.setenv("TTMT_GRANDSTAND", "1")
     lines = []
     GrandstandView(LaunchParty(None), log=lines.append)
     assert lines, "no stamp emitted"
@@ -45,11 +71,12 @@ def test_init_emits_the_startup_stamp(qapp):
     assert lines[0] == "[Grandstand] view active — TTMT_GRANDSTAND=1 (milestone 1)"
 
 
-def test_init_emits_the_startup_stamp_to_stdout_too(qapp, capsys):
+def test_init_emits_the_startup_stamp_to_stdout_too(qapp, capsys, monkeypatch):
     """M2 (re-review): self._log alone only reaches the Debug tab, which
     drops it unless logging is switched on, so live validation could never
     confirm the flagged path from a plain startup. Printed plainly, like
     the sheet stamps and utils/toon_renders.py."""
+    monkeypatch.setenv("TTMT_GRANDSTAND", "1")
     GrandstandView(LaunchParty(None))   # default log: a no-op lambda
     out = capsys.readouterr().out
     assert "[Grandstand] view active — TTMT_GRANDSTAND=1 (milestone 1)" in out

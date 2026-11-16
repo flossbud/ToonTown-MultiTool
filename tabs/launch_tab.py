@@ -1162,7 +1162,8 @@ class LaunchTab(QWidget):
         self._layout.addStretch()
 
     def _build_grandstand(self, demo=None) -> None:
-        """Mount the Grandstand roster view (TTMT_GRANDSTAND=1). The old
+        """Mount the Grandstand roster view (the default; TTMT_GRANDSTAND=0
+        selects the previous launcher instead). The old
         section/tile path is left entirely untouched behind the flag until the
         cut-over task removes it."""
         self._party = LaunchParty(self.settings_manager)

@@ -4,7 +4,8 @@ Owns layout and intent, never behaviour: it emits what the user asked for and
 LaunchTab performs it. Nothing here touches a login worker, a patcher or a
 credential.
 
-Built only when TTMT_GRANDSTAND=1 until the cut-over task removes the flag.
+This is the launcher. TTMT_GRANDSTAND=0 brings the previous one back for as
+long as both exist; the cut-over task removes it and the switch together.
 """
 from __future__ import annotations
 
@@ -76,10 +77,29 @@ def _ease_out() -> QEasingCurve:
 _FLAG = "TTMT_GRANDSTAND"
 
 
+# What a build does when TTMT_GRANDSTAND is not set. The test suite predates
+# this being True and pins it False for itself (tests/conftest.py), so an unset
+# variable still means the previous launcher inside a test.
+GRANDSTAND_DEFAULT = True
+
+
 def grandstand_enabled() -> bool:
-    """True when the new launcher view is selected. Any value other than "1"
-    is off, so a stale empty export cannot half-enable it."""
-    return os.environ.get(_FLAG, "") == "1"
+    """Whether the Grandstand launcher is the one to mount. "1" and "0" are
+    explicit; anything else, including a stale empty export, is the default."""
+    value = os.environ.get(_FLAG, "").strip()
+    if value == "1":
+        return True
+    if value == "0":
+        return False
+    return GRANDSTAND_DEFAULT
+
+
+def startup_stamp() -> str:
+    """The running-code line. It says how the view came to be mounted, so a
+    reader of the log can tell an explicit switch from the shipped default."""
+    how = (f"{_FLAG}=1" if os.environ.get(_FLAG, "").strip() == "1"
+           else f"default, {_FLAG}=0 restores the previous launcher")
+    return f"{STAMP_PREFIX} — {how} (milestone {MILESTONE})"
 
 
 class _AdvisoryLabel(QLabel):
@@ -144,9 +164,9 @@ class GrandstandView(QWidget):
         # LaunchTab.log routes to the Debug tab, which drops everything that
         # is not [Credentials] unless logging is switched on, so print it
         # plainly too — the way the sheet stamps and utils/toon_renders.py do.
-        startup_stamp = f"{STAMP_PREFIX} — {_FLAG}=1 (milestone {MILESTONE})"
-        self._log(startup_stamp)
-        print(startup_stamp)
+        stamp = startup_stamp()
+        self._log(stamp)
+        print(stamp)
 
         self._party = party
         self._is_dark = True
