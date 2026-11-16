@@ -226,6 +226,10 @@ class StripController(QObject):
         self._today_fn = today_fn
         self._popovers = popovers if popovers is not None else StripPopovers(
             self._follower, parent=self)
+        from utils.strips.ghost_clicks import GhostClicks
+        self._ghost_clicks = GhostClicks(
+            self, getattr(session, "click_sync_service", None), settings_manager,
+            parent=self)
         self._launcher = launcher
         if launcher is not None:
             try:
@@ -281,6 +285,10 @@ class StripController(QObject):
     def popovers(self) -> StripPopovers:
         return self._popovers
 
+    @property
+    def ghost_clicks(self):
+        return self._ghost_clicks
+
     def shutdown(self) -> None:
         self._started = False
         self._popovers.shutdown()
@@ -315,6 +323,13 @@ class StripController(QObject):
 
     def home_window(self) -> str | None:
         return self._home_wid
+
+    def window_for_slot(self, slot: int) -> str | None:
+        """The window id of the toon in a session slot, if it has a strip."""
+        for toon in self._session.toons():
+            if toon.slot == slot:
+                return toon.window_id if self._follower.surface(toon.window_id) else None
+        return None
 
     # -- session -> strips --------------------------------------------------
 

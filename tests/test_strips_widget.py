@@ -339,3 +339,51 @@ def test_a_real_portrait_fills_the_circle_inside_its_border(mount):
     assert close(at(image, strip, portrait, 18, 18), "#00ff00")     # the render
     assert close(at(image, strip, portrait, 18, 1), "#4a8fe7")      # border kept
     assert at(image, strip, portrait, 1, 1) == MAGENTA              # clipped round
+
+
+# -- transitions ---------------------------------------------------------------------
+
+def test_state_change_cross_fades_and_lands_on_the_new_state(mount, qapp):
+    host, strip = mount(FLOSSBUD, "flat")
+    strip.set_reduced_motion_fn(lambda: False)
+    grab(host)
+    block = strip.block_rect(L.KEEP_ALIVE)
+    strip.set_model(FLOSSBUD.with_(keep_alive=False))
+    assert strip.is_fading()
+    # Mid-fade the block is between lit and unlit, and still fully opaque.
+    strip._fade.pause()
+    strip._fade.setCurrentTime(70)
+    mid = at(grab(host), strip, block, 4, 4)
+    lit, unlit = QColor("#ff9500"), QColor(tokens.dk("#ff9500", 30))
+    assert unlit.red() + 15 < mid.red() < lit.red() - 15
+    assert mid.blue() < 30                       # no magenta showing through
+    strip._fade.setCurrentTime(140)
+    strip._end_fade()
+    assert not strip.is_fading()
+    assert close(at(grab(host), strip, block, 4, 4), unlit)
+
+
+def test_dim_fades_a_little_longer(mount):
+    host, strip = mount(FLOSSBUD, "neon")
+    strip.set_reduced_motion_fn(lambda: False)
+    strip.set_model(FLOSSBUD.with_(enabled=False))
+    assert strip.is_fading() and strip._fade.duration() == 200
+    strip._end_fade()
+    strip.set_model(FLOSSBUD.with_(enabled=False, keep_alive=False))
+    assert strip._fade.duration() == 140
+
+
+def test_reduced_motion_snaps(mount):
+    host, strip = mount(FLOSSBUD, "flat")
+    strip.set_reduced_motion_fn(lambda: True)
+    strip.set_model(FLOSSBUD.with_(keep_alive=False))
+    assert not strip.is_fading()
+    assert close(at(grab(host), strip, strip.block_rect(L.KEEP_ALIVE), 4, 4),
+                 tokens.dk("#ff9500", 30))
+
+
+def test_a_layout_change_is_never_faded(mount):
+    host, strip = mount(FLOSSBUD, "flat")
+    strip.set_reduced_motion_fn(lambda: False)
+    strip.set_model(FLOSSBUD.with_(keysets=(1, 2)))      # a block went away
+    assert not strip.is_fading()

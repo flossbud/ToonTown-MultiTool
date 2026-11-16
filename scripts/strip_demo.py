@@ -27,7 +27,7 @@ nothing touches the user's own settings.
 Reads commands on stdin: `stop`, `start` (the broadcast service),
 `features <keep_alive 0|1> <click_sync 0|1>`, `style neon|flat`,
 `hover <wid> 0|1` (pointer on the name), `menu <wid> <kind> <n>` (a
-right-click on that block), `edit <wid> <n>` (the keyset editor), `close`,
+right-click on that block), `edit <wid> <n>` (the keyset editor), `home <wid>` (the home panel), `close`,
 `quit`.
 """
 from __future__ import annotations
@@ -69,6 +69,36 @@ class Stdin(QObject):
             pass
 
 
+class DemoLauncher(QObject):
+    """Six accounts like the handoff's mock; a launch takes 1.3 s."""
+
+    changed = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        from utils.strips.launcher_port import LaunchAccount as A
+        self._make = A
+        self._list = [A("a1", "ttr", "Main", "running", "Flossbud"),
+                      A("a2", "ttr", "Alt 1", "running", "Hector"),
+                      A("a3", "ttr", "Alt 2", "running", "Linux"),
+                      A("a4", "ttr", "Alt 3"),
+                      A("c1", "cc", "Clash main", "running", "Moe"),
+                      A("c2", "cc", "Clash alt")]
+
+    def accounts(self):
+        return list(self._list)
+
+    def _set(self, account_id: str, state: str) -> None:
+        self._list = [self._make(a.account_id, a.game, a.label, state, a.toon)
+                      if a.account_id == account_id else a for a in self._list]
+        self.changed.emit()
+
+    def launch(self, account_id: str) -> None:
+        say("STRIP launch", account_id)
+        self._set(account_id, "launching")
+        QTimer.singleShot(1300, lambda: self._set(account_id, "running"))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -102,7 +132,10 @@ def main() -> int:
         keyset_ids={g: keymaps.get_set_ids(g) for g in ("ttr", "cc")})
     for wid in spare:
         session.remove_toon(wid)
-    controller = StripController(session, keymap_manager=keymaps, style=args.style)
+    launcher = DemoLauncher()
+    controller = StripController(session, keymap_manager=keymaps, style=args.style,
+                                 launcher=launcher)
+    controller.quit_requested.connect(lambda: say("STRIP wants-quit"))
     follower = controller.follower
     popovers = controller.popovers
 
@@ -145,6 +178,17 @@ def main() -> int:
             r = content.pill_rect(i)
             say("STRIP pill", wid, i, f"{r.x():.1f}", f"{r.y():.1f}",
                 f"{r.width():.1f}", f"{r.height():.1f}", f"{dpr:g}", item.key)
+        if hasattr(content, "row_chosen"):
+            def zones(content=content, wid=wid):
+                for zone, _rect in content._zones:
+                    r = content.zone_rect(*zone)
+                    say("STRIP zone", wid, "/".join(zone), f"{r.x():.1f}", f"{r.y():.1f}",
+                        f"{r.width():.1f}", f"{r.height():.1f}", f"{dpr:g}")
+                card = content.card_rect()
+                say("STRIP card", wid, content.view(), f"{card.x():.1f}",
+                    f"{card.y():.1f}", f"{card.width():.1f}", f"{card.height():.1f}")
+            zones()
+            content.view_changed.connect(lambda _v: zones())
         if hasattr(content, "bind_requested"):
             for zone, _rect in content._zones:
                 r = content.zone_rect(*zone)
@@ -201,6 +245,8 @@ def main() -> int:
             popovers.set_identity_hover(words[1], words[2] == "1")
         elif words[0] == "menu" and len(words) == 4:
             controller._on_context(words[1], words[2], int(words[3]))
+        elif words[0] == "home" and len(words) == 2:
+            controller.toggle_home_panel(words[1])
         elif words[0] == "edit" and len(words) == 3:
             controller.open_editor(words[1], int(words[2]))
         elif words[0] == "close":

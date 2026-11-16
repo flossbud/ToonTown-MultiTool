@@ -898,6 +898,72 @@ def test_home_panel_goes_with_its_strip(home_rig):
     assert model(controller, "102").home_open
 
 
+# -- ghost cursors pressing blocks ---------------------------------------------------
+
+def test_ghost_press_clicks_the_block_of_that_toons_strip(rig):
+    settings = Settings()
+    session, controller, _rects = rig(settings=settings)
+    ghosts = controller.ghost_clicks
+    surface = controller.follower.surface("102")
+    spot = surface.mapToGlobal(surface.strip.block_rect(L.KEYSET, 3).center().toPoint())
+    assert session.toon("102").keyset_id == controller.keysets.id_for("ttr", 2)
+    ghosts.on_ghost_event(("press", [(1, spot.x(), spot.y())]))   # slot 1 is Hector
+    settle()
+    assert session.toon("102").keyset_id == controller.keysets.id_for("ttr", 3)
+    # Motion and release press nothing.
+    enable = surface.mapToGlobal(surface.strip.block_rect(L.ENABLE).center().toPoint())
+    ghosts.on_ghost_event(("motion", [(1, enable.x(), enable.y())]))
+    ghosts.on_ghost_event(("release", [(1, enable.x(), enable.y())]))
+    assert session.toon("102").enabled is True
+
+
+def test_ghost_press_between_blocks_or_in_another_slot_does_nothing(rig):
+    settings = Settings()
+    session, controller, _rects = rig(settings=settings)
+    ghosts = controller.ghost_clicks
+    surface = controller.follower.surface("102")
+    sep = surface.mapToGlobal(surface.strip.block_rect(L.SEPARATOR).center().toPoint())
+    assert ghosts.press(1, sep) is False
+    enable = surface.mapToGlobal(surface.strip.block_rect(L.ENABLE).center().toPoint())
+    assert ghosts.press(0, enable) is False       # Flossbud's ghost is not on this strip
+    assert session.toon("102").enabled is True
+    assert ghosts.press(1, enable) is True
+    assert session.toon("102").enabled is False
+
+
+def test_ghost_clicks_follow_both_settings_and_never_raise(rig):
+    settings = Settings(**{settings_keys.GHOST_CURSORS_CONTROL_CARDS: False})
+    session, controller, _rects = rig(settings=settings)
+    ghosts = controller.ghost_clicks
+    surface = controller.follower.surface("102")
+    enable = surface.mapToGlobal(surface.strip.block_rect(L.ENABLE).center().toPoint())
+    press = ("press", [(1, enable.x(), enable.y())])
+    ghosts.on_ghost_event(press)
+    assert session.toon("102").enabled is True
+    settings.set(settings_keys.GHOST_CURSORS_CONTROL_CARDS, True)
+    settings.set(settings_keys.GHOST_CURSORS_ENABLED, False)
+    ghosts.on_ghost_event(press)
+    assert session.toon("102").enabled is True
+    settings.set(settings_keys.GHOST_CURSORS_ENABLED, True)
+    for junk in (None, "press", ("press", None), ("press", [("x",), (1, "a", "b")])):
+        ghosts.on_ghost_event(junk)               # malformed: ignored
+    ghosts.on_ghost_event(press)
+    assert session.toon("102").enabled is False
+
+
+def test_ghost_press_reaches_an_open_menu_first(rig):
+    keymaps = Keymaps(ttr=3)
+    settings = Settings()
+    session, controller, _rects = rig(_session_with_ids(keymaps), keymaps, settings)
+    right_click(controller, "102", L.KEYSET, 2)
+    pops = controller.popovers
+    menu, surface = pops.open_content("102"), pops.open_surface("102")
+    spot = surface.mapToGlobal(menu.pill_rect(1).center().toPoint())     # Hide keyset
+    assert controller.ghost_clicks.press(1, spot) is True
+    settle()
+    assert keymaps.sets["ttr"][1].get("hidden") is True
+
+
 def test_build_model_is_pure():
     toon = FakeToonSession.demo().toons()[2]             # Moe, Corporate Clash
     kwargs = dict(home=False, running=True, keep_alive_available=True,

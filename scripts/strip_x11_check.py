@@ -619,6 +619,8 @@ def popover_phase(args, x, chk, demo, standin, game, other, strip, gx, gy) -> No
                    hex(x.active()))
 
     editor_steps(args, x, chk, demo, standin, game, strip, wid, shown, stacked_over_strip)
+    home_steps(args, x, chk, demo, standin, game, strip, wid, shown, stacked_over_strip,
+               blocks_now)
 
     # Moving the window takes everything with it; locked counters come back.
     menu, mark = open_menu("keyset", 1, "set:1")
@@ -725,6 +727,68 @@ def editor_steps(args, x, chk, demo, standin, game, strip, wid, shown,
            bool(wait_for(lambda: demo.find(f"STRIP capture {wid} 0", mark), 3)))
     game_gets_a_key("after the editor closed mid-capture the keyboard is the game's again")
     chk.ok("focus never left the game window", x.active() == game, hex(x.active()))
+
+
+def home_steps(args, x, chk, demo, standin, game, strip, wid, shown,
+               stacked_over_strip, blocks_now) -> None:
+    """The home block's panel: quick menu, then the compact launcher."""
+    mark = len(demo.lines)
+    demo.send(f"home {wid}")
+    got = wait_for(lambda: demo.find(f"STRIP popover {wid} home ", mark), 4)
+    if not chk.ok("home panel opens", bool(got)):
+        return
+    panel = int(got[-1].split()[4])
+    chk.ok("home panel is shown", bool(wait_for(lambda: shown(panel), 4)))
+    stacked_over_strip("home panel", panel)
+    chk.ok("home panel did not take focus", x.active() == game, hex(x.active()))
+
+    def card(since):
+        line = demo.find(f"STRIP card {wid} ", since)[-1].split()
+        return line[3], [float(v) for v in line[4:8]]
+
+    view, (cx, cy, cw, ch) = card(mark)
+    s, p = x.rect(strip), x.rect(panel)
+    hx, hy, hw, hh, dpr = blocks_now()[("home", 0)]
+    chk.ok("quick menu's card is left-aligned with the home block, 10 px below it",
+           view == "menu" and abs((p[0] + cx * dpr) - (s[0] + hx * dpr)) <= 1.5
+           and abs((p[1] + cy * dpr) - (s[1] + (hy + hh) * dpr) - 10 * dpr) <= 1.5,
+           f"panel {p} card {(cx, cy)} strip {s} home {(hx, hy, hw, hh)}")
+    chk.shot("home-menu")
+    if args.no_pointer:
+        print("SKIP  home panel clicks (--no-pointer)")
+        demo.send("close")
+        time.sleep(0.3)
+        return
+    zones = {ln.split()[3]: [float(v) for v in ln.split()[4:9]]
+             for ln in demo.find(f"STRIP zone {wid} ", mark)}
+
+    def click_zone(name, zs):
+        zx, zy, zw, zh, zdpr = zs[name]
+        pr = x.rect(panel)
+        x.click(pr[0] + (zx + zw / 2) * zdpr, pr[1] + (zy + zh / 2) * zdpr)
+
+    mark2 = len(demo.lines)
+    click_zone("row/launch", zones)
+    swapped = wait_for(lambda: [ln for ln in demo.find(f"STRIP card {wid} ", mark2)
+                                if ln.split()[3] == "launch"], 3)
+    chk.ok("Launch accounts swaps the menu for the compact launcher", bool(swapped))
+    time.sleep(0.3)
+    chk.ok("the panel stayed open and on show", shown(panel)
+           and not demo.find("STRIP popover-closed", mark2))
+    zones2 = {ln.split()[3]: [float(v) for v in ln.split()[4:9]]
+              for ln in demo.find(f"STRIP zone {wid} ", mark2)}
+    chk.shot("home-launcher")
+    if chk.ok("an idle account has a Launch button", "go/a4" in zones2, str(sorted(zones2))):
+        mark3 = len(demo.lines)
+        click_zone("go/a4", zones2)
+        chk.ok("Launch starts that account",
+               bool(wait_for(lambda: demo.find("STRIP launch a4", mark3), 3)))
+    mark4, smark = len(demo.lines), len(standin.lines)
+    g = x.rect(game)
+    x.click(g[0] + g[2] / 2, g[1] + g[3] - 60)
+    chk.ok("a click elsewhere closes the home panel",
+           bool(wait_for(lambda: demo.find("STRIP popover-closed", mark4), 3)))
+    chk.ok("focus stayed on the game throughout", x.active() == game, hex(x.active()))
 
 
 def four_windows(args, env, procs, x, chk, gx, gy) -> None:
