@@ -521,7 +521,9 @@ def appearance_stage(is_dark: bool) -> dict:
                 "tag_ink": QColor("#888888")}       # --text-muted
     return {"bg": QColor("#f1f5f9"),                # bg_card_inner (light)
             "border": QColor("#e2e8f0"),            # border_card (light)
-            "hint": QColor("#64748b"),              # text_disabled (light)
+            # text_muted, not text_disabled: the disabled slate is 4.3:1 on
+            # the inner card and this is a 10 px label.
+            "hint": QColor("#475569"),              # text_muted (light)
             "value": QColor("#475569"),             # text_muted (light)
             "groove": with_alpha("#0f172a", 0.14),
             "fill": QColor("#0077ff"),
@@ -728,6 +730,14 @@ def switcher_popover(is_dark: bool) -> dict:
             "check": QColor("#0077ff"),
             "note": QColor("#475569"),              # text_muted (light)
             "warn": QColor("#8a6100")}
+
+
+def focus_ring(is_dark: bool) -> QColor:
+    """Keyboard focus on a painted control: handoff §5's 2 px --blue-border
+    outline. The light theme takes --blue, which holds 3:1 on white."""
+    if is_dark:
+        return QColor("#3399ff")                    # --blue-border
+    return QColor("#0077ff")                        # --blue
 
 
 def mini_link(gold: bool, hover: bool, is_dark: bool) -> QColor:

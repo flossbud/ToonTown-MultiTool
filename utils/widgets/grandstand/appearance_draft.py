@@ -191,6 +191,23 @@ class AppearanceDraft:
                        else gp.DEFAULT_PATTERN_COLOR),
             zoom=zoom, off_x=off_x, off_y=off_y, rotate=rotate)
 
+    @classmethod
+    def for_record(cls, *, account_id: str, account_name: str, game: str,
+                   rec, entry) -> "AppearanceDraft":
+        """The draft for the toon an account shows. `rec` is its ToonRecord,
+        or None when no toon has been discovered; `entry` is that toon's
+        stored look. The ring's fallback is resolved the way the roster card
+        resolves it: the toon's own accent, else the game's."""
+        fallback = resolve_accent({"accent": getattr(rec, "accent", None)},
+                                  QColor(gp.game_accent(game)))
+        return cls.from_entry(
+            account_id=account_id, account_name=account_name, game=game,
+            toon_name=getattr(rec, "toon_name", None),
+            species=getattr(rec, "species", None),
+            dna=getattr(rec, "dna", "") or "",
+            accent_fallback=fallback.name(),
+            entry=entry if rec is not None else {})
+
     def copy(self) -> "AppearanceDraft":
         """A snapshot: what leaves the view never changes under a consumer."""
         return dataclasses.replace(

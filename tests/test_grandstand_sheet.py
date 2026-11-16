@@ -194,7 +194,21 @@ def test_tab_order_runs_the_body_chain_then_cancel_then_save(shell, qapp):
 # of the scan rather than papered over with a broad exemption.
 _LAMBDA_CONNECT = re.compile(r"\.connect\(\s*lambda\b")
 _SCANNED_MODULES = ("sheet.py", "account_sheet.py", "draft.py",
-                    "toon_browser.py")
+                    "toon_browser.py",
+                    # sub-project B, the appearance editor
+                    "appearance_sheet.py", "appearance_controls.py",
+                    "appearance_draft.py", "look_paint.py")
+
+
+def test_the_lambda_scan_covers_every_appearance_module():
+    """A module added to the editor without being added to the scan would
+    slip the rule. Every `appearance_*` and `look_*` file is scanned."""
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "utils", "widgets", "grandstand")
+    editor_modules = sorted(name for name in os.listdir(root)
+                            if name.startswith(("appearance_", "look_"))
+                            and name.endswith(".py"))
+    assert editor_modules and set(editor_modules) <= set(_SCANNED_MODULES)
 
 
 def test_no_lambda_signal_connections_in_the_grandstand_package():

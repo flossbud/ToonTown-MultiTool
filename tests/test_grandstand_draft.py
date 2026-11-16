@@ -154,6 +154,17 @@ def test_no_colour_literals_outside_the_palette():
     assert offenders == []
 
 
+def test_the_colour_scan_reaches_the_appearance_editor():
+    """The scan above globs the package. Pin that the appearance editor's
+    files (sub-project B) are in that glob, so moving them elsewhere cannot
+    quietly take them out of the rule."""
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "utils", "widgets", "grandstand")
+    scanned = {os.path.basename(p) for p in glob.glob(os.path.join(root, "*.py"))}
+    assert {"appearance_sheet.py", "appearance_controls.py",
+            "appearance_draft.py", "look_paint.py"} <= scanned
+
+
 # ── sheet tokens (handoff §4.4, §4.5, §9) ───────────────────────────────────
 
 from PySide6.QtGui import QColor                    # noqa: E402
