@@ -88,9 +88,60 @@ def material_demo(is_dark: bool) -> QWidget:
     return page
 
 
+def demo_keymap_manager():
+    """A KeymapManager on a throwaway config dir: four TTR sets like the
+    prototype (one hidden, one with a cross-set clash), two CC sets."""
+    import tempfile
+    from utils.keymap_manager import KeymapManager
+    cfg = tempfile.mkdtemp(prefix="launchpad-render-")
+    old = os.environ.get("TTMT_CONFIG_DIR")
+    os.environ["TTMT_CONFIG_DIR"] = cfg
+    try:
+        km = KeymapManager()
+    finally:
+        if old is None:
+            os.environ.pop("TTMT_CONFIG_DIR", None)
+        else:
+            os.environ["TTMT_CONFIG_DIR"] = old
+    km.add_set("ttr", keys={"forward": "w", "left": "a", "reverse": "s",
+                            "right": "d", "jump": "space"})
+    km.add_set("ttr", keys={"forward": "i", "left": "j", "reverse": "k",
+                            "right": "l", "jump": "Control_R"})
+    four = km.add_set("ttr", keys={"forward": "KP_8", "left": "KP_4", "reverse": "KP_5",
+                                   "right": "KP_6", "jump": "KP_0"})
+    km.set_hidden("ttr", four, True)
+    km.update_set_key("ttr", 2, "gags", "w")          # w: Forward in 2, Gags in 3
+    km.add_set("cc", keys={"forward": "Up", "left": "Left", "reverse": "Down",
+                           "right": "Right", "jump": "Control_R"})
+    return km
+
+
 def keysets_demo(is_dark: bool) -> QWidget:
-    from utils.widgets.launchpad.keysets_sheet import KeysetsSheet, demo_keymap_manager
-    return KeysetsSheet(demo_keymap_manager(), is_dark=is_dark)
+    from utils.widgets.launchpad.keysets_sheet import KeysetsSheet
+    return KeysetsSheet(demo_keymap_manager(), is_dark=is_dark,
+                        default_locked=lambda game: False)
+
+
+class _DemoSettings:
+    def __init__(self, is_dark):
+        self.d = {"theme": "dark" if is_dark else "light"}
+        self.cbs = []
+
+    def get(self, k, default=None):
+        return self.d.get(k, default)
+
+    def set(self, k, v):
+        self.d[k] = v
+
+    def on_change(self, cb):
+        self.cbs.append(cb)
+
+
+def settings_demo(is_dark: bool, tab: str = "settings") -> QWidget:
+    from utils.widgets.launchpad.settings_sheet import SettingsSheet
+    sheet = SettingsSheet(_DemoSettings(is_dark), is_dark=is_dark)
+    sheet.set_tab(tab)
+    return sheet
 
 
 SHEETS = {
@@ -99,6 +150,9 @@ SHEETS = {
     "keysets": ("#DAA520", "Keysets",
                 "Numbered movement-key layouts. Each toon picks one from its strip.",
                 keysets_demo),
+    "settings": ("#3da343", "Settings", "App-wide preferences", settings_demo),
+    "about": ("#3da343", "Settings", "ToonTown MultiTool",
+              lambda d: settings_demo(d, "about")),
 }
 
 
@@ -136,7 +190,7 @@ if __name__ == "__main__":
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("outdir")
     ap.add_argument("--theme", default="both", choices=("dark", "light", "both"))
-    ap.add_argument("--sheets", default="material")
+    ap.add_argument("--sheets", default="material,keysets,settings,about")
     a = ap.parse_args()
     th = ("dark", "light") if a.theme == "both" else (a.theme,)
     for p in render(a.outdir, th, [s.strip() for s in a.sheets.split(",")]):
