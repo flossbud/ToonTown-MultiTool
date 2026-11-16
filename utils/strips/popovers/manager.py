@@ -57,7 +57,7 @@ class StripPopovers(QObject):
         self._watch = watch if watch is not None else PointerWatch(parent=self)
         self._watch.pressed_outside.connect(self.close_all)
         self._watch.escape.connect(self.close_all)
-        follower.add_companion(self._own_ids, self._sweep)
+        follower.add_companion(self._own_ids, self._sweep, self._refresh_presentation)
 
     @property
     def watch(self) -> PointerWatch:
@@ -418,6 +418,10 @@ class StripPopovers(QObject):
             for s in (entry.counters_surface, entry.popover):
                 if s is not None and s.isVisible():
                     yield wid, s
+
+    def _refresh_presentation(self) -> None:
+        for _wid, surface in self._surfaces():
+            surface.refresh_presentation()
 
     def _own_ids(self) -> list[int]:
         return [int(s.winId()) for _wid, s in self._surfaces()]

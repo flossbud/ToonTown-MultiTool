@@ -138,6 +138,18 @@ class CountersView(QWidget):
     def pill_rect(self) -> QRectF:
         return self._to_widget(self._pill)
 
+    def shape_region(self):
+        """The pill, for a window shape. In the Flat look the counters are
+        bare text, which needs something behind it to be a shape at all."""
+        return paint.path_region(
+            paint.rounded(self._pill, self._pill.height() / 2.0), self._scale)
+
+    def set_backed(self, backed: bool) -> None:
+        """Paint a solid pill behind bare text (no compositor)."""
+        if bool(backed) != getattr(self, "_backed", False):
+            self._backed = bool(backed)
+            self.update()
+
     def input_rects(self) -> list[QRect]:
         """The counters and the gap above them: the pointer can travel from
         the name down to the lock without leaving."""
@@ -166,6 +178,9 @@ class CountersView(QWidget):
             p.fillPath(paint.rounded(self._pill, radius), tokens.rgba(0, 0, 0, 0.6))
             paint._border(p, paint.rounded, self._pill, radius, 1.0,
                           tokens.rgba(255, 255, 255, 0.16))
+        elif getattr(self, "_backed", False):
+            p.fillPath(paint.rounded(self._pill, self._pill.height() / 2.0),
+                       QColor(tokens.POPOVER_BASE))
         font = self._font()
         white = QColor("#ffffff")
         flags = Qt.AlignLeft | Qt.AlignVCenter

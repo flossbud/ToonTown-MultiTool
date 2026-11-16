@@ -548,6 +548,15 @@ class ToonSession(QObject):
         self._input_service.start()
         self._schedule_fetch()
 
+    def restart_router(self) -> None:
+        """Restart the InputService thread, which re-reads the input backend
+        setting. Toons, their flags and the broadcast switch are untouched."""
+        if self._shut_down or not self._activated:
+            return
+        self._input_service.stop(wait=True)
+        self._input_service.start()
+        self._log("[Service] Restarted due to input backend change.")
+
     def load_profile(self, index: int) -> None:
         """Apply profile ``index`` to the live toons, by slot."""
         manager = self._profile_manager

@@ -83,12 +83,13 @@ from utils.strips.follow import _platform_geometry            # noqa: E402
 
 GONE_AFTER = 3      # consecutive missing samples before a window counts as closed
 
-# name : x, y, w, h : title. Titles never start with a game's name (the app
-# finds Corporate Clash windows by title).
+# name : x, y, w, h : title. A title must never CONTAIN a game's full name:
+# on Windows the app adopts any window whose title contains "Toontown
+# Rewritten" or "Corporate Clash" as a game window.
 PLAY_WINDOWS = (
-    "game1:120,120,760,420:Stand-in 1 (Toontown toon, has the home block)",
-    "game2:920,120,760,420:Stand-in 2 (Toontown toon)",
-    "game3:120,640,760,420:Stand-in 3 (Corporate Clash toon)",
+    "game1:120,120,760,420:Stand-in 1 (TTR toon, has the home block)",
+    "game2:920,120,760,420:Stand-in 2 (TTR toon)",
+    "game3:120,640,760,420:Stand-in 3 (Clash toon, no Click Sync)",
     "game4:920,640,330,420:Stand-in 4 (narrow)",
 )
 

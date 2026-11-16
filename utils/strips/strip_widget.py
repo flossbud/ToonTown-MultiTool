@@ -223,6 +223,26 @@ class StripWidget(QWidget):
                 out.append(self._to_widget(b.rect).toAlignedRect())
         return out
 
+    def shape_region(self):
+        """What the strip paints solid, widget-local: used as the window's
+        shape where there is no compositor to make the rest transparent."""
+        from PySide6.QtGui import QPainterPath, QRegion
+        region = QRegion()
+        k, st = self._scale, self._style
+        for b in self._layout.blocks:
+            rect = b.rect.translated(MARGIN, MARGIN)
+            if b.kind in (L.PORTRAIT, L.HOME):
+                path = QPainterPath()
+                path.addEllipse(rect)
+            elif b.kind == L.NAME:
+                path = paint.right_rounded(rect, st.radius)
+            elif b.kind == L.SEPARATOR:
+                path = paint.rounded(rect, 1.0)
+            else:
+                path = paint.rounded(rect, st.radius)
+            region = region.united(paint.path_region(path, k))
+        return region
+
     def _hit(self, pos) -> L.Block | None:
         k = self._scale
         return self._layout.hit(pos.x() / k - MARGIN, pos.y() / k - MARGIN)

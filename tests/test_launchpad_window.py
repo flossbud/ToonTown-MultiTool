@@ -27,9 +27,17 @@ def _dispose(window, qapp):
     from PySide6.QtCore import QCoreApplication, QEvent
     window.shutdown()
     window.close()
+    # Let zero-delay callbacks queued by its widgets (a combo styling its
+    # popup on first show, say) run while those widgets still exist.
+    qapp.processEvents()
+    qapp.processEvents()
+    # A launcher card reacts to losing focus by restyling its children; mid
+    # deletion they are already gone. Take the focus away first.
+    focused = qapp.focusWidget()
+    if focused is not None:
+        focused.clearFocus()
     window.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
-    qapp.processEvents()
 
 
 def _settle(qapp, seconds=0.6):
@@ -148,8 +156,32 @@ def test_stamps_are_printed_once(isolated, capsys, qapp):
         assert STAMP == "[NextUI] launchpad window + float strips (TTMT_NEXT_UI=1)"
         assert out.count(STAMP) == 1
         assert out.count("[ToonSession] core active") == 1
+        # The strips print theirs once per process; see the self-check test.
+        assert out.count("[Strips] attach=") <= 1
     finally:
         _dispose(win, qapp)
+
+
+def test_a_real_start_prints_each_stamp_exactly_once(tmp_path):
+    """The running-code proof a live check begins with: `main.py --self-check`
+    in a fresh interpreter, with the flag."""
+    import subprocess
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    (tmp_path / "home").mkdir()
+    env = dict(os.environ, TTMT_NEXT_UI="1", QT_QPA_PLATFORM="offscreen",
+               TTMT_NO_VENV_REEXEC="1", TTMT_CONFIG_DIR=str(tmp_path / "config"),
+               HOME=str(tmp_path / "home"))
+    env.pop("TTMT_GRANDSTAND", None)
+    proc = subprocess.run([sys.executable, "main.py", "--self-check"], cwd=root,
+                          env=env, capture_output=True, text=True, timeout=120)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out[-2000:]
+    assert "self-check OK" in out
+    assert out.count("[NextUI] launchpad window + float strips (TTMT_NEXT_UI=1)") == 1
+    assert out.count("[ToonSession] core active") == 1
+    assert out.count("[Strips] attach=") == 1
+    assert "Traceback" not in out
 
 
 def test_the_launcher_is_the_only_page(window):
@@ -429,6 +461,248 @@ def test_keep_alive_sleep_warning_shows_once(window, monkeypatch):
     window.session.keep_alive_inhibit_status.emit(missing)
     window.session.keep_alive_inhibit_status.emit(missing)
     assert shown == ["Keep-Alive cannot block sleep"]
+
+
+# ── Float strips ───────────────────────────────────────────────────────────
+
+def test_the_window_owns_the_strips(window):
+    from utils.strips.controller import StripController
+    strips = window.strips
+    assert isinstance(strips, StripController)
+    assert strips._session is window.session
+    assert strips._keymap_manager is window.keymap_manager
+    assert strips._started is True
+
+
+def test_strips_are_shut_down_before_the_services(isolated, qapp, monkeypatch):
+    from utils.launchpad_window import LaunchpadWindow
+    win = LaunchpadWindow()
+    order = []
+    monkeypatch.setattr(win.strips, "shutdown", lambda: order.append("strips"))
+    monkeypatch.setattr(win.session, "shutdown", lambda: order.append("session"))
+    win.shutdown()
+    assert order == ["strips", "session"]
+    monkeypatch.undo()
+    win._shutdown_complete = False
+    _dispose(win, qapp)
+
+
+def test_a_strip_can_open_the_window_on_settings_or_the_launcher(window, qapp):
+    window.hide()
+    window.strips.open_window_requested.emit("settings")
+    assert window.isVisible()
+    assert window.open_sheet_name() == SHEET_SETTINGS
+    window.strips.open_window_requested.emit("launcher")
+    assert window.open_sheet_name() is None
+    window.open_sheet(SHEET_KEYSETS)
+    window.showMinimized()
+    window.strips.open_window_requested.emit("main")
+    assert not window.isMinimized()
+    assert window.open_sheet_name() == SHEET_KEYSETS        # "main" leaves it be
+
+
+def test_a_strips_change_colour_opens_that_toons_look(window, monkeypatch):
+    opened = []
+    monkeypatch.setattr(window.launch_tab, "open_appearance_for_toon",
+                        lambda game, name: opened.append((game, name)) or True)
+    window.open_sheet(SHEET_SETTINGS)
+    window.hide()
+    window.strips.appearance_requested.emit("ttr", "Flossbud")
+    assert opened == [("ttr", "Flossbud")]
+    assert window.isVisible()
+    assert window.open_sheet_name() is None         # the editor is in the launcher
+
+
+def test_a_look_saved_reaches_the_strips_as_well(window, monkeypatch):
+    seen = []
+    monkeypatch.setattr(window.strips, "customization_changed",
+                        lambda game, name: seen.append((game, name)))
+    window.launch_tab.look_saved.emit("cc", "Moe")
+    assert seen == [("cc", "Moe")]
+
+
+def test_quit_from_a_strip_is_the_window_closing(window, isolated):
+    window.quit_app()
+    assert isolated == [1]
+    assert window._shutdown_complete is True
+
+
+def test_the_window_survives_strips_that_cannot_be_built(isolated, monkeypatch, qapp):
+    from utils.launchpad_window import LaunchpadWindow
+    import utils.strips.controller as controller
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("no overlay backend")
+
+    monkeypatch.setattr(controller.StripController, "__init__", broken)
+    win = LaunchpadWindow()
+    try:
+        assert win.strips is None
+        assert win.launch_tab.isWidgetType()
+    finally:
+        _dispose(win, qapp)
+
+
+# ── Launcher port ──────────────────────────────────────────────────────────
+
+def _add_account(window, game, username, label=""):
+    creds = window.launch_tab.cred_manager
+    assert creds.add_account(label=label, username=username, password="pw", game=game)
+    window.launch_tab._reconcile_slots()
+    window.launch_tab._render_current_view(game)
+    return creds.get_accounts_metadata(game)[-1].id
+
+
+def test_the_port_lists_the_launchers_accounts_and_follows_them(window):
+    from utils.launcher_port import PortAccount
+    port = window.launcher_port
+    assert port.accounts() == []
+    seen = []
+    port.changed.connect(lambda: seen.append(1))
+    ttr = _add_account(window, "ttr", "flossbud", label="Main")
+    cc = _add_account(window, "cc", "clashmain")
+    assert seen == [1, 1]
+    assert port.accounts() == [
+        PortAccount(ttr, "ttr", "Main", "idle", ""),
+        PortAccount(cc, "cc", "clashmain", "idle", ""),
+    ]
+
+
+def test_the_port_reports_a_launch_in_progress(window):
+    from services.ttr_login_service import LoginState
+    port = window.launcher_port
+    account_id = _add_account(window, "ttr", "flossbud")
+    seen = []
+    port.changed.connect(lambda: seen.append(1))
+    window.launch_tab._slots["ttr"][account_id].state = LoginState.LOGGING_IN
+    window.launch_tab._render_current_view("ttr")
+    assert port.accounts()[0].state == "launching"
+    assert seen == [1]
+
+
+def test_the_port_launches_through_the_launcher(window, monkeypatch):
+    launched = []
+    monkeypatch.setattr(window.launch_tab, "_on_launch",
+                        lambda game, account_id: launched.append((game, account_id)))
+    account_id = _add_account(window, "cc", "clashmain")
+    assert window.launcher_port.launch(account_id) is True
+    assert launched == [("cc", account_id)]
+    assert window.launcher_port.launch("nope") is False
+
+
+def test_appearance_opens_on_the_named_toon_of_the_account_that_has_it(window):
+    tab = window.launch_tab
+    first = _add_account(window, "ttr", "one")
+    second = _add_account(window, "ttr", "two")
+    tab._recent_toons.record(first, "Flossbud", "ttr", dna="aa")
+    tab._recent_toons.record(second, "Hector", "ttr", dna="bb")
+    tab._recent_toons.record(second, "Linux", "ttr", dna="cc")     # shown: Linux
+    tab._render_current_view("ttr")
+    assert tab.open_appearance_for_toon("ttr", "Hector") is True
+    sheet = tab.grandstand.appearance_sheet
+    assert tab.grandstand.sheet.body() is sheet
+    draft = sheet.draft() if callable(getattr(sheet, "draft", None)) else None
+    if draft is not None:
+        assert (draft.account_id, draft.toon_name) == (second, "Hector")
+    assert tab.open_appearance_for_toon("ttr", "Nobody") is False
+    assert tab.open_appearance_for_toon("ttr", "") is False
+
+
+# ── Settings sheet ─────────────────────────────────────────────────────────
+
+def test_settings_button_opens_the_real_settings_sheet(window, qapp):
+    from utils.widgets.launchpad.settings_sheet import SettingsSheet
+    window.header.buttons.buttons[SHEET_SETTINGS].click()
+    sheet = window.sheet_host.current_content()
+    assert isinstance(sheet, SettingsSheet) and sheet is window.settings_sheet
+    header = window.sheet_host.panel.header
+    assert header.title_label.text() == "Settings"
+    assert header.sub_label.text() == sheet.sub()
+
+
+def test_settings_tabs_retitle_the_sheet_only_while_it_is_open(window, qapp):
+    sheet = window.settings_sheet
+    header = window.sheet_host.panel.header
+    window.open_sheet(SHEET_KEYSETS)
+    before = header.sub_label.text()
+    sheet.set_tab("logs")
+    assert header.sub_label.text() == before             # Keysets is showing
+    window.open_sheet(SHEET_SETTINGS)
+    assert header.sub_label.text() == sheet.sub()
+    sheet.set_tab("about")
+    assert header.sub_label.text() == sheet.sub()
+    sheet.set_tab("settings")
+
+
+def test_the_logs_console_is_the_one_the_window_feeds(window):
+    assert window.settings_sheet.logs_page.findChild(
+        type(window.debug_tab.card)) is window.debug_tab.card
+    window.settings_manager.set("show_debug_tab", True)
+    window.log("[Test] a line for the console")           # must not raise
+
+
+def test_main_reaches_the_settings_rows_by_the_old_name(window):
+    rows = window.settings_sheet.rows
+    assert window.settings_tab is rows
+    assert callable(rows.apply_picked_install)
+    assert rows._update_checker is window.update_checker
+    assert rows._hotkey_accounts_provider() == \
+        window.launch_tab.cred_manager.get_accounts_basic()
+
+
+def test_a_theme_picked_in_settings_restyles_the_window_once(window, monkeypatch):
+    calls = []
+    original = window._apply_full_theme
+    monkeypatch.setattr(window, "_apply_full_theme",
+                        lambda: (calls.append(1), original())[1])
+    window.settings_sheet.rows._on_theme_changed(1)       # light
+    assert calls == [1]
+    assert window._is_dark() is False
+    window.settings_sheet.rows._on_theme_changed(2)       # dark
+    assert calls == [1, 1]
+
+
+def test_verbose_logging_toggle_in_settings_reaches_the_router(window):
+    rows = window.settings_sheet.rows
+    rows._on_logging_toggled(True)
+    assert window.debug_tab.logging_enabled is True
+    assert window.session.input_service.logging_enabled is True
+    rows._on_logging_toggled(False)
+    assert window.session.input_service.logging_enabled is False
+
+
+def test_input_backend_change_restarts_the_router(window, monkeypatch):
+    restarts = []
+    monkeypatch.setattr(window.session, "restart_router", lambda: restarts.append(1))
+    # Reconnect: the signal was bound to the original method object.
+    window.settings_sheet.rows.input_backend_changed.connect(window.session.restart_router)
+    window.settings_sheet.rows.input_backend_changed.emit()
+    assert restarts
+
+
+def test_clear_credentials_goes_to_the_launcher(window, monkeypatch):
+    cleared = []
+    monkeypatch.setattr(window.launch_tab, "clear_all_credentials",
+                        lambda: cleared.append(1))
+    window.settings_sheet.rows.clear_credentials_requested.emit()
+    assert cleared == [1]
+
+
+def test_hotkey_registration_failures_reach_the_settings_rows(window, monkeypatch):
+    pushed = []
+    monkeypatch.setattr(window.settings_sheet.rows, "set_hotkey_status", pushed.append)
+    window.hotkeys.status_changed.emit({"service.toggle": "taken"})
+    assert pushed == [{"service.toggle": "taken"}]
+
+
+def test_the_sheet_follows_the_cards_rounded_corners(window):
+    from utils.widgets.window_chrome_style import RADIUS_NORMAL, STROKE_INSET
+    host = window.sheet_host
+    assert (host._inset, host._bottom_radius) == (
+        STROKE_INSET, RADIUS_NORMAL - STROKE_INSET)
+    window._apply_window_corner_state(True, force=True)      # maximized: square
+    assert (host._inset, host._bottom_radius) == (0, 0)
+    window._apply_window_corner_state(False, force=True)
 
 
 # ── Lifecycle ──────────────────────────────────────────────────────────────

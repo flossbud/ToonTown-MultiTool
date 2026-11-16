@@ -130,6 +130,27 @@ class XSide:
         got = self.prop(wid, "_NET_WM_WINDOW_OPACITY")
         return 1.0 if not got else got[0] / 0xFFFFFFFF
 
+    def composited(self) -> bool:
+        """A compositing manager owns _NET_WM_CM_S<screen>."""
+        atom = self.atom(f"_NET_WM_CM_S{self.d.get_default_screen()}")
+        return self.d.get_selection_owner(atom) != self.X.NONE
+
+    def bounding_rects(self, wid):
+        try:
+            r = self.win(wid).shape_get_rectangles(self.shape.SK.Bounding)
+            return [(q.x, q.y, q.width, q.height) for q in r.rectangles]
+        except Exception:
+            return None
+
+    def pixel(self, x, y):
+        """(r, g, b) of one screen pixel, or None."""
+        try:
+            img = self.root.get_image(int(x), int(y), 1, 1, self.X.ZPixmap, 0xFFFFFFFF)
+            b, g, r = img.data[0], img.data[1], img.data[2]
+            return (r, g, b)
+        except Exception:
+            return None
+
     def input_rects(self, wid):
         try:
             r = self.win(wid).shape_get_rectangles(self.shape.SK.Input)
@@ -344,6 +365,25 @@ def run(args, env, procs) -> int:
     chk.ok("the game window still has focus", x.active() == game, hex(x.active()))
     chk.shot("at-rest")
 
+    # No compositing manager: the strip must be a shaped window, not a
+    # translucent one (which would show as a black rectangle).
+    bare = not x.composited()
+    if bare:
+        chk.ok("stamp says there is no compositor", "compositor=none" in stamp[0], stamp[0])
+        s, g = x.rect(strip), x.rect(game)
+        rects = x.bounding_rects(strip) or []
+        area = sum(w * h for _x, _y, w, h in rects)
+        chk.ok("without a compositor the strip window is cut to its blocks",
+               0 < area < 0.7 * s[2] * s[3], f"{len(rects)} rects, {area} of {s[2] * s[3]} px")
+        backdrop = x.pixel(g[0] + 40, g[1] + g[3] - 40)        # the game's own colour
+        inside = [(s[0] + 3, s[1] + s[3] - 3),                 # halo margin, bottom left
+                  (s[0] + s[2] - 3, s[1] + s[3] - 3),          # bottom right
+                  (s[0] + s[2] // 2, s[1] + s[3] - 4)]         # under the row
+        seen = [x.pixel(px, py) for px, py in inside]
+        chk.ok("and shows the game behind it, not black, around the blocks",
+               backdrop is not None and backdrop != (0, 0, 0)
+               and all(p == backdrop for p in seen), f"backdrop {backdrop} seen {seen}")
+
     # 2. an unrelated window raised over the game covers the strip too
     x.move_resize(other, gx + 150, gy - 60, 520, 300)
     time.sleep(0.4)
@@ -407,7 +447,10 @@ def run(args, env, procs) -> int:
         x.move_resize(game, gx + i * 15, gy + i * 8)
         time.sleep(0.05)
         if i >= 5:                                 # well past one sample period
-            seen_hidden.append(x.opacity(strip) < 0.01)
+            hidden = x.opacity(strip) < 0.01
+            if bare:        # opacity does nothing here: the shape must be empty
+                hidden = hidden and x.bounding_rects(strip) == []
+            seen_hidden.append(hidden)
             seen_inputless.append(x.input_rects(strip) == [])
     chk.ok("strip is invisible throughout the drag", all(seen_hidden), str(seen_hidden))
     chk.ok("and takes no input while invisible", all(seen_inputless), str(seen_inputless))
@@ -419,6 +462,8 @@ def run(args, env, procs) -> int:
     placed_ok("after the move")
     directly_above("after the move")
     chk.ok("input region is back on the blocks", bool(x.input_rects(strip)))
+    if bare:
+        chk.ok("and so is the window's shape", bool(x.bounding_rects(strip)))
     chk.shot("after-move")
 
     # 5. narrow window: the name plate collapses, the strip still fits

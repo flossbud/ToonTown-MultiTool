@@ -60,6 +60,7 @@ class FakeToonSession(QObject):
 
         # Call records, for tests that only need to know an action was asked for.
         self.refresh_count = 0
+        self.router_restarts = 0
         self.loaded_profiles: list[int] = []
 
     # ── Demo data ──────────────────────────────────────────────────────────
@@ -210,6 +211,9 @@ class FakeToonSession(QObject):
 
     def refresh(self) -> None:
         self.refresh_count += 1
+
+    def restart_router(self) -> None:
+        self.router_restarts += 1
 
     def load_profile(self, index: int) -> None:
         """Apply the profile registered with ``set_profile``, if any."""
