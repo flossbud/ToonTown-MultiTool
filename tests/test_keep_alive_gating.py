@@ -454,3 +454,6 @@ def test_master_toggle_fires_dialog_when_acknowledgement_explicitly_false(qapp, 
 
     assert dialog_called["count"] == 1
     assert sm.get("keep_alive_enabled") is True
+
+
+# The same gate on ToonSession: tests/test_toon_session_features.py.
