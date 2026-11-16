@@ -892,10 +892,10 @@ class ToonSession(QObject):
         if running:
             self._apply_routing_suspended(False)
         if running:
-            self._log("[Service] Multitoon service started.", level="ok")
+            self._log("[Service] Broadcast started.", level="ok")
             self._schedule_fetch()
         else:
-            self._log("[Service] Multitoon service stopped.")
+            self._log("[Service] Broadcast stopped: toons keep their own keys.")
         self.running_changed.emit(running)
 
     def _apply_routing_suspended(self, suspended: bool) -> None:

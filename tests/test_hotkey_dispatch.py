@@ -156,3 +156,42 @@ def test_toggle_keep_alive_all_semantics():
     s = _Stub([True, True, True, True], master=False)
     MultitoonTab.toggle_keep_alive_all(s)
     assert s.flipped == []                          # master flag off -> no-op
+
+
+# ── The same actions on a ToonSession (the launchpad window) ────────────────
+
+def test_service_keepalive_refresh_route_to_a_session():
+    session = _Rec()
+    d = build_dispatch(
+        mode_controller=_Mode(), launch_tab=_Launch(), session=session,
+        settings_manager=_Settings(), load_profile=lambda idx: None)
+    d["service.toggle"](); d["keepalive.toggle_all"](); d["app.refresh"]()
+    assert [c[0] for c in session.calls] == [
+        "toggle_running", "toggle_keep_alive_all", "refresh"]
+
+
+def test_a_session_dispatch_covers_every_registry_action():
+    from utils.hotkey_actions import ACTIONS
+    d = build_dispatch(
+        mode_controller=_Mode(), launch_tab=_Launch(), session=_Rec(),
+        settings_manager=_Settings(), load_profile=lambda idx: None)
+    assert set(d) == {a.id for a in ACTIONS}
+
+
+def test_dispatch_needs_exactly_one_of_tab_and_session():
+    import pytest
+    common = dict(mode_controller=_Mode(), launch_tab=_Launch(),
+                  settings_manager=_Settings(), load_profile=lambda idx: None)
+    with pytest.raises(ValueError):
+        build_dispatch(**common)
+    with pytest.raises(ValueError):
+        build_dispatch(multitoon_tab=_Rec(), session=_Rec(), **common)
+
+
+def test_session_dispatch_targets_exist_on_both_sessions():
+    from services.toon_session import ToonSession
+    from services.toon_session_fake import FakeToonSession
+    for cls in (ToonSession, FakeToonSession):
+        for name in ("toggle_running", "toggle_keep_alive_all", "refresh",
+                     "load_profile"):
+            assert callable(getattr(cls, name)), (cls.__name__, name)

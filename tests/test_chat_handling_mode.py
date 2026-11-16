@@ -218,3 +218,8 @@ def test_normalize_non_hashable_returns_default():
     assert normalize_chat_handling_mode([]) == CHAT_HANDLING_MODE_DEFAULT
     assert normalize_chat_handling_mode({}) == CHAT_HANDLING_MODE_DEFAULT
     assert normalize_chat_handling_mode(0) == CHAT_HANDLING_MODE_DEFAULT
+
+
+# The mode normalizer and the effective-chat rule on ToonSession:
+# tests/test_toon_session.py ("Chat"). The session has no chat buttons, so the
+# button-visibility cases above have no twin there.
