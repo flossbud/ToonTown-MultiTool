@@ -504,6 +504,32 @@ def test_browser_empty_state_copy_is_not_clipped(themed_app, render_cache):
     host.close()
 
 
+def test_browser_empty_state_shrinks_back_after_opening_narrow(themed_app,
+                                                             render_cache):
+    """Second live run, 2026-11-16: the copy fit but sat 100 px apart. The
+    browser is opened while it is still a hidden, unsized page, so the labels
+    were first measured at the 120 px floor (many lines) and fixed that tall;
+    QLabel then expands heightForWidth() to its own minimum, so widening the
+    panel never shrank them. This opens narrow and widens, as the view does."""
+    _qapp, theme = themed_app
+    host = QWidget()
+    browser = ToonBrowser(host)
+    browser.setGeometry(0, 0, 100, 30)              # an unsized hidden page
+    browser.apply_theme(theme == "dark")
+    browser.open("ttr", "a", "hirofloss", [], None)
+    narrow = browser.empty_body.height()
+    browser.setGeometry(0, 0, 800, 292)
+    _render(host, 800, 292)
+    title, body = browser.empty_title, browser.empty_body
+    assert title.height() < 2 * title.fontMetrics().height(), title.height()
+    assert body.height() < narrow
+    assert body.height() <= 4 * body.fontMetrics().height(), body.height()
+    gap = (body.mapTo(browser, QPoint(0, 0)).y()
+           - (title.mapTo(browser, QPoint(0, 0)).y() + title.height()))
+    assert 0 <= gap <= 12, gap
+    host.close()
+
+
 def test_browser_empty_state_does_not_paint_the_app_background(themed_app, render_cache):
     _qapp, theme = themed_app
     browser = _browser(theme, [])

@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+QWIDGETSIZE_MAX = 16777215      # Qt's "no maximum"; PySide does not export it
+
 from utils.toon_customization_resolve import resolve_accent
 from utils.toon_renders import AWAITING_RENDER_TOOLTIP, ToonRenders
 from utils.toon_silhouette import paint_race_silhouette
@@ -354,7 +356,15 @@ class ToonBrowser(QFrame):
         for label in (self.empty_title, self.empty_body):
             label.ensurePolished()
             label.setFixedWidth(width)
-            label.setFixedHeight(label.heightForWidth(width))
+            # Release the previous height before measuring: QLabel expands
+            # heightForWidth() to its own minimum size, so a height fixed
+            # while the panel was still narrow (many lines) would otherwise
+            # be handed straight back and never shrink.
+            label.setMinimumHeight(0)
+            label.setMaximumHeight(QWIDGETSIZE_MAX)
+            needed = label.heightForWidth(width)
+            if needed > 0:
+                label.setFixedHeight(needed)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
