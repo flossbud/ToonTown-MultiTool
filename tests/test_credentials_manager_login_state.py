@@ -204,3 +204,61 @@ def test_new_login_clears_reason(make_cm):
     cm.set_login_failed(aid, True, "nope")
     cm.update_account(0, password="new")
     assert cm.login_failed_reason(aid) is None
+
+
+# ── no saved password: no backend walk (F) ─────────────────────────────────
+
+@pytest.fixture
+def walks(monkeypatch):
+    from utils.credentials_manager import CredentialsManager
+    calls = []
+    monkeypatch.setattr(CredentialsManager, "_recover_password_from_compatible_backends",
+                        lambda self, aid: calls.append(aid) or "")
+    return calls
+
+
+def test_account_added_without_a_password_skips_the_walk(make_cm, walks):
+    from utils.credentials_manager import NO_SAVED_PASSWORD_KEY
+    cm = make_cm()
+    cm.add_account(label="A", username="a", password="")
+    aid = _ids(cm)[0]
+    assert json.loads(make_cm.path.read_text())[0][NO_SAVED_PASSWORD_KEY] is True
+    assert cm.get_account(0).password == ""
+    assert cm.login_status(aid) == LOGIN_NONE
+    assert walks == []
+
+
+def test_forgetting_a_login_skips_the_walk_and_saving_one_restores_it(make_cm, walks):
+    from utils.credentials_manager import NO_SAVED_PASSWORD_KEY
+    cm = make_cm()
+    cm.add_account(label="A", username="a", password="pw")
+    aid = _ids(cm)[0]
+    assert NO_SAVED_PASSWORD_KEY not in json.loads(make_cm.path.read_text())[0]
+    cm.update_account(0, password="")              # Forget login / keep off
+    assert cm.get_account(0).password == ""
+    assert walks == []
+    cm.update_account(0, password="new")           # a login saved again
+    assert NO_SAVED_PASSWORD_KEY not in json.loads(make_cm.path.read_text())[0]
+    assert cm.get_account(0).password == "new"
+    cm.update_account(0, label="Renamed")          # label only: untouched
+    assert cm.get_account(0).password == "new"
+
+
+def test_old_entries_without_the_marker_still_walk(make_cm, walks):
+    old = [{"id": "a1", "label": "A", "username": "a", "game": "ttr"}]
+    make_cm.path.write_text(json.dumps(old))
+    cm = make_cm()
+    assert cm.get_account(0).password == ""
+    assert walks == ["a1"]                          # behaviour unchanged
+    assert json.loads(make_cm.path.read_text()) == old
+
+
+def test_marker_survives_restart_and_session_password_still_counts(make_cm, walks):
+    cm = make_cm()
+    cm.add_account(label="A", username="a", password="")
+    aid = _ids(cm)[0]
+    cm2 = make_cm()
+    assert cm2.get_account(0).password == "" and walks == []
+    assert cm2.hold_password_for_session(aid, "typed-at-launch")
+    assert cm2.get_account(0).password == "typed-at-launch"
+    assert cm2.login_status(aid) == LOGIN_NONE      # session-only is not saved
