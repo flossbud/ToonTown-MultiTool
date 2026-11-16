@@ -24,7 +24,7 @@ jobs:
   # python-build-standalone interpreter (build_env.sh) so the trees are
   # structurally identical before lipo.
   build-macos:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
         with:
