@@ -36,8 +36,8 @@ def settings_manager():
 
 
 def test_general_page_has_two_panels(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab
-    tab = SettingsTab(settings_manager)
+    from tests._settings_rows_harness import RowsUnderTest
+    tab = RowsUnderTest(settings_manager)
     page = tab.pages["general"]
     # The page's panel layout has the micro label, two v2 cards, and a stretch.
     from utils.widgets.card_surface import CardSurface
@@ -48,8 +48,8 @@ def test_general_page_has_two_panels(qapp, settings_manager):
 
 
 def test_general_page_appearance_dropdown_changes_theme(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab
-    tab = SettingsTab(settings_manager)
+    from tests._settings_rows_harness import RowsUnderTest
+    tab = RowsUnderTest(settings_manager)
     # The Appearance control is now a SegmentedPill (System/Light/Dark).
     from utils.widgets.pill_controls import SegmentedPill
     assert isinstance(tab._theme_segment, SegmentedPill)
@@ -59,8 +59,8 @@ def test_general_page_appearance_dropdown_changes_theme(qapp, settings_manager):
 
 
 def test_general_page_reduce_motion_tri_state(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab
-    tab = SettingsTab(settings_manager)
+    from tests._settings_rows_harness import RowsUnderTest
+    tab = RowsUnderTest(settings_manager)
     # On: explicit=True, reduce_motion=True
     tab._rm_segment.index_changed.emit(1)
     assert settings_manager.get("reduce_motion_set_explicitly") is True
@@ -76,8 +76,9 @@ def test_general_page_reduce_motion_tri_state(qapp, settings_manager):
 
 
 def test_general_page_updates_toggle_persists(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab, Switch
-    tab = SettingsTab(settings_manager)
+    from tests._settings_rows_harness import RowsUnderTest
+    from utils.shared_widgets import Switch
+    tab = RowsUnderTest(settings_manager)
     field = _find_field(tab, "general", "Check for updates on startup")
     sw = field.control_widget
     assert isinstance(sw, Switch)
@@ -86,8 +87,8 @@ def test_general_page_updates_toggle_persists(qapp, settings_manager):
 
 
 def test_general_page_check_now_button_shows_disabled_state(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab
-    tab = SettingsTab(settings_manager)
+    from tests._settings_rows_harness import RowsUnderTest
+    tab = RowsUnderTest(settings_manager)
     field = _find_field(tab, "general", "Check for updates now")
     from PySide6.QtWidgets import QPushButton
     btn = field.control_widget

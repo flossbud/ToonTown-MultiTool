@@ -31,7 +31,6 @@ def test_launcher_adjacent_asset_call_sites_delegate(monkeypatch):
     import utils.widgets.account_reorder_dialog as account_reorder
     import tabs.credits_tab
     import tabs.launch_tab as lt
-    import tabs.settings_tab as settings_tab
 
     assert _assets.asset_path is asset_path
     assert account_reorder._asset_path is asset_path
@@ -41,4 +40,4 @@ def test_launcher_adjacent_asset_call_sites_delegate(monkeypatch):
     resolved = object()
     import utils.widgets.settings_rows as settings_rows
     monkeypatch.setattr(settings_rows, "asset_path", lambda name: resolved)
-    assert settings_tab.SettingsTab._asset_path(None, "x.png") is resolved
+    assert settings_rows.SettingsRows._asset_path(None, "x.png") is resolved

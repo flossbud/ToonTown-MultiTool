@@ -53,8 +53,8 @@ def settings_manager():
 
 @pytest.fixture
 def settings_tab(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab
-    return SettingsTab(settings_manager)
+    from tests._settings_rows_harness import RowsUnderTest
+    return RowsUnderTest(settings_manager)
 
 
 def test_hotkeys_card_lists_every_action(settings_tab):
