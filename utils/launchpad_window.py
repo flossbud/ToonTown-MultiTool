@@ -153,8 +153,8 @@ class LaunchpadWindow(QMainWindow):
         self.window_manager.start()
 
         # The logs console is the logger; it mounts in the Settings sheet.
-        from tabs.debug_tab import DebugTab
-        self.debug_tab = DebugTab()
+        from utils.widgets.logs_console.app_log import AppLogConsole
+        self.debug_tab = AppLogConsole()
         self.logger = self.debug_tab
 
         self.session = ToonSession(
