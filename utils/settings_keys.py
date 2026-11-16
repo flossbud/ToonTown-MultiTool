@@ -121,3 +121,40 @@ LAUNCHER_PARTY_CC = "launcher_party_cc"
 LAUNCHER_STAR_TTR = "launcher_star_ttr"
 LAUNCHER_STAR_CC = "launcher_star_cc"
 LAUNCHER_ACTIVE_GAME = "launcher_active_game"
+
+# Keep-alive opt-in and its ToS consent (named 2026-11-16; the stored strings
+# are unchanged from the original bare-string keys).
+KEEP_ALIVE_ENABLED = "keep_alive_enabled"
+KEEP_ALIVE_CONSENT_ACKNOWLEDGED = "keep_alive_consent_acknowledged"
+
+# Next UI: float strips + launchpad window (added 2026-11-16). Defaults are
+# registered in SettingsManager; the *_DEFAULT constants are for call sites
+# that read through a fake or a missing manager.
+FLOAT_STRIP_STYLE = "float_strip_style"
+FLOAT_STRIP_STYLE_NEON = "neon"
+FLOAT_STRIP_STYLE_FLAT = "flat"
+FLOAT_STRIP_STYLE_VALUES = (FLOAT_STRIP_STYLE_NEON, FLOAT_STRIP_STYLE_FLAT)
+FLOAT_STRIP_STYLE_DEFAULT = FLOAT_STRIP_STYLE_NEON
+
+# Hide the launchpad window once toons are up.
+HIDE_WINDOW_WHEN_TOONS_UP = "hide_window_when_toons_up"
+HIDE_WINDOW_WHEN_TOONS_UP_DEFAULT = True
+
+TRAY_ICON = "tray_icon"
+TRAY_ICON_DEFAULT = True
+
+KEYSET_EDITOR_LAYOUT = "keyset_editor_layout"
+KEYSET_EDITOR_LAYOUT_LIST = "list"
+KEYSET_EDITOR_LAYOUT_KEYS = "keys"
+KEYSET_EDITOR_LAYOUT_VALUES = (KEYSET_EDITOR_LAYOUT_LIST, KEYSET_EDITOR_LAYOUT_KEYS)
+KEYSET_EDITOR_LAYOUT_DEFAULT = KEYSET_EDITOR_LAYOUT_LIST
+
+
+def normalize_float_strip_style(raw) -> str:
+    """A stored strip style, or the default for anything unknown."""
+    return raw if raw in FLOAT_STRIP_STYLE_VALUES else FLOAT_STRIP_STYLE_DEFAULT
+
+
+def normalize_keyset_editor_layout(raw) -> str:
+    """A stored keyset editor layout, or the default for anything unknown."""
+    return raw if raw in KEYSET_EDITOR_LAYOUT_VALUES else KEYSET_EDITOR_LAYOUT_DEFAULT

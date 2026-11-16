@@ -5,13 +5,24 @@ Persisted at ~/.config/toontown_multitool/keymaps.json as:
 
     {
       "version": 2,
-      "ttr": [ {name, forward, reverse, left, right, jump, book, gags, tasks, map}, ... ],
-      "cc":  [ {name, forward, reverse, left, right, jump, book, gags, tasks, map, sprint}, ... ]
+      "ttr": [ {id, name, forward, reverse, left, right, jump, book, gags, tasks, map}, ... ],
+      "cc":  [ {id, name, forward, reverse, left, right, jump, book, gags, tasks, map, sprint}, ... ]
     }
 
 Set 0 of each game ("Default") represents both what the user physically presses
 when that game is foregrounded AND what that game's client expects to receive.
 Alternate sets define alternate per-toon client configurations.
+
+Every set carries a stable `"id"` (unique across the whole file). Sets that
+lack one, or share one with an earlier set, are given a fresh id on load and
+the file is re-saved. Ids survive renames and reordering, so anything that
+must keep pointing at "the same bindings" stores the id, never the index.
+A set may also carry `"hidden": true`; the key is absent when the set is
+visible. Each game keeps at least one visible set: a file in which every set
+of a game is hidden loads with set 0 shown again.
+
+Set 0 is pinned: it cannot be deleted or moved (the input engine translates
+from it). It may be hidden. Sets 1..7 can be reordered with move_set().
 
 Migration: a top-level list (legacy v1) is detected at load and rewritten as v2
 with the list moved into the `ttr` bucket (with up->forward, down->reverse rename)
@@ -23,6 +34,7 @@ from __future__ import annotations
 import os
 import json
 import threading
+import uuid
 
 from utils import logical_actions
 
@@ -52,6 +64,14 @@ def _seed_default_set(game: str) -> dict:
     return s
 
 
+def _new_set_id(taken: set) -> str:
+    """A short random id not in `taken`. The caller adds it to `taken`."""
+    while True:
+        sid = uuid.uuid4().hex[:8]
+        if sid not in taken:
+            return sid
+
+
 class KeymapManager:
     MAX_SETS_PER_GAME = 8
 
@@ -72,6 +92,7 @@ class KeymapManager:
         if not os.path.exists(self._path):
             self._sets = {"ttr": [_seed_default_set("ttr")],
                           "cc": [_seed_default_set("cc")]}
+            self._normalize_ids_and_visibility()
             self._save()
             return
 
@@ -82,6 +103,7 @@ class KeymapManager:
             print(f"[KeymapManager] Failed to load keymaps: {e}")
             self._sets = {"ttr": [_seed_default_set("ttr")],
                           "cc": [_seed_default_set("cc")]}
+            self._normalize_ids_and_visibility()
             self._save()
             return
 
@@ -90,6 +112,7 @@ class KeymapManager:
             print("[KeymapManager] Migrating v1 keymaps.json to v2")
             self._sets = self._migrate_v1_list(data)
             self._canonicalize_stored_keys()
+            self._normalize_ids_and_visibility()
             self._save()
             return
 
@@ -100,6 +123,7 @@ class KeymapManager:
             self._sets = {"ttr": ttr, "cc": cc}
             changed = self._backfill_missing_actions()
             changed |= self._canonicalize_stored_keys()
+            changed |= self._normalize_ids_and_visibility()
             if changed:
                 self._save()
             return
@@ -108,6 +132,7 @@ class KeymapManager:
         print("[KeymapManager] Unrecognized keymaps.json shape; resetting")
         self._sets = {"ttr": [_seed_default_set("ttr")],
                       "cc": [_seed_default_set("cc")]}
+        self._normalize_ids_and_visibility()
         self._save()
 
     @staticmethod
@@ -170,6 +195,48 @@ class KeymapManager:
                         changed = True
         return changed
 
+    def _normalize_ids_and_visibility(self) -> bool:
+        """Give every set a unique id, keep `hidden` only as a literal True,
+        and make sure each game has a visible set. Returns True if anything
+        changed. Caller holds self._lock or is still in __init__."""
+        changed = False
+        taken: set = set()
+        for game in GAMES:
+            for s in self._sets.get(game, []):
+                sid = s.get("id")
+                if isinstance(sid, str) and sid and sid not in taken:
+                    taken.add(sid)
+                    continue
+                s["id"] = _new_set_id(taken)
+                taken.add(s["id"])
+                changed = True
+        for game in GAMES:
+            sets = self._sets.get(game, [])
+            for s in sets:
+                if "hidden" in s and s["hidden"] is not True:
+                    del s["hidden"]
+                    changed = True
+            changed |= self._ensure_visible_locked(game)
+        return changed
+
+    def _ensure_visible_locked(self, game: str) -> bool:
+        """If every set of `game` is hidden, show set 0 again. Caller holds
+        self._lock. Returns True if it changed anything."""
+        sets = self._sets.get(game, [])
+        if sets and all(s.get("hidden") is True for s in sets):
+            sets[0].pop("hidden", None)
+            return True
+        return False
+
+    def _all_ids_locked(self) -> set:
+        return {s["id"] for g in GAMES for s in self._sets.get(g, []) if "id" in s}
+
+    def _index_of_locked(self, game: str, set_id: str) -> int:
+        for i, s in enumerate(self._sets.get(game, [])):
+            if s.get("id") == set_id:
+                return i
+        return -1
+
     def _save(self):
         try:
             with open(self._path, "w") as f:
@@ -218,6 +285,99 @@ class KeymapManager:
     def num_sets(self, game: str) -> int:
         with self._lock:
             return len(self._sets.get(game, []))
+
+    # ── Ids and visibility ─────────────────────────────────────────────────
+
+    def get_set_ids(self, game: str) -> list:
+        """Ids of `game`'s sets, in order (index i is set number i + 1)."""
+        with self._lock:
+            return [s["id"] for s in self._sets.get(game, [])]
+
+    def get_set_by_id(self, game: str, set_id: str) -> dict | None:
+        with self._lock:
+            i = self._index_of_locked(game, set_id)
+            return dict(self._sets[game][i]) if i >= 0 else None
+
+    def index_of(self, game: str, set_id: str) -> int:
+        """Current position of the set with this id, or -1. Positions change
+        when sets are deleted or moved; ids do not."""
+        with self._lock:
+            return self._index_of_locked(game, set_id)
+
+    def id_at(self, game: str, index: int) -> str | None:
+        with self._lock:
+            sets = self._sets.get(game, [])
+            return sets[index]["id"] if 0 <= index < len(sets) else None
+
+    def is_hidden(self, game: str, set_id: str) -> bool:
+        with self._lock:
+            i = self._index_of_locked(game, set_id)
+            return i >= 0 and self._sets[game][i].get("hidden") is True
+
+    def visible_sets(self, game: str) -> list:
+        """Copies of `game`'s visible sets, in order. Each carries its "id";
+        its number is index_of(game, id) + 1, not its place in this list."""
+        with self._lock:
+            return [dict(s) for s in self._sets.get(game, [])
+                    if s.get("hidden") is not True]
+
+    def lowest_visible_id(self, game: str) -> str | None:
+        """Id of the first visible set of `game` (where a toon whose set was
+        hidden or deleted goes), or None if the game has no sets."""
+        with self._lock:
+            for s in self._sets.get(game, []):
+                if s.get("hidden") is not True:
+                    return s["id"]
+            return None
+
+    def set_hidden(self, game: str, set_id: str, hidden: bool) -> bool:
+        """Hide or show a set. Refuses (returns False) to hide the last
+        visible set of a game or an unknown id; returns True otherwise,
+        including when the set was already in the requested state."""
+        if game not in GAMES:
+            return False
+        changed = False
+        with self._lock:
+            sets = self._sets.get(game, [])
+            i = self._index_of_locked(game, set_id)
+            if i < 0:
+                return False
+            s = sets[i]
+            if hidden:
+                if s.get("hidden") is True:
+                    return True
+                if not any(o.get("hidden") is not True
+                           for j, o in enumerate(sets) if j != i):
+                    return False
+                s["hidden"] = True
+            else:
+                if s.get("hidden") is not True:
+                    return True
+                del s["hidden"]
+            self._save()
+            changed = True
+        if changed:
+            self._notify()
+        return True
+
+    def move_set(self, game: str, set_id: str, new_index: int) -> bool:
+        """Move a set to `new_index`, shifting the sets between. Set 0 is
+        pinned: it cannot be moved and nothing can be moved to index 0.
+        Returns False for an unknown id, set 0, or an index outside
+        1..num_sets-1; True otherwise (also when already there)."""
+        if game not in GAMES:
+            return False
+        with self._lock:
+            sets = self._sets.get(game, [])
+            i = self._index_of_locked(game, set_id)
+            if i <= 0 or not (1 <= new_index < len(sets)):
+                return False
+            if i == new_index:
+                return True
+            sets.insert(new_index, sets.pop(i))
+            self._save()
+        self._notify()
+        return True
 
     def _client_twin_locked(self, game: str, key: str) -> str | None:
         """The Default-set key that `key` stands in for, or None.
@@ -352,26 +512,27 @@ class KeymapManager:
             i += 1
         return f"New Set {i}"
 
-    def add_set(self, game: str, name: str | None = None, keys: dict | None = None):
+    def add_set(self, game: str, name: str | None = None, keys: dict | None = None) -> str | None:
+        """Append a visible set. Returns its id, or None if the game is
+        unknown or already has MAX_SETS_PER_GAME sets."""
         if game not in GAMES:
-            return
+            return None
         action_map: dict[str, str] = {}
         for action in logical_actions.actions_for(game):
             if keys and action in keys:
                 action_map[action] = keys[action]
             else:
                 action_map[action] = logical_actions.default_key(game, action) or ""
-        changed = False
         with self._lock:
             sets = self._sets.setdefault(game, [])
             if len(sets) >= self.MAX_SETS_PER_GAME:
-                return
+                return None
             chosen_name = name if name is not None else self._next_default_name_locked(game)
-            sets.append({"name": chosen_name, **action_map})
+            set_id = _new_set_id(self._all_ids_locked())
+            sets.append({"id": set_id, "name": chosen_name, **action_map})
             self._save()
-            changed = True
-        if changed:
-            self._notify()
+        self._notify()
+        return set_id
 
     def delete_set(self, game: str, index: int):
         if game not in GAMES:
@@ -384,6 +545,9 @@ class KeymapManager:
             sets = self._sets.get(game, [])
             if index < len(sets):
                 sets.pop(index)
+                # Deleting the last visible set must not leave the game with
+                # none to pick: show set 0 again.
+                self._ensure_visible_locked(game)
                 self._save()
                 changed = True
         if changed:

@@ -30,7 +30,7 @@ from utils import cc_api
 from utils.game_registry import GameRegistry
 from utils import logical_actions
 from utils.toon_customizations_manager import ToonCustomizationsManager
-from utils.settings_keys import CLICK_SYNC_ENABLED
+from utils.settings_keys import CLICK_SYNC_ENABLED, KEEP_ALIVE_ENABLED
 from utils.color_math import lighten_rgb, with_alpha
 from utils.widgets.scale_press import ScalePushButton
 from tabs.multitoon._feature_pill import FeaturePill
@@ -4115,7 +4115,7 @@ class MultitoonTab(QWidget):
         keep-alive thread loop."""
         return bool(
             self.settings_manager
-            and self.settings_manager.get("keep_alive_enabled", False)
+            and self.settings_manager.get(KEEP_ALIVE_ENABLED, False)
         )
 
     def _init_keep_alive_visibility(self) -> None:
