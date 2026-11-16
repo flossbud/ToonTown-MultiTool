@@ -321,3 +321,163 @@ def test_caret_follows_a_clamped_menu(qapp):
     image = render(menu, "render_menu")
     assert close(image.pixelColor(20, 3), "#E05252")
     assert image.pixelColor(menu.width() // 2, 2) == MAGENTA
+
+
+# -- keyset editor card -------------------------------------------------------------
+
+from utils import logical_actions                                      # noqa: E402
+from utils.strips.popovers.editor import (EditorModel, KeysetEditor,   # noqa: E402
+                                          key_name)
+
+TTR_ACTIONS = tuple((a, logical_actions.ACTION_LABELS[a])
+                    for a in logical_actions.actions_for("ttr"))
+BINDS = (("forward", "w"), ("reverse", "s"), ("left", "a"), ("right", "d"),
+         ("jump", "space"), ("book", "]"), ("gags", "g"), ("tasks", "t"),
+         ("map", "Shift_L"), ("action", "BackSpace"))
+MODEL = EditorModel(1, TTR_ACTIONS, BINDS)
+
+
+def test_key_names_fit_a_keycap():
+    assert key_name("w") == "W"
+    assert key_name("space") == "Space"
+    assert key_name("BackSpace") == "Bksp"
+    assert key_name("Shift_L") == "Shift"
+    assert key_name("Up") == "↑"
+    assert key_name("") == "–"
+    assert key_name("F5") == "F5"
+
+
+def test_list_layout_is_two_columns_of_the_games_actions(qapp):
+    card = KeysetEditor(MODEL, "list")
+    assert card.card_rect().width() == pytest.approx(266.0)
+    caps = [card.zone_rect("cap", a) for a, _l in TTR_ACTIONS]
+    assert all(c is not None for c in caps)
+    # Five rows, 22 px apart; the sixth action starts the second column.
+    assert caps[1].center().y() - caps[0].center().y() == pytest.approx(22.0)
+    assert caps[5].center().y() == pytest.approx(caps[0].center().y())
+    assert caps[5].right() > caps[0].right() + 100
+    assert caps[0].height() == pytest.approx(18.0) and caps[0].width() >= 20.0
+    assert card.zone_rect("key", "w") is None            # no keyboard in List
+
+
+def test_keys_layout_has_the_small_keyboard(qapp):
+    card = KeysetEditor(MODEL, "keys")
+    q, a, z = (card.zone_rect("key", k) for k in "qaz")
+    assert q.width() == pytest.approx(18.0)
+    assert a.left() - q.left() == pytest.approx(9.0)      # row offsets 0 / 9 / 18
+    assert z.left() - q.left() == pytest.approx(18.0)
+    one, equals = card.zone_rect("key", "1"), card.zone_rect("key", "=")
+    inner = card.card_rect().adjusted(14, 0, -14, 0)
+    assert one.left() == pytest.approx(inner.left())
+    assert equals.right() == pytest.approx(inner.right())  # the row fills the card
+    space, bksp = card.zone_rect("key", "space"), card.zone_rect("key", "BackSpace")
+    assert bksp.right() == pytest.approx(inner.right())
+    assert space.width() > 40
+    assert card.sizeHint().height() > KeysetEditor(MODEL, "list").sizeHint().height()
+
+
+def test_keys_layout_shows_bound_keys_and_the_selected_one(qapp):
+    card = KeysetEditor(MODEL, "keys", "flat")
+    image = render(card, "render_editor")
+
+    def at(code):
+        r = card.zone_rect("key", code)
+        return image.pixelColor(int(r.x() + 3), int(r.y() + 3))
+
+    assert close(at("w"), "#4A8FE7")                       # Forward's key, solid
+    tinted = at("s")                                       # bound in this set
+    assert tinted.blue() > tinted.red() + 20 and not close(tinted, "#4A8FE7")
+    assert close(at("q"), "#2e2e2e")                       # unbound
+
+
+def test_card_paint_in_both_looks(qapp):
+    flat = KeysetEditor(MODEL, "list", "flat")
+    image = render(flat, "render_editor")
+    card = flat.card_rect()
+    assert close(image.pixelColor(int(card.x() + 30), int(card.bottom() - 6)), "#161616")
+    assert close(image.pixelColor(int(card.center().x()), int(card.bottom() - 1)), "#4A8FE7")
+    assert image.pixelColor(int(card.x() - 6), int(card.center().y())) == MAGENTA
+    neon = KeysetEditor(MODEL, "list", "neon")
+    image = render(neon, "render_editor")
+    body = image.pixelColor(int(card.x() + 30), int(card.bottom() - 6))
+    assert body.blue() > body.red() and body.blue() < 0x50   # dk(c, 24..11)
+    assert image.pixelColor(int(card.x() - 6), int(card.center().y())) != MAGENTA  # halo
+
+
+def test_conflicting_keycaps_are_red_and_the_note_makes_the_card_taller(qapp):
+    clash = EditorModel(1, TTR_ACTIONS, BINDS[:4] + (("jump", "w"),) + BINDS[5:],
+                        frozenset({"forward", "jump"}), "W is used by Forward and Jump")
+    card = KeysetEditor(clash, "list", "flat")
+    assert card.sizeHint().height() > KeysetEditor(MODEL, "list", "flat").sizeHint().height()
+    image = render(card, "render_editor")
+    cap = card.zone_rect("cap", "jump")
+    assert close(image.pixelColor(int(cap.center().x()), int(cap.y())), "#e05252", 12)
+    fine = card.zone_rect("cap", "left")
+    assert close(image.pixelColor(int(fine.center().x()), int(fine.y())), "#444444", 12)
+
+
+def test_only_the_card_takes_the_pointer(qapp):
+    card = KeysetEditor(MODEL, "list")
+    rects = card.input_rects()
+    assert rects == [card.card_rect().toAlignedRect()]
+    assert not rects[0].contains(QPoint(3, 3))
+
+
+def test_close_and_layout_switch(qapp):
+    card = KeysetEditor(MODEL, "list")
+    closed, kinds = [], []
+    card.close_requested.connect(lambda: closed.append(1))
+    card.layout_changed.connect(kinds.append)
+    QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier,
+                     card.zone_rect("kind", "keys").center().toPoint())
+    assert card.kind() == "keys" and kinds == ["keys"]
+    QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier,
+                     card.zone_rect("close").center().toPoint())
+    assert closed == [1]
+
+
+def test_listening_keycap_and_a_second_click_cancels(qapp):
+    from PySide6.QtWidgets import QWidget
+    card = KeysetEditor(MODEL, "list")
+    card.show()
+    states = []
+    card.capture_changed.connect(states.append)
+    spot = card.zone_rect("cap", "left").center().toPoint()
+    QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier, spot)
+    assert card.listening() == "left" and QWidget.keyboardGrabber() is card
+    QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier,
+                     card.zone_rect("cap", "left").center().toPoint())
+    assert card.listening() == "" and QWidget.keyboardGrabber() is None
+    assert states == [True, False]
+    card.hide()
+    card.deleteLater()
+
+
+def test_a_key_with_no_name_keeps_waiting_and_named_keys_bind(qapp):
+    card = KeysetEditor(MODEL, "list")
+    card.show()
+    bound = []
+    card.bind_requested.connect(lambda a, k: bound.append((a, k)))
+    card.begin_capture("map")
+    QTest.keyClick(card, Qt.Key_unknown)
+    assert card.listening() == "map" and bound == []
+    QTest.keyClick(card, Qt.Key_Space)
+    assert bound == [("map", "space")] and card.listening() == ""
+    card.begin_capture("book")
+    QTest.keyClick(card, Qt.Key_Up)
+    assert bound[-1] == ("book", "Up")
+    card.hide()
+    card.deleteLater()
+
+
+def test_hiding_the_card_mid_capture_releases_the_keyboard(qapp):
+    from PySide6.QtWidgets import QWidget
+    from utils import chord_capture_state
+    card = KeysetEditor(MODEL, "list")
+    card.show()
+    card.begin_capture("jump")
+    assert chord_capture_state.is_active()
+    card.hide()
+    assert QWidget.keyboardGrabber() is None
+    assert not chord_capture_state.is_active()
+    card.deleteLater()

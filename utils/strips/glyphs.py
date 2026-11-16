@@ -169,7 +169,7 @@ def paint_padlock(p: QPainter, rect: QRectF, color, is_open: bool) -> None:
 
 def paint_close(p: QPainter, rect: QRectF, color) -> None:
     _begin(p, rect)
-    p.setPen(_stroke(color, 2.6))
-    p.drawLine(QPointF(6.5, 6.5), QPointF(17.5, 17.5))
-    p.drawLine(QPointF(17.5, 6.5), QPointF(6.5, 17.5))
+    p.setPen(_stroke(color, 3.6))
+    p.drawLine(QPointF(7.0, 7.0), QPointF(17.0, 17.0))
+    p.drawLine(QPointF(17.0, 7.0), QPointF(7.0, 17.0))
     p.restore()

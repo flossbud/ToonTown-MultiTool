@@ -413,8 +413,6 @@ def right_click(controller, wid, kind, number=0):
 def test_keyset_right_click_menu(rig):
     keymaps = Keymaps(ttr=2)
     session, controller, _rects = rig(_session_with_ids(keymaps), keymaps)
-    edits = []
-    controller.keyset_edit_requested.connect(lambda w, n: edits.append((w, n)))
     right_click(controller, "102", L.KEYSET, 2)
     assert controller.popovers.open_tag("102") == "set:2"
     menu = controller.popovers.open_content("102")
@@ -434,9 +432,7 @@ def test_keyset_right_click_menu(rig):
     right_click(controller, "102", L.KEYSET, 1)
     menu = controller.popovers.open_content("102")
     assert [i.disabled for i in menu.items()] == [False, True]
-    menu.chosen.emit("edit")
-    settle()
-    assert edits == [("102", 1)]
+    assert [i.label for i in menu.items()] == ["Edit keyset", "Hide keyset"]
 
 
 def test_one_popover_per_strip_and_strips_are_independent(rig):
@@ -575,6 +571,185 @@ def test_closing_a_window_drops_what_hung_off_its_strip(rig):
     settle()
     assert "101" not in controller.popovers._entries
     assert not controller.popovers.watch.is_watching()
+
+
+# -- keyset editor (on the real KeymapManager) -----------------------------------
+
+@pytest.fixture
+def real_keymaps(tmp_path, monkeypatch):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path / "cfg"))
+    from utils.keymap_manager import KeymapManager
+    km = KeymapManager()
+    for game in ("ttr", "cc"):
+        while len(km.get_set_ids(game)) < 3:
+            km.add_set(game)
+    return km
+
+
+def _real_session(km):
+    return FakeToonSession.demo(
+        window_ids=WIDS, keyset_ids={g: km.get_set_ids(g) for g in ("ttr", "cc")})
+
+
+def open_editor(controller, wid, number):
+    right_click(controller, wid, L.KEYSET, number)
+    controller.popovers.open_content(wid).chosen.emit("edit")
+    settle()
+    return controller.popovers.open_content(wid)
+
+
+def test_edit_keyset_opens_the_card_under_its_button(rig, real_keymaps):
+    from utils.strips.popovers.editor import KeysetEditor
+    session, controller, _rects = rig(_real_session(real_keymaps), real_keymaps)
+    card = open_editor(controller, "101", 2)
+    assert isinstance(card, KeysetEditor)
+    assert controller.popovers.open_tag("101") == "edit:2"
+    assert card.model().number == 2
+    # Rows come from the game's own actions: TTR has Action and no Sprint.
+    actions = [a for a, _label in card.model().actions]
+    assert "action" in actions and "sprint" not in actions
+    assert card.model().key_of("forward") == real_keymaps.get_set("ttr", 1)["forward"]
+    # Dropped under keyset 2's button.
+    anchor = controller.popovers.anchor_rect("101", L.KEYSET, 2)
+    geo = controller.popovers.open_surface("101").geometry()
+    assert geo.top() >= anchor.top() + anchor.height()
+    assert abs(geo.center().x() - anchor.center().x()) <= 1
+
+
+def test_clash_editor_has_sprint(rig, real_keymaps):
+    session, controller, _rects = rig(_real_session(real_keymaps), real_keymaps)
+    card = open_editor(controller, "103", 1)
+    actions = [a for a, _label in card.model().actions]
+    assert "sprint" in actions and "action" not in actions
+
+
+def test_pressing_a_key_rebinds_through_the_keymap_manager(rig, real_keymaps, qapp):
+    from PySide6.QtWidgets import QWidget
+    from utils import chord_capture_state
+    session, controller, _rects = rig(_real_session(real_keymaps), real_keymaps)
+    card = open_editor(controller, "101", 2)
+    QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier,
+                     card.zone_rect("cap", "gags").center().toPoint())
+    assert card.listening() == "gags"
+    assert QWidget.keyboardGrabber() is card
+    assert chord_capture_state.is_active()
+    QTest.keyClick(card, Qt.Key_K)
+    settle()
+    assert real_keymaps.get_set("ttr", 1)["gags"] == "k"
+    assert real_keymaps.get_set("ttr", 0)["gags"] != "k"       # only that set
+    # The keyboard went back the moment the key arrived.
+    assert card.listening() == "" and QWidget.keyboardGrabber() is None
+    assert not chord_capture_state.is_active()
+    # The open card shows the new binding.
+    assert controller.popovers.open_content("101").model().key_of("gags") == "k"
+
+
+def test_escape_cancels_the_capture_and_keeps_the_binding(rig, real_keymaps):
+    from PySide6.QtWidgets import QWidget
+    session, controller, _rects = rig(_real_session(real_keymaps), real_keymaps)
+    before = real_keymaps.get_set("ttr", 1)["gags"]
+    card = open_editor(controller, "101", 2)
+    QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier,
+                     card.zone_rect("cap", "gags").center().toPoint())
+    QTest.keyClick(card, Qt.Key_Escape)
+    settle()
+    assert real_keymaps.get_set("ttr", 1)["gags"] == before
+    assert QWidget.keyboardGrabber() is None
+    assert controller.popovers.open_tag("101") == "edit:2"     # the card stays
+
+
+def test_closing_the_card_mid_capture_gives_the_keyboard_back(rig, real_keymaps):
+    from PySide6.QtWidgets import QWidget
+    from utils import chord_capture_state
+    session, controller, rects = rig(_real_session(real_keymaps), real_keymaps)
+    for how in ("close", "move", "window-gone"):
+        card = open_editor(controller, "102", 1)
+        QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier,
+                         card.zone_rect("cap", "jump").center().toPoint())
+        assert QWidget.keyboardGrabber() is card
+        if how == "close":
+            controller.popovers.close_all()            # a click elsewhere
+        elif how == "move":
+            x, y, w, h = rects["102"]
+            rects["102"] = (x + 40, y, w, h)
+            controller.follower.tracker.sample_now()
+        else:
+            session.remove_toon("102")
+        settle()
+        assert QWidget.keyboardGrabber() is None, how
+        assert not chord_capture_state.is_active(), how
+        if how == "move":
+            controller.follower.tracker.sample_now()
+            settle()
+
+
+def test_escape_belongs_to_the_capture_while_it_runs(rig, real_keymaps):
+    session, controller, _rects = rig(_real_session(real_keymaps), real_keymaps)
+    watch = controller.popovers.watch
+    card = open_editor(controller, "101", 2)
+    assert not watch._paused
+    QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier,
+                     card.zone_rect("cap", "gags").center().toPoint())
+    assert watch._paused
+    QTest.keyClick(card, Qt.Key_Escape)
+    assert not watch._paused
+
+
+def test_keys_layout_binds_by_clicking_and_is_remembered(rig, real_keymaps):
+    settings = Settings()
+    session, controller, _rects = rig(_real_session(real_keymaps), real_keymaps, settings)
+    card = open_editor(controller, "101", 2)
+    assert card.kind() == "list"
+    height = controller.popovers.open_surface("101").height()
+    QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier,
+                     card.zone_rect("kind", "keys").center().toPoint())
+    settle()
+    assert settings.get(settings_keys.KEYSET_EDITOR_LAYOUT) == "keys"
+    assert controller.popovers.open_surface("101").height() > height
+    QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier,
+                     card.zone_rect("chip", "tasks").center().toPoint())
+    QTest.mouseClick(card, Qt.LeftButton, Qt.NoModifier,
+                     card.zone_rect("key", "p").center().toPoint())
+    settle()
+    assert real_keymaps.get_set("ttr", 1)["tasks"] == "p"
+    # The next editor opens in the layout last used.
+    controller.popovers.close_all()
+    assert open_editor(controller, "102", 1).kind() == "keys"
+
+
+def test_conflicts_are_marked_and_explained(rig, real_keymaps):
+    session, controller, _rects = rig(_real_session(real_keymaps), real_keymaps)
+    card = open_editor(controller, "101", 2)
+    assert card.model().conflicts == frozenset() 
+    forward = real_keymaps.get_set("ttr", 1)["forward"]
+    real_keymaps.update_set_key("ttr", 1, "jump", forward)
+    settle()
+    model = controller.popovers.open_content("101").model()
+    assert model.conflicts == frozenset({"forward", "jump"})
+    assert "Forward and Jump" in model.note
+    # A key that means something else in another set is explained, not marked.
+    real_keymaps.update_set_key("ttr", 1, "jump", "space")
+    real_keymaps.update_set_key("ttr", 1, "gags", "x")
+    real_keymaps.update_set_key("ttr", 0, "tasks", "x")
+    settle()
+    model = controller.popovers.open_content("101").model()
+    assert model.conflicts == frozenset()
+    assert model.note == "X is Tasks in keyset 1"
+
+
+def test_hiding_the_edited_set_closes_its_card(rig, real_keymaps):
+    session, controller, _rects = rig(_real_session(real_keymaps), real_keymaps)
+    open_editor(controller, "101", 3)
+    real_keymaps.set_hidden("ttr", real_keymaps.id_at("ttr", 2), True)
+    settle()
+    assert controller.popovers.open_tag("101") == ""
+
+
+def test_edit_is_disabled_without_a_keymap_manager(rig):
+    _session, controller, _rects = rig()
+    right_click(controller, "101", L.KEYSET, 1)
+    items = controller.popovers.open_content("101").items()
+    assert [i.disabled for i in items] == [True, True]
 
 
 def test_home_click_is_reported(rig):

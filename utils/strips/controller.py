@@ -10,12 +10,14 @@ from typing import Callable
 
 from PySide6.QtCore import QObject, Signal
 
-from utils import cartoonival, settings_keys
+from utils import cartoonival, logical_actions, settings_keys
 from utils.strips import layout as L
 from utils.strips import tokens
 from utils.strips.follow import StripFollower
 from utils.strips.model import StripModel
+from utils.strips.popovers import editor as editor_mod
 from utils.strips.popovers.counters import CountersModel
+from utils.strips.popovers.editor import EditorModel, KeysetEditor
 from utils.strips.popovers.manager import IDENTITY, StripPopovers
 from utils.strips.popovers.menu import MenuItem
 
@@ -126,11 +128,61 @@ def build_counters(toon, *, collapsed: bool, today=None) -> CountersModel:
     )
 
 
+def build_editor_model(keymap_manager, game: str, number: int) -> EditorModel | None:
+    """What the editor shows for keyset `number` of `game`: its actions in
+    the game's own order, their keys, and any key shared by two actions."""
+    try:
+        sets = keymap_manager.get_sets(game) or []
+    except Exception:
+        return None
+    index = number - 1
+    if not 0 <= index < len(sets):
+        return None
+    entry = sets[index]
+    actions = logical_actions.actions_for(game)
+    labels = logical_actions.ACTION_LABELS
+    binds = tuple((a, entry.get(a) or "") for a in actions)
+    by_key: dict[str, list[str]] = {}
+    for action, key in binds:
+        if key:
+            by_key.setdefault(key, []).append(action)
+    clashing = [(key, acts) for key, acts in by_key.items() if len(acts) > 1]
+    note = ""
+
+    def short(action):
+        return editor_mod.action_label(action, labels.get(action, action))
+
+    if clashing:
+        key, acts = clashing[0]
+        note = (f"{editor_mod.key_name(key)} is used by "
+                + " and ".join(short(a) for a in acts[:2]))
+    else:
+        # The same key meaning different things in two sets is usually an
+        # accident too; say so, without marking anything red.
+        try:
+            cross = keymap_manager.cross_set_conflicts(game)
+        except Exception:
+            cross = []
+        for set_a, act_a, set_b, act_b, key in cross:
+            if index in (set_a, set_b):
+                other_set, other_act = ((set_b, act_b) if set_a == index
+                                        else (set_a, act_a))
+                note = (f"{editor_mod.key_name(key)} is {short(other_act)} "
+                        f"in keyset {other_set + 1}")
+                break
+    return EditorModel(
+        number=number,
+        actions=tuple((a, short(a)) for a in actions),
+        binds=binds,
+        conflicts=frozenset(a for _key, acts in clashing for a in acts),
+        note=note,
+    )
+
+
 class StripController(QObject):
     # What a strip cannot do alone: the shell connects these.
     appearance_requested = Signal(str, str)     # game, toon name: open the looks editor
     open_window_requested = Signal(str)         # WINDOW_MAIN | _SETTINGS | _LAUNCHER
-    keyset_edit_requested = Signal(str, int)    # window id, keyset number
     home_clicked = Signal(str)
     home_moved = Signal(str)                    # window id now carrying the home block
     _keymaps_changed = Signal()
@@ -159,6 +211,7 @@ class StripController(QObject):
             self._follower, parent=self)
         self._popovers.lock_toggled.connect(self._toggle_lock)
         self._popovers.menu_chosen.connect(self._on_menu)
+        self._keymaps_changed.connect(self._refresh_editors)
         self._wired: set[str] = set()
         self._home_wid: str | None = None
         self._home_open = False
@@ -409,7 +462,7 @@ class StripController(QObject):
         elif tag.startswith("set:"):
             number = int(tag.split(":", 1)[1])
             if key == "edit":
-                self.keyset_edit_requested.emit(wid, number)
+                self.open_editor(wid, number)
             elif key == "hide" and km is not None:
                 set_id = self._keysets.id_for(toon.game, number)
                 if set_id is not None:
@@ -421,3 +474,66 @@ class StripController(QObject):
                 set_id = self._keysets.id_for(toon.game, int(key.split(":", 1)[1]))
                 if set_id is not None:
                     km.set_hidden(toon.game, set_id, False)
+
+    # -- keyset editor ----------------------------------------------------------
+
+    def _editor_kind(self) -> str:
+        raw = None
+        if self._settings is not None:
+            try:
+                raw = self._settings.get(settings_keys.KEYSET_EDITOR_LAYOUT)
+            except Exception:
+                raw = None
+        return settings_keys.normalize_keyset_editor_layout(raw)
+
+    def open_editor(self, wid: str, number: int) -> KeysetEditor | None:
+        """The editor card for keyset `number`, under its button on this strip."""
+        toon = self._session.toon(wid)
+        surface = self._follower.surface(wid)
+        km = self._keymap_manager
+        if toon is None or surface is None or km is None:
+            return None
+        model = build_editor_model(km, toon.game, number)
+        if model is None:
+            return None
+        card = KeysetEditor(model, self._editor_kind(), surface.strip.style_name(),
+                            surface.strip.scale())
+        game = toon.game
+        card.bind_requested.connect(
+            lambda action, key, game=game, number=number:
+            km.update_set_key(game, number - 1, action, key))
+        card.layout_changed.connect(lambda kind, wid=wid: self._editor_kind_changed(wid, kind))
+        card.close_requested.connect(lambda wid=wid: self._popovers.close(wid))
+        # While the card waits for a key, Escape belongs to the capture.
+        card.capture_changed.connect(self._popovers.watch.pause_escape)
+        if self._popovers.open_card(wid, f"edit:{number}", L.KEYSET, number, card) is None:
+            return None
+        return card
+
+    def _editor_kind_changed(self, wid: str, kind: str) -> None:
+        if self._settings is not None:
+            try:
+                self._settings.set(settings_keys.KEYSET_EDITOR_LAYOUT, kind)
+            except Exception:
+                pass
+        self._popovers.refit(wid)
+
+    def _refresh_editors(self) -> None:
+        """A binding changed, or the set was hidden, moved or deleted."""
+        for wid in list(self._follower.surfaces()):
+            tag = self._popovers.open_tag(wid)
+            if not tag.startswith("edit:"):
+                continue
+            card = self._popovers.open_content(wid)
+            toon = self._session.toon(wid)
+            number = int(tag.split(":", 1)[1])
+            model = (build_editor_model(self._keymap_manager, toon.game, number)
+                     if toon is not None else None)
+            visible = toon is not None and number in self._keysets.visible_numbers(toon.game)
+            if model is None or not visible or not isinstance(card, KeysetEditor):
+                self._popovers.close(wid)
+                continue
+            before = card.sizeHint()
+            card.set_model(model)
+            if card.sizeHint() != before:
+                self._popovers.refit(wid)
