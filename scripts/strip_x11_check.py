@@ -36,13 +36,21 @@ class Proc:
 
     def __init__(self, argv, env) -> None:
         self.lines: list[str] = []
-        self.p = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE,
+        self.p = subprocess.Popen(argv, env=env, stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE,
                                   stderr=subprocess.STDOUT, text=True, bufsize=1)
         threading.Thread(target=self._read, daemon=True).start()
 
     def _read(self) -> None:
         for line in self.p.stdout:
             self.lines.append(line.rstrip("\n"))
+
+    def send(self, text: str) -> None:
+        try:
+            self.p.stdin.write(text + "\n")
+            self.p.stdin.flush()
+        except Exception:
+            pass
 
     def find(self, prefix: str, start: int = 0) -> list[str]:
         return [ln for ln in self.lines[start:] if ln.startswith(prefix)]
@@ -435,6 +443,9 @@ def run(args, env, procs) -> int:
     standin.stop()
     gone = wait_for(lambda: not x.viewable(strip) or x.opacity(strip) < 0.01, 4)
     chk.ok("closing the game window hides the strip", bool(gone))
+    demo.stop()
+
+    four_windows(args, env, procs, x, chk, gx, gy)
 
     print()
     if chk.failed:
@@ -443,6 +454,121 @@ def run(args, env, procs) -> int:
         return 1
     print("ALL PASSED")
     return 0
+
+
+def four_windows(args, env, procs, x, chk, gx, gy) -> None:
+    """One strip per toon from the session: four stand-ins, each its own
+    process so one can close on its own."""
+    print("-- four windows, one session --", flush=True)
+    spots = [(gx, gy, 620, 330), (gx + 660, gy, 620, 330),
+             (gx, gy + 380, 620, 330), (gx + 660, gy + 380, 300, 330)]
+    games = []
+    for i, (px, py, pw, ph) in enumerate(spots):
+        proc = Proc([args.python, os.path.join(HERE, "strip_standin.py"),
+                     f"game{i + 1}:{px},{py},{pw},{ph}"], env)
+        procs.append(proc)
+        games.append(proc)
+    ids = []
+    for proc in games:
+        got = wait_for(lambda p=proc: p.find("STANDIN "), 15)
+        if not got:
+            chk.ok("four stand-in windows came up", False)
+            return
+        ids.append(int(got[0].split()[2]))
+    time.sleep(0.5)
+
+    argv = [args.python, os.path.join(HERE, "strip_demo.py"), "--style", args.style]
+    for wid in ids:
+        argv += ["--wid", str(wid)]
+    demo = Proc(argv, env)
+    procs.append(demo)
+    surf = wait_for(lambda: len(demo.find("STRIP surface")) == 4 and demo.find("STRIP surface"), 15)
+    if not surf:
+        chk.ok("four strips were created", False, "\n".join(demo.lines[-10:]))
+        return
+    strips = {int(ln.split()[2]): int(ln.split()[3]) for ln in surf}
+
+    def shown(strip):
+        return x.viewable(strip) and x.opacity(strip) > 0.99
+
+    up = wait_for(lambda: all(shown(s) for s in strips.values()), 8)
+    chk.ok("four strips shown, one per window", bool(up),
+           str({hex(g): (x.viewable(s), round(x.opacity(s), 2)) for g, s in strips.items()}))
+    time.sleep(0.3)
+    for i, wid in enumerate(ids):
+        g, s = x.rect(wid), x.rect(strips[wid])
+        chk.ok(f"toon {i + 1}: strip centred on its own window",
+               abs((g[0] + g[2] / 2.0) - (s[0] + s[2] / 2.0)) <= 1.0
+               and abs((s[1] + MARGIN) - (g[1] + INSET)) <= 1, f"game {g} strip {s}")
+        chk.ok(f"toon {i + 1}: strip tied to its own window",
+               x.prop(strips[wid], "WM_TRANSIENT_FOR") == [wid])
+    order = x.stacking()
+    chk.ok("each strip is directly above its own window",
+           all(order.index(strips[w]) == order.index(w) + 1 for w in ids),
+           str([hex(w) for w in order]))
+
+    def blocks_of(wid, start=0):
+        last = {}
+        for ln in demo.find(f"STRIP block {wid} ", start):
+            parts = ln.split()
+            last[(parts[3], int(parts[4]))] = parts
+        return last
+
+    chk.ok("home block is on toon 1's strip only",
+           demo.find("STRIP home")[-1].endswith(str(ids[0]))
+           and ("home", 0) in blocks_of(ids[0])
+           and not any(("home", 0) in blocks_of(w) for w in ids[1:]))
+    chk.ok("Corporate Clash strip has no Click Sync block",
+           ("click_sync", 0) not in blocks_of(ids[2])
+           and ("click_sync", 0) in blocks_of(ids[1]))
+    chk.ok("the narrow fourth window collapsed its name plate",
+           ("name", 0) not in blocks_of(ids[3]) and ("name", 0) in blocks_of(ids[0]))
+    chk.shot("four-strips")
+
+    # Raising one game window must not lift the other strips.
+    x.activate(ids[1])
+    time.sleep(0.5)
+    order = x.stacking()
+    chk.ok("raising one window carries only its own strip",
+           order.index(strips[ids[1]]) == order.index(ids[1]) + 1
+           and all(order.index(strips[w]) == order.index(w) + 1 for w in ids),
+           str([hex(w) for w in order]))
+
+    # Toon 1's window closes: its strip goes, the home block moves on.
+    width_before = x.rect(strips[ids[1]])[2]
+    mark = len(demo.lines)
+    games[0].stop()
+    moved = wait_for(lambda: demo.find("STRIP home", mark), 6)
+    chk.ok("toon 1 closed: home block moved to the next strip",
+           bool(moved) and moved[-1].endswith(str(ids[1])), str(moved))
+    gone = wait_for(lambda: not x.viewable(strips[ids[0]]), 4)
+    chk.ok("toon 1 closed: its strip is gone", bool(gone))
+    grown = wait_for(lambda: (x.rect(strips[ids[1]]) or (0, 0, 0))[2] == width_before + 37, 4)
+    g, s = x.rect(ids[1]), x.rect(strips[ids[1]])
+    chk.ok("the next strip grew by the home block and stayed centred",
+           bool(grown) and abs((g[0] + g[2] / 2.0) - (s[0] + s[2] / 2.0)) <= 1.0,
+           f"width {s[2]} was {width_before}, game {g} strip {s}")
+    chk.ok("the other strips are still shown",
+           all(shown(strips[w]) for w in ids[1:]))
+    chk.shot("home-moved")
+
+    # App-wide switches reach every strip.
+    mark = len(demo.lines)
+    demo.send("features 0 1")
+    wait_for(lambda: demo.find("STRIP did features", mark), 3)
+    narrower = wait_for(lambda: x.rect(strips[ids[1]])[2] == width_before + 37 - 34, 4)
+    chk.ok("Keep-Alive off app-wide: the block is gone from the strip", bool(narrower),
+           f"width {x.rect(strips[ids[1]])[2]}")
+    demo.send("features 1 1")
+    demo.send("stop")
+    wait_for(lambda: demo.find("STRIP did stop", mark), 3)
+    time.sleep(0.3)
+    chk.ok("strips stay up when the service is stopped",
+           all(shown(strips[w]) for w in ids[1:]))
+    chk.shot("stopped")
+    demo.stop()
+    for proc in games[1:]:
+        proc.stop()
 
 
 def wm_name(x: XSide) -> str:
