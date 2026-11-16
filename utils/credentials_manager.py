@@ -43,6 +43,12 @@ LOGIN_SAVED = "saved"
 LOGIN_FAILED = "failed"
 LOGIN_NONE = "none"
 LOGIN_FAILED_KEY = "login_failed"
+# Present (true) while the account deliberately has no saved password: added
+# without one, or its password cleared ("keep in keyring" off, Forget login,
+# a Corporate Clash account that signs in by token). A read then skips the
+# walk through every other keyring backend, which only exists to recover a
+# password some other backend saved. Removed when a password is saved.
+NO_SAVED_PASSWORD_KEY = "no_saved_password"
 LOGIN_FAILED_REASON_KEY = "login_failed_reason"
 _LOGIN_FAILED_REASON_MAX = 300
 
@@ -943,16 +949,20 @@ class CredentialsManager:
         short_id = account_id[:8]
         ok, value = self._try_keyring_call(keyring.get_password, keyring_service(), account_id, timeout=1.5)
         _dbg(f"[Credentials] _get_password({short_id}): ok={ok} value={'present' if value else 'empty'}")
+        # Known to have no saved password: there is nothing for the backend
+        # walk (up to 5 s) to recover. (A password held for this session only
+        # was already returned by _get_password.)
+        walk = self._probe_complete and not self._known_no_password(account_id)
         if ok:
             if value:
                 return value
-            if self._probe_complete:
+            if walk:
                 recovered = self._recover_password_from_compatible_backends(account_id)
                 _dbg(f"[Credentials] _get_password({short_id}): recovered={'present' if recovered else 'empty'}")
                 if recovered:
                     return recovered
             return ""
-        if self._probe_complete:
+        if walk:
             recovered = self._recover_password_from_compatible_backends(account_id)
             _dbg(f"[Credentials] _get_password({short_id}) fallback-path: recovered={'present' if recovered else 'empty'}")
             if recovered:
@@ -969,6 +979,10 @@ class CredentialsManager:
                 return password
         _dbg(f"[Credentials] _get_password({short_id}): returning empty")
         return ""
+
+    def _known_no_password(self, account_id: str) -> bool:
+        a = self._entry(account_id)
+        return bool(a is not None and a.get(NO_SAVED_PASSWORD_KEY) is True)
 
     # ── A password for this session only ───────────────────────────────────
 
@@ -1258,12 +1272,15 @@ class CredentialsManager:
         if not self._use_keyring:
             _dbg(f"WARNING: account {account_id} added but password held in-memory only (keyring unavailable)")
 
-        self._accounts.append({
+        entry = {
             "id": account_id,
             "label": label,
             "username": username,
             "game": game,
-        })
+        }
+        if not password:
+            entry[NO_SAVED_PASSWORD_KEY] = True
+        self._accounts.append(entry)
         self._save()
         self._emit_change()
         return True
@@ -1308,6 +1325,10 @@ class CredentialsManager:
                 account_id = a.get("id")
                 if account_id:
                     self._set_password(account_id, password)
+                if password:
+                    a.pop(NO_SAVED_PASSWORD_KEY, None)
+                else:
+                    a[NO_SAVED_PASSWORD_KEY] = True
 
             self._save()
 
