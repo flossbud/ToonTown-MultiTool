@@ -829,3 +829,17 @@ def test_theme_reaches_the_sheet_its_body_and_the_browser(roster):
     assert roster.account_sheet.preview._is_dark is False
     roster.apply_theme(True)
     assert roster.account_sheet._is_dark is True
+
+
+
+@pytest.mark.parametrize("grandstand", ["", "0", "1"])
+def test_the_stamp_in_the_launchpad_window(qapp, monkeypatch, capsys, grandstand):
+    """Under TTMT_NEXT_UI=1 the view is the only launcher and TTMT_GRANDSTAND
+    has no say (the window forces it on), so the line must not offer it."""
+    monkeypatch.setenv("TTMT_NEXT_UI", "1")
+    monkeypatch.setenv("TTMT_GRANDSTAND", grandstand)
+    GrandstandView(LaunchParty(None))
+    out = capsys.readouterr().out
+    assert ("[Grandstand] view active — launchpad window (TTMT_NEXT_UI=1), the only "
+            "launcher there (milestone 1)") in out
+    assert "restores the previous launcher" not in out

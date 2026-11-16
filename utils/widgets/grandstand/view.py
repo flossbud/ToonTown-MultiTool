@@ -75,6 +75,9 @@ def _ease_out() -> QEasingCurve:
 
 
 _FLAG = "TTMT_GRANDSTAND"
+# The launchpad window's switch (utils/launchpad_window.NEXT_UI_ENV); read
+# here by name so the view does not import the window.
+_NEXT_UI_FLAG = "TTMT_NEXT_UI"
 
 
 # What a build does when TTMT_GRANDSTAND is not set. The test suite predates
@@ -96,9 +99,15 @@ def grandstand_enabled() -> bool:
 
 def startup_stamp() -> str:
     """The running-code line. It says how the view came to be mounted, so a
-    reader of the log can tell an explicit switch from the shipped default."""
-    how = (f"{_FLAG}=1" if os.environ.get(_FLAG, "").strip() == "1"
-           else f"default, {_FLAG}=0 restores the previous launcher")
+    reader of the log can tell an explicit switch from the shipped default.
+    In the launchpad window (TTMT_NEXT_UI=1) the view is the only launcher
+    and TTMT_GRANDSTAND has no say, so the line says that instead."""
+    if os.environ.get(_NEXT_UI_FLAG, "").strip() == "1":
+        how = f"launchpad window ({_NEXT_UI_FLAG}=1), the only launcher there"
+    elif os.environ.get(_FLAG, "").strip() == "1":
+        how = f"{_FLAG}=1"
+    else:
+        how = f"default, {_FLAG}=0 restores the previous launcher"
     return f"{STAMP_PREFIX} — {how} (milestone {MILESTONE})"
 
 
