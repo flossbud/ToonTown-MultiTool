@@ -103,13 +103,16 @@ class PopoverSurface(QWidget):
     def _after_map(self) -> None:
         if self._attached or self._gone or not self.isVisible():
             return
+        self._attached = self._attach()
+        self._present()
+
+    def _attach(self) -> bool:
         if self._above is not None:
             try:
-                self._strategy.attach(self, self._backend, str(self._above))
+                return bool(self._strategy.attach(self, self._backend, str(self._above)))
             except Exception:
-                pass
-        self._attached = True
-        self._present()
+                return False
+        return True
 
     def hideEvent(self, event) -> None:
         super().hideEvent(event)
@@ -125,11 +128,7 @@ class PopoverSurface(QWidget):
     def _restack(self) -> None:
         if self._gone or not self.isVisible():
             return
-        if self._above is not None:
-            try:
-                self._strategy.attach(self, self._backend, str(self._above))
-            except Exception:
-                pass
+        self._attached = self._attach()
         self._present()
 
     def closeEvent(self, event) -> None:
@@ -205,7 +204,11 @@ class PopoverSurface(QWidget):
     def _present(self) -> None:
         shown = (self._attached and not self._concealed and not self._covered
                  and not self._gone and self.isVisible())
-        self._shown = shown
+        was_shown, self._shown = self._shown, shown
+        if was_shown and not shown:
+            cancel = getattr(self.content, "cancel_capture", None)
+            if callable(cancel):
+                cancel()
         if not self.isVisible():
             return
         try:

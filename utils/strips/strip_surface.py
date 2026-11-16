@@ -114,7 +114,7 @@ class StripSurface(QWidget):
             return
         self._game_wid = wid
         if wid is not None and self._attached:
-            self._strategy.attach(self, self._backend, wid)
+            self._reassert()
 
     def is_presented(self) -> bool:
         """True while the strip is really on show (not concealed, not
@@ -237,11 +237,13 @@ class StripSurface(QWidget):
         and put the presentation back."""
         if not self.isVisible():
             return
+        self._attached = True
         if self._game_wid is not None:
             try:
-                self._strategy.attach(self, self._backend, self._game_wid)
+                self._attached = bool(self._strategy.attach(
+                    self, self._backend, self._game_wid))
             except Exception:
-                pass
+                self._attached = False
         self._present()
 
     def closeEvent(self, event) -> None:
