@@ -3,7 +3,8 @@
     python scripts/strip_standin.py game:100,120,800,600 other:300,200,500,400
 
 Prints `STANDIN <name> <window id>` once each window is up, then
-`STANDIN-CLICK <name> <x> <y>` for every mouse press it receives and
+`STANDIN-CLICK <name> <x> <y>` for every mouse press it receives,
+`STANDIN-KEY <name> <qt key> <text>` for every key press and
 `STANDIN-FOCUS <name> in|out` when it gains or loses focus. Runs until killed.
 """
 from __future__ import annotations
@@ -37,6 +38,9 @@ class StandIn(QWidget):
     def mousePressEvent(self, event) -> None:
         pos = event.position().toPoint()
         say("STANDIN-CLICK", self._name, pos.x(), pos.y())
+
+    def keyPressEvent(self, event) -> None:
+        say("STANDIN-KEY", self._name, event.key(), event.text() or "-")
 
     def focusInEvent(self, event) -> None:
         say("STANDIN-FOCUS", self._name, "in")

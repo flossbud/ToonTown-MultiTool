@@ -13,11 +13,22 @@ Prints the [Strips] stamp, then lines an outside check can read:
   STRIP surface <wid> <strip window id>     STRIP home <wid>
   STRIP place <wid> x y w h                 STRIP hide <wid>
   STRIP block <wid> <kind> <n> x y w h dpr  (strip-window-local, on each place)
-  STRIP click <wid> <kind> <n>              STRIP menu <wid> <kind> <n>
-  STRIP gone <wid>
+  STRIP click <wid> <kind> <n>              STRIP gone <wid>
+  STRIP counters <wid> <window id>|hidden
+  STRIP popover <wid> <tag> <window id>     STRIP popover-closed <wid> <tag>
+  STRIP pill <wid> <index> x y w h dpr <key>  (popover-window-local)
+  STRIP zone <wid> <part> x y w h dpr       (editor parts, popover-window-local)
+  STRIP capture <wid> 0|1                   STRIP bind <wid> <action> <key>
+
+Keysets come from a real KeymapManager on a throwaway config directory
+(--config-dir to keep one), so hiding, showing and adding sets work and
+nothing touches the user's own settings.
 
 Reads commands on stdin: `stop`, `start` (the broadcast service),
-`features <keep_alive 0|1> <click_sync 0|1>`, `style neon|flat`, `quit`.
+`features <keep_alive 0|1> <click_sync 0|1>`, `style neon|flat`,
+`hover <wid> 0|1` (pointer on the name), `menu <wid> <kind> <n>` (a
+right-click on that block), `edit <wid> <n>` (the keyset editor), `close`,
+`quit`.
 """
 from __future__ import annotations
 
@@ -25,16 +36,15 @@ import argparse
 import os
 import signal
 import sys
+import tempfile
 import threading
-from dataclasses import replace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PySide6.QtCore import QObject, QTimer, Signal            # noqa: E402
 from PySide6.QtWidgets import QApplication                    # noqa: E402
 
-from services.toon_session_fake import (DEMO_KEYSET_IDS,      # noqa: E402
-                                        FakeToonSession)
+from services.toon_session_fake import FakeToonSession        # noqa: E402
 from utils.strips.controller import StripController           # noqa: E402
 from utils.strips.follow import _platform_geometry            # noqa: E402
 
@@ -65,8 +75,13 @@ def main() -> int:
     ap.add_argument("--wid", action="append", required=True,
                     help="window id (decimal or 0x hex); repeat for up to four strips")
     ap.add_argument("--style", default="neon", choices=("neon", "flat"))
+    ap.add_argument("--config-dir", default=None)
     args = ap.parse_args()
     wids = [str(int(raw, 0)) for raw in args.wid][:4]
+    # Before anything reads a config file: never the user's real one.
+    os.environ["TTMT_CONFIG_DIR"] = args.config_dir or tempfile.mkdtemp(
+        prefix="ttmt-strip-demo-")
+    from utils.keymap_manager import KeymapManager
 
     app = QApplication(sys.argv[:1])
     app.setQuitOnLastWindowClosed(False)
@@ -77,13 +92,19 @@ def main() -> int:
     pulse.timeout.connect(lambda: None)
     pulse.start(200)
 
-    demo = FakeToonSession.demo().toons()
-    session = FakeToonSession(
-        [replace(demo[i], window_id=wid, slot=i) for i, wid in enumerate(wids)],
-        running=True)
-    controller = StripController(session, style=args.style,
-                                 keyset_ids=DEMO_KEYSET_IDS)
+    keymaps = KeymapManager()
+    for game in ("ttr", "cc"):
+        while len(keymaps.get_set_ids(game)) < 3:
+            keymaps.add_set(game)
+    spare = [f"unused-{i}" for i in range(4 - len(wids))]
+    session = FakeToonSession.demo(
+        window_ids=wids + spare,
+        keyset_ids={g: keymaps.get_set_ids(g) for g in ("ttr", "cc")})
+    for wid in spare:
+        session.remove_toon(wid)
+    controller = StripController(session, keymap_manager=keymaps, style=args.style)
     follower = controller.follower
+    popovers = controller.popovers
 
     def report_blocks(wid: str) -> None:
         """Block rectangles local to the strip window, plus the pixel ratio,
@@ -104,8 +125,40 @@ def main() -> int:
     follower.tracker.place.connect(on_place)
     follower.tracker.hide.connect(lambda wid: say("STRIP hide", wid))
     controller.home_moved.connect(lambda wid: say("STRIP home", wid))
-    controller.context_requested.connect(
-        lambda wid, kind, n: say("STRIP menu", wid, kind, n))
+    controller.appearance_requested.connect(
+        lambda game, name: say("STRIP wants-appearance", game, name))
+    controller.open_window_requested.connect(
+        lambda target: say("STRIP wants-window", target))
+
+    def on_counters(wid: str, shown: bool) -> None:
+        surface = popovers.counters_surface(wid)
+        say("STRIP counters", wid,
+            int(surface.winId()) if shown and surface is not None else "hidden")
+
+    def on_opened(wid: str, tag: str) -> None:
+        surface = popovers.open_surface(wid)
+        if surface is None:
+            return
+        content = surface.content
+        dpr = surface.devicePixelRatioF()
+        for i, item in enumerate(getattr(content, "items", lambda: ())()):
+            r = content.pill_rect(i)
+            say("STRIP pill", wid, i, f"{r.x():.1f}", f"{r.y():.1f}",
+                f"{r.width():.1f}", f"{r.height():.1f}", f"{dpr:g}", item.key)
+        if hasattr(content, "bind_requested"):
+            for zone, _rect in content._zones:
+                r = content.zone_rect(*zone)
+                say("STRIP zone", wid, "/".join(zone), f"{r.x():.1f}", f"{r.y():.1f}",
+                    f"{r.width():.1f}", f"{r.height():.1f}", f"{dpr:g}")
+            content.bind_requested.connect(
+                lambda action, key, wid=wid: say("STRIP bind", wid, action, key))
+            content.capture_changed.connect(
+                lambda on, wid=wid: say("STRIP capture", wid, int(on)))
+        say("STRIP popover", wid, tag, int(surface.winId()))
+
+    popovers.counters_changed.connect(on_counters)
+    popovers.opened.connect(on_opened)
+    popovers.closed.connect(lambda wid, tag: say("STRIP popover-closed", wid, tag))
     controller.start()
     for wid, surface in follower.surfaces().items():
         surface.strip.clicked.connect(
@@ -144,6 +197,14 @@ def main() -> int:
                                  click_sync_available=words[2] == "1")
         elif words[0] == "style" and len(words) == 2:
             controller.set_style(words[1])
+        elif words[0] == "hover" and len(words) == 3:
+            popovers.set_identity_hover(words[1], words[2] == "1")
+        elif words[0] == "menu" and len(words) == 4:
+            controller._on_context(words[1], words[2], int(words[3]))
+        elif words[0] == "edit" and len(words) == 3:
+            controller.open_editor(words[1], int(words[2]))
+        elif words[0] == "close":
+            popovers.close_all()
         elif words[0] == "quit":
             app.quit()
         say("STRIP did", text)

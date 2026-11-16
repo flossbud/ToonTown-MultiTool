@@ -39,5 +39,6 @@ def test_launcher_adjacent_asset_call_sites_delegate(monkeypatch):
     assert lt._asset_path is asset_path
 
     resolved = object()
-    monkeypatch.setattr(settings_tab, "asset_path", lambda name: resolved)
+    import utils.widgets.settings_rows as settings_rows
+    monkeypatch.setattr(settings_rows, "asset_path", lambda name: resolved)
     assert settings_tab.SettingsTab._asset_path(None, "x.png") is resolved

@@ -311,3 +311,59 @@ def test_cap_text():
     assert cap_text("Control_R") == "R Ctrl"
     assert cap_text("") == "–"
     assert cap_text(None) == "–"
+
+
+# ── Detect from game (keyset 1) ─────────────────────────────────────────────
+
+def test_detect_button_only_on_keyset_one(qapp, km):
+    km.add_set("ttr")
+    s = _sheet(km)
+    s.expand_index(0)
+    s.expand_index(1)
+    one, two = s.rows()
+    assert one.detect_btn is not None and one.detect_btn.text() == "Detect from game"
+    assert two.detect_btn is None
+
+
+@pytest.mark.parametrize("locked", [False, True])
+def test_detect_uses_the_page_helper_and_relocks(qapp, km, monkeypatch, locked):
+    calls, lock_checks = [], []
+    sm = object()
+
+    def fake_detect(game, keymap_manager, settings_manager):
+        calls.append((game, keymap_manager, settings_manager))
+        keymap_manager.update_set_key(game, 0, "forward", "i")
+        return 1
+
+    monkeypatch.setattr(ks.detect, "detect_settings_for_game", fake_detect)
+    state = {"locked": locked}
+
+    def lock_rule(game):
+        lock_checks.append(game)
+        return state["locked"]
+
+    s = KeysetsSheet(km, settings_manager=sm, is_dark=True, default_locked=lock_rule)
+    s.expand_index(0)
+    assert s.rows()[0].detect_btn.isEnabled()        # available locked or not
+    state["locked"] = True                           # a settings file appears
+    before = len(lock_checks)
+    s.rows()[0].detect_btn.click()
+    _flush(qapp)
+    assert calls == [("ttr", km, sm)]
+    assert km.get_set("ttr", 0)["forward"] == "i"
+    assert len(lock_checks) > before                 # lock rule re-read
+    row = s.rows()[0]
+    assert row.locked and row.expanded
+    assert row.detect_label.text() == "Updated 1 key from TTR's settings."
+
+
+def test_detect_with_nothing_found_says_so(qapp, km, monkeypatch):
+    monkeypatch.setattr(ks.detect, "detect_settings_for_game", lambda g, k, s: 0)
+    s = _sheet(km, game="cc")
+    s.expand_index(0)
+    s.rows()[0].detect_btn.click()
+    _flush(qapp)
+    assert s.rows()[0].detect_label.text() == "No changes found in CC's settings."
+    s.set_game("ttr")
+    s.expand_index(0)
+    assert not s.rows()[0].detect_label.isVisibleTo(s.rows()[0])

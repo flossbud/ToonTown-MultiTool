@@ -191,7 +191,7 @@ class StripWidget(QWidget):
             elif b.kind == L.SEPARATOR:
                 pt.glow_separator(p, b.rect)
             elif b.kind in (L.KEEP_ALIVE, L.CLICK_SYNC):
-                on = bool(m.keep_alive if b.kind == L.KEEP_ALIVE else m.click_sync)
+                on = bool(m.keep_alive) if b.kind == L.KEEP_ALIVE else m.click_sync_lit
                 pt.glow_tool(p, b.rect, pt.tool_colour(b.kind, on), on, tone)
             elif b.kind == L.KEYSET:
                 pt.glow_tool(p, b.rect, tokens.set_color(b.number),
@@ -238,7 +238,9 @@ class StripWidget(QWidget):
             if b.kind == L.KEEP_ALIVE:
                 pt.tool(p, self._nudged(b), b.kind, bool(m.keep_alive), tone, hover)
             elif b.kind == L.CLICK_SYNC:
-                pt.tool(p, self._nudged(b), b.kind, bool(m.click_sync), tone, hover)
+                pt.tool(p, self._nudged(b), b.kind, m.click_sync_lit, tone, hover)
+                if m.click_sync_failed:
+                    pt.warning_dot(p, self._nudged(b), tone)
             elif b.kind == L.KEYSET:
                 pt.keyset(p, self._nudged(b), b.number, b.number == m.active,
                           tone, hover)
