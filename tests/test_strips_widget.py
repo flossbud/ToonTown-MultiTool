@@ -286,3 +286,29 @@ def test_every_state_paints_in_both_looks(mount):
             image = grab(host)
             enable = strip.block_rect(L.ENABLE)
             assert at(image, strip, enable, 5, 5) != MAGENTA
+
+
+def test_number_block_paints_without_a_strip_widget(qapp):
+    """The window's Keysets sheet reuses the block: a painter, a rect, a
+    number, lit or not, and the look."""
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QImage
+
+    def render(look, lit):
+        image = QImage(60, 60, QImage.Format_ARGB32_Premultiplied)
+        image.fill(MAGENTA)
+        p = QPainter(image)
+        paint.paint_number_block(p, QRectF(16, 16, 28, 28), 2, lit, look)
+        p.end()
+        return image
+
+    lit = render("neon", True)
+    assert close(lit.pixelColor(21, 21), "#E05252")
+    assert lit.pixelColor(30, 13) != MAGENTA                 # halo
+    unlit = render("neon", False)
+    assert unlit.pixelColor(30, 13) == MAGENTA               # no halo
+    assert unlit.pixelColor(21, 21).red() < 0x50
+    flat = render("flat", True)
+    assert close(flat.pixelColor(30, 17), "#ffffff")         # inset ring
+    assert flat.pixelColor(30, 13) == MAGENTA
+    assert close(render("flat", False).pixelColor(21, 21), tokens.dk("#E05252", 46))

@@ -514,3 +514,23 @@ class FlatPainter(StripPainter):
 
 def painter_for(style: StripStyle) -> StripPainter:
     return NeonPainter() if style.is_neon else FlatPainter()
+
+
+def paint_number_block(p: QPainter, rect: QRectF, number: int, lit: bool,
+                       look: str = tokens.NEON, glow: bool = True,
+                       hover: bool = False) -> None:
+    """One numbered keyset block on its own, for anything that shows keysets
+    the way the strip does (no StripWidget needed).
+
+    `rect` is the block (28 px square in Neon, 26 in Flat, in the painter's
+    units). `lit` is the active state. Neon draws a halo around a lit block
+    unless `glow` is False; leave about 12 px free around the block for it.
+    """
+    painter = painter_for(tokens.style_for(look))
+    p.save()
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setRenderHint(QPainter.TextAntialiasing, True)
+    if glow:
+        painter.glow_tool(p, rect, tokens.set_color(number), lit)
+    painter.keyset(p, rect, number, lit, identity, hover)
+    p.restore()

@@ -35,8 +35,7 @@ def strip_scale(environ=os.environ) -> float:
     return 1.0 / active if 0.3 <= active <= 3.0 else 1.0
 
 
-def strip_origin(client: QRect, row: QSize, row_offset: QPoint,
-                 scale: float) -> QPoint:
+def strip_origin(client: QRect, row: QSize, row_offset, scale: float) -> QPoint:
     """Top-left of the surface so the ROW is centred on the client area with
     its top edge ANCHOR_INSET inside it. All Qt logical px."""
     x = client.x() + (client.width() - row.width()) / 2.0 - row_offset.x()
@@ -147,8 +146,10 @@ class StripSurface(QWidget):
         # Client width in strip design px decides the narrow collapse.
         self.strip.set_client_width(client.width() / k)
         size = self.strip.sizeHint()
+        # The offset stays fractional: rounding it first would shift a
+        # scaled strip by a pixel.
         origin = strip_origin(client, self.strip.row_size(),
-                              self.strip.row_offset().toPoint(), k)
+                              self.strip.row_offset(), k)
         self.setGeometry(QRect(origin, size))
 
     # -- mapping and the tie to the game window -----------------------------
@@ -193,10 +194,32 @@ class StripSurface(QWidget):
 
     def hideEvent(self, event) -> None:
         super().hideEvent(event)
-        # A real unmap drops the tie (Qt rewrites the property on the next
+        self._shown = False
+        if event.spontaneous():
+            # Unmapped by the window manager (minimized along with its game
+            # window). Qt did not touch the tie, and no paint is guaranteed
+            # on the way back, so the spontaneous show re-asserts it.
+            return
+        # Our own unmap drops the tie (Qt rewrites the property on the next
         # show): the next map must stage and attach again.
         self._attached = False
-        self._shown = False
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if event.spontaneous() and self._attached:
+            QTimer.singleShot(0, self._reassert)
+
+    def _reassert(self) -> None:
+        """Mapped again by the window manager: restack over the game window
+        and put the presentation back."""
+        if not self.isVisible():
+            return
+        if self._game_wid is not None:
+            try:
+                self._strategy.attach(self, self._backend, self._game_wid)
+            except Exception:
+                pass
+        self._present()
 
     def closeEvent(self, event) -> None:
         # Only the follower destroys a strip; a stray window-manager close

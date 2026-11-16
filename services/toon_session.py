@@ -39,13 +39,17 @@ from services.chat_handling import compute_effective_chat_enabled
 from services.click_sync_wiring import click_sync_supports_game
 from services.keep_alive import (
     KEEP_ALIVE_ACTION_LABELS,
-    KEEP_ALIVE_CONSENT_KEY,
-    KEEP_ALIVE_MASTER_KEY,
     dispatch_keep_alive_cycle,
     keep_alive_delay_seconds,
+    keep_alive_permitted,
+    record_consent_given_before_it_was_recorded,
 )
 from utils import cc_api
-from utils.settings_keys import CLICK_SYNC_ENABLED
+from utils.settings_keys import (
+    CLICK_SYNC_ENABLED,
+    KEEP_ALIVE_CONSENT_ACKNOWLEDGED,
+    KEEP_ALIVE_ENABLED,
+)
 from utils.ttr_api import (
     clear_stale_names,
     get_toon_names_by_slot,
@@ -73,25 +77,6 @@ def _hex_colour(value) -> str | None:
     if len(digits) == 3:
         digits = "".join(c * 2 for c in digits)
     return f"#{digits}"
-
-
-def keyset_id_for_index(index: int) -> str:
-    """Stable id of the keyset at ``index``.
-
-    Until keysets carry their own ``"id"`` the position is the id. Everything
-    that turns a position into an id (or back) goes through this pair, so the
-    switch is one edit.
-    """
-    return str(int(index))
-
-
-def keyset_index_for_id(keyset_id: str, default: int = 0) -> int:
-    """Position of the keyset with ``keyset_id``; ``default`` when unknown."""
-    try:
-        index = int(keyset_id)
-    except (TypeError, ValueError):
-        return default
-    return index if index >= 0 else default
 
 
 def toon_identity(game: str, name: str | None) -> str | None:
@@ -130,63 +115,60 @@ class ToonState:
 
 
 class _Keysets:
-    """The keysets of a game as the session needs them: id, position, hidden.
+    """The keysets of a game as the session needs them, by stable id.
 
-    A set's id is its own ``"id"`` when it has one and its position otherwise
-    (see ``keyset_id_for_index``). Everything is read fresh from
-    ``KeymapManager`` on each call, so an edit is seen at once.
+    Everything is asked of ``KeymapManager`` at call time and nothing is
+    kept: a set's position changes when sets are deleted or moved, its id
+    does not. Without a keymap manager there are no keysets and every toon
+    sits on the empty id at position 0.
     """
 
     def __init__(self, keymap_manager):
         self._keymap_manager = keymap_manager
 
-    def entries(self, game: str) -> list[tuple[str, int, bool, str]]:
-        """``(id, index, hidden, name)`` for every set of ``game``, in order."""
-        if self._keymap_manager is None:
-            return [(keyset_id_for_index(0), 0, False, "Default")]
-        try:
-            sets = self._keymap_manager.get_sets(game) or []
-        except Exception:  # noqa: BLE001
-            sets = []
-        out = []
-        for index, entry in enumerate(sets):
-            raw = entry.get("id")
-            keyset_id = str(raw) if raw else keyset_id_for_index(index)
-            out.append((keyset_id, index, bool(entry.get("hidden", False)),
-                        entry.get("name", f"Set {index + 1}")))
-        return out
-
     def known(self, game: str, keyset_id: str) -> bool:
-        return any(e[0] == keyset_id for e in self.entries(game))
+        manager = self._keymap_manager
+        return manager is not None and manager.index_of(game, keyset_id) >= 0
 
     def usable(self, game: str, keyset_id: str) -> bool:
         """Known and not hidden."""
-        return any(e[0] == keyset_id and not e[2] for e in self.entries(game))
+        manager = self._keymap_manager
+        return (manager is not None
+                and manager.index_of(game, keyset_id) >= 0
+                and not manager.is_hidden(game, keyset_id))
 
     def index(self, game: str, keyset_id: str) -> int:
-        for entry in self.entries(game):
-            if entry[0] == keyset_id:
-                return entry[1]
-        return 0
+        """Position InputService routes by; 0 (the base set) when unknown."""
+        manager = self._keymap_manager
+        if manager is None:
+            return 0
+        return max(0, manager.index_of(game, keyset_id))
 
     def name(self, game: str, keyset_id: str) -> str:
-        for entry in self.entries(game):
-            if entry[0] == keyset_id:
-                return entry[3]
-        return "Default"
+        manager = self._keymap_manager
+        entry = manager.get_set_by_id(game, keyset_id) if manager is not None else None
+        return entry.get("name", "Default") if entry else "Default"
 
     def id_for_name(self, game: str, name: str) -> str | None:
-        for entry in self.entries(game):
-            if entry[3] == name:
-                return entry[0]
+        """Id of the first set called ``name``. Profiles store sets by name,
+        and names are not unique."""
+        manager = self._keymap_manager
+        if manager is None:
+            return None
+        for entry in manager.get_sets(game):
+            if entry.get("name") == name:
+                return entry.get("id")
         return None
 
     def lowest_visible(self, game: str) -> str:
-        entries = self.entries(game)
-        for entry in entries:
-            if not entry[2]:
-                return entry[0]
-        return entries[0][0] if entries else keyset_id_for_index(0)
+        manager = self._keymap_manager
+        if manager is None:
+            return ""
+        keyset_id = manager.lowest_visible_id(game)
+        if keyset_id is None:
+            ids = manager.get_set_ids(game)
+            keyset_id = ids[0] if ids else ""
+        return keyset_id
 
 
 class _Toon:
@@ -289,6 +271,11 @@ class ToonSession(QObject):
             from services.toon_prefs import ToonPrefs
             prefs = ToonPrefs()
         self._prefs = prefs
+
+        # A config from before consent was written down has keep-alive on
+        # with no consent on record; that user accepted the terms then.
+        if record_consent_given_before_it_was_recorded(settings_manager):
+            print("[ToonSession] keep-alive was already on: consent recorded")
 
         self._toons: dict[str, _Toon] = {}
         self._order: list[str] = []
@@ -426,12 +413,7 @@ class ToonSession(QObject):
 
     def keep_alive_available(self) -> bool:
         """App-wide keep-alive flag AND ToS consent."""
-        settings = self._settings
-        return bool(
-            settings
-            and settings.get(KEEP_ALIVE_MASTER_KEY, False)
-            and settings.get(KEEP_ALIVE_CONSENT_KEY, False)
-        )
+        return keep_alive_permitted(self._settings)
 
     def click_sync_available(self) -> bool:
         return bool(
@@ -528,9 +510,11 @@ class ToonSession(QObject):
         """Stop broadcasting ("Stop all toons").
 
         The InputService thread, window detection and toon polling keep
-        running; every toon is reported as not enabled to InputService, the
-        keep-alive loop stops and click sync pauses. Each toon keeps its own
-        flags, so ``start()`` restores exactly what was there.
+        running, so the toons stay listed. Every toon is reported as not
+        enabled to InputService and its key routing is suspended (no grabs:
+        the focused game window gets its keys natively), the keep-alive loop
+        stops and click sync pauses. Each toon keeps its own flags, so
+        ``start()`` restores exactly what was there.
         """
         self._set_running(False)
 
@@ -898,15 +882,28 @@ class ToonSession(QObject):
     def _set_running(self, running: bool) -> None:
         if running == self._running or self._shut_down:
             return
+        if not running:
+            # Before the toons read as not enabled: the router releases the
+            # keys it is holding down for the toons that were.
+            self._apply_routing_suspended(True)
         self._running = running
         self._apply_click_sync_master()
         self._publish()
         if running:
-            self._log("[Service] Multitoon service started.", level="ok")
+            self._apply_routing_suspended(False)
+        if running:
+            self._log("[Service] Broadcast started.", level="ok")
             self._schedule_fetch()
         else:
-            self._log("[Service] Multitoon service stopped.")
+            self._log("[Service] Broadcast stopped: toons keep their own keys.")
         self.running_changed.emit(running)
+
+    def _apply_routing_suspended(self, suspended: bool) -> None:
+        # While stopped the router must not grab keys: it re-delivers a
+        # grabbed key only to an enabled toon, and none is enabled.
+        suspend = getattr(self._input_service, "set_routing_suspended", None)
+        if suspend is not None:
+            suspend(suspended)
 
     def _refresh_is_coalesced(self, now: float) -> bool:
         """True when a refresh asked for at monotonic ``now`` falls inside the
@@ -929,7 +926,7 @@ class ToonSession(QObject):
             return
         if key == CLICK_SYNC_ENABLED:
             self._apply_click_sync_master()
-        if key in (KEEP_ALIVE_MASTER_KEY, KEEP_ALIVE_CONSENT_KEY, CLICK_SYNC_ENABLED):
+        if key in (KEEP_ALIVE_ENABLED, KEEP_ALIVE_CONSENT_ACKNOWLEDGED, CLICK_SYNC_ENABLED):
             keep_alive = self.keep_alive_available()
             click_sync = self.click_sync_available()
             changed = (keep_alive != self._keep_alive_was_available

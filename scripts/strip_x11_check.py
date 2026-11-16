@@ -101,7 +101,8 @@ class XSide:
             c = self.root.translate_coords(w, 0, 0)
             g = w.get_geometry()
             return (c.x, c.y, g.width, g.height)
-        except Exception:
+        except Exception as exc:
+            self.last_error = repr(exc)
             return None
 
     def viewable(self, wid) -> bool:
@@ -196,7 +197,8 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--xvfb", action="store_true",
                     help="start a private Xvfb and openbox and run inside them")
-    ap.add_argument("--display", default=":97", help="display number for --xvfb")
+    ap.add_argument("--display", default=None,
+                    help="display for --xvfb (default: the first free one from :97)")
     ap.add_argument("--python", default=sys.executable)
     ap.add_argument("--style", default="neon")
     ap.add_argument("--shots", default=None)
@@ -213,6 +215,12 @@ def main() -> int:
     servers: list = []
     try:
         if args.xvfb:
+            if not args.display:
+                # Two checks on one display would drive each other's windows.
+                n = 97
+                while os.path.exists(f"/tmp/.X11-unix/X{n}") or os.path.exists(f"/tmp/.X{n}-lock"):
+                    n += 1
+                args.display = f":{n}"
             env["DISPLAY"] = args.display
             env.pop("XAUTHORITY", None)
             env.pop("WAYLAND_DISPLAY", None)
@@ -277,6 +285,10 @@ def run(args, env, procs) -> int:
 
     def placed_ok(label: str) -> None:
         g, s = x.rect(game), x.rect(strip)
+        if g is None or s is None:
+            chk.ok(f"{label}: windows can be measured", False,
+                   f"game {g} strip {s} {getattr(x, 'last_error', '')}")
+            return
         centre_g = g[0] + g[2] / 2.0
         centre_s = s[0] + s[2] / 2.0
         chk.ok(f"{label}: row centred on the client area",
@@ -355,7 +367,7 @@ def run(args, env, procs) -> int:
         chk.ok("a click between blocks falls through to the game window", bool(got))
         chk.ok("and the strip did not take it", not demo.find("STRIP click", mark))
         smark = len(standin.lines)
-        x.click(s[0] + 3, s[1] + 3)                  # halo margin corner
+        x.click(s[0] + 3, s[1] + s[3] - 3)           # halo margin, inside the client
         got = wait_for(lambda: standin.find("STANDIN-CLICK game", smark), 3)
         chk.ok("a click on the strip window's empty margin falls through", bool(got))
         chk.ok("focus never moved to the strip", x.active() == game, hex(x.active()))
