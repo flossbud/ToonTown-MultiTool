@@ -12,8 +12,8 @@ def qapp():
 
 @pytest.fixture
 def tab(qapp):
-    from tabs.debug_tab import DebugTab
-    return DebugTab()
+    from utils.widgets.logs_console.app_log import AppLogConsole
+    return AppLogConsole()
 
 
 def test_disabled_drops_ordinary_lines(tab):
@@ -63,3 +63,10 @@ def test_str_signal_delivers_to_append_log(tab, qapp):
     e.sig.emit("[TTR API] Login OK")
     line = tab.card.model.index(tab.card.model.rowCount() - 1, 0).data(LINE_ROLE)
     assert line.level == "ok" and line.source == "api"
+
+
+def test_debug_tab_is_the_app_log_console():
+    """The old window's DebugTab is the same class the new window logs to."""
+    from tabs.debug_tab import DebugTab
+    from utils.widgets.logs_console.app_log import AppLogConsole
+    assert DebugTab is AppLogConsole

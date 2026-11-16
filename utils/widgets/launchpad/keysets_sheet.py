@@ -42,7 +42,7 @@ from utils.theme_manager import get_theme_colors, is_dark_palette
 from utils.widgets.keysets.game_meta import GAME_META
 from utils.widgets.keysets.movement_key_field import DISPLAY_NAMES, MovementKeyField
 from utils.widgets.keysets.palette import conflict_banner_css, field_value
-from utils.widgets.keysets.split_editor import _CONFLICT_TEXT
+from utils.widgets.keysets.rules import CONFLICT_TEXT as _CONFLICT_TEXT
 from utils.widgets.keysets import detect
 from utils.widgets.launchpad.material import (
     AddRow, GroupCard, IconButton, ROW_MIN_H, ROW_RADIUS, SecondaryButton,
@@ -488,7 +488,7 @@ class KeysetsSheet(QWidget):
         self._game = game if game in GAMES else "ttr"
         self._is_dark = is_dark_palette() if is_dark is None else bool(is_dark)
         if default_locked is None:
-            from utils.widgets.keysets.keysets_page import default_set_locked
+            from utils.widgets.keysets.rules import default_set_locked
             default_locked = lambda g, sm=settings_manager: default_set_locked(g, sm)  # noqa: E731
         self._default_locked = default_locked
         self._expanded: set = set()

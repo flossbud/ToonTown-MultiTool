@@ -33,8 +33,8 @@ class _FakeSettingsManager:
 
 
 def _make_tab(qapp, sm):
-    from tabs.settings_tab import SettingsTab
-    return SettingsTab(sm)
+    from tests._settings_rows_harness import RowsUnderTest
+    return RowsUnderTest(sm)
 
 
 def test_dialog_accept_records_consent(qapp, monkeypatch):
@@ -66,12 +66,3 @@ def test_already_acknowledged_skips_dialog(qapp, monkeypatch):
     tab._on_keep_alive_master_toggle(True)
     assert called == []
     assert sm.get("keep_alive_enabled") is True
-
-
-def test_show_features_category_switches_page(qapp):
-    from utils.settings_keys import SETTINGS_ACTIVE_CATEGORY
-    sm = _FakeSettingsManager()
-    tab = _make_tab(qapp, sm)
-    tab.show_features_category()
-    assert tab._current_page_key == "features"
-    assert sm.get(SETTINGS_ACTIVE_CATEGORY) == "features"

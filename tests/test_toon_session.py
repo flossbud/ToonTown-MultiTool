@@ -835,11 +835,13 @@ def test_the_active_profile_is_saved_when_a_toon_or_keyset_changes(make):
     rig.session.set_enabled("a", False)
     assert profiles.saved == []                     # no profile active yet
     rig.session.load_profile(0)
-    rig.session.set_keep_alive("b", True)           # not a save point, as before
-    assert profiles.saved == []
+    rig.session.set_keep_alive("b", True)           # a save point under a profile
+    assert profiles.saved[-1][3] == [False, True, False, False]
     rig.session.set_enabled("a", False)
+    # Slots 2 and 3 have no toon: the profile keeps what it held for them
+    # (enabled), as the tab did. See tests/test_toon_session_parity.py.
     assert profiles.saved[-1] == (
-        0, [False, True, False, False], ["Default"] * 4,
+        0, [False, True, True, True], ["Default"] * 4,
         [False, True, False, False], [False] * 4)
     rig.session.set_keyset("b", "t1")
     assert profiles.saved[-1][2] == ["Default", "Arrows", "Default", "Default"]

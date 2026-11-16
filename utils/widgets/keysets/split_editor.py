@@ -39,8 +39,7 @@ from .visual_keyboard import VisualKeyboard
 
 _ROW_RADIUS = 13
 
-_CONFLICT_TEXT = ("Some keys are assigned to more than one action - "
-                  "highlighted in red.")
+from .rules import CONFLICT_TEXT as _CONFLICT_TEXT  # moved to rules.py
 _HELPER_TEXT = ("These keys are what is sent to all game windows for input. "
                 "Make sure they match your in-game settings.")
 

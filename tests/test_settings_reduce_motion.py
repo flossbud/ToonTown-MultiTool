@@ -35,8 +35,8 @@ def qapp():
 
 
 def _build_tab(stub):
-    from tabs.settings_tab import SettingsTab
-    return SettingsTab(settings_manager=stub)
+    from tests._settings_rows_harness import RowsUnderTest
+    return RowsUnderTest(settings_manager=stub)
 
 
 def _find_reduce_motion_segment(tab):

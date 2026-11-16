@@ -4,7 +4,8 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from utils.settings_manager import SettingsManager
-from tabs.settings_tab import SettingsTab, Switch
+from tests._settings_rows_harness import RowsUnderTest
+from utils.shared_widgets import Switch
 from utils.widgets.inset_row import InsetRow
 
 
@@ -27,7 +28,7 @@ def test_updates_section_has_toggle_and_check_button(qapp, monkeypatch, tmp_path
     monkeypatch.setattr("utils.build_flavor.config_dir_name", lambda: "ttmt_test")
     sm = SettingsManager()
     sm.set("check_for_updates_at_startup", True)
-    tab = SettingsTab(sm)
+    tab = RowsUnderTest(sm)
     toggle_field = _find_field(tab, "Check for updates on startup")
     assert toggle_field is not None
     assert isinstance(toggle_field.control_widget, Switch)
@@ -44,7 +45,7 @@ def test_updates_toggle_writes_setting(qapp, monkeypatch, tmp_path):
     monkeypatch.setattr("utils.build_flavor.config_dir_name", lambda: "ttmt_test")
     sm = SettingsManager()
     sm.set("check_for_updates_at_startup", False)
-    tab = SettingsTab(sm)
+    tab = RowsUnderTest(sm)
     toggle_field = _find_field(tab, "Check for updates on startup")
     assert toggle_field is not None
     # Switch.setChecked(<different>) emits toggled, which writes the setting.

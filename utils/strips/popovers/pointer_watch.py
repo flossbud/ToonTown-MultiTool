@@ -69,9 +69,13 @@ class _X11Probe:
     def close(self) -> None:
         try:
             self.grab_escape(False)
-            self.d.close()
         except Exception:
             pass
+        finally:
+            try:
+                self.d.close()
+            except Exception:
+                pass
 
 
 class _PollProbe:
@@ -92,7 +96,12 @@ class _PollProbe:
         return bool(QGuiApplication.mouseButtons())
 
     def grab_escape(self, on: bool) -> None:
-        self._escape_was_down = False
+        # Start from the key's state NOW: an Escape already held when a
+        # popover opens is not a press meant for it.
+        try:
+            self._escape_was_down = self._escape_down() if on else False
+        except Exception:
+            self._escape_was_down = False
 
     def _escape_down(self) -> bool:
         if sys.platform == "win32":
@@ -183,6 +192,10 @@ class PointerWatch(QObject):
             down = probe.buttons_down()
             escaped = (not self._paused) and probe.escape_pressed()
         except Exception:
+            # A dead connection cannot dismiss anything. Release it and
+            # close the popovers; their next open creates a fresh probe.
+            self.shutdown()
+            self.escape.emit()
             return
         pressed = down and not self._was_down
         self._was_down = down

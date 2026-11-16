@@ -188,6 +188,11 @@ class KeysetEditor(QWidget):
         if self._listening == action:
             return
         self.cancel_capture()
+        previous = QWidget.keyboardGrabber()
+        if isinstance(previous, KeysetEditor) and previous is not self:
+            # The input-mode flag and platform key session are shared. End
+            # the old capture before the new one replaces either owner.
+            previous.cancel_capture()
         self._listening = action
         # Same order as the hotkey capture: stand the app's own key handling
         # down first, then the key session, then the grab.
