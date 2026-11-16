@@ -168,7 +168,37 @@ class StripPopovers(QObject):
             return False
         if entry.popover is not None and entry.tag == "toon":
             return False        # the toon menu takes their place
-        return model.locked or entry.hover_identity or entry.hover_counters
+        if not (model.locked or entry.hover_identity or entry.hover_counters):
+            return False
+        return not self._popover_covers_counters(wid, entry)
+
+    def _popover_covers_counters(self, wid: str, entry: _Entry) -> bool:
+        """Counters and popovers both hang under the strip. Where an open
+        popover would sit over the counters (the home panel, an editor under
+        the first keyset), the counters step aside until it closes."""
+        if entry.popover is None or entry.counters_model is None:
+            return False
+        anchor = self.anchor_rect(wid, IDENTITY)
+        surface = self._follower.surface(wid)
+        if anchor is None or surface is None:
+            return False
+        view = entry.counters_view
+        if view is None:
+            # Not built yet: measure with a throwaway of the same content.
+            view = CountersView()
+            view.set_scale(surface.strip.scale())
+            view.set_style(surface.strip.style_name())
+            view.set_model(entry.counters_model)
+            view.deleteLater()
+        elif view.model() != entry.counters_model:
+            view.set_model(entry.counters_model)
+        spot = place_popover(anchor, view.sizeHint(), self._screen_rect(anchor), gap=0)
+        pill = view.pill_rect().toAlignedRect().translated(spot.pos)
+        content = entry.popover.content
+        rects = getattr(content, "input_rects", None)
+        rects = rects() if callable(rects) else [content.rect()]
+        origin = entry.popover.pos()
+        return any(r.translated(origin).intersects(pill) for r in rects)
 
     def _update_counters(self, wid: str) -> None:
         entry = self._entries.get(wid)

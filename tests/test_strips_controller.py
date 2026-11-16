@@ -886,6 +886,21 @@ def test_open_full_launcher_and_no_launcher_at_all(home_rig):
     assert windows == ["launcher"]
 
 
+def test_locked_counters_step_aside_for_a_popover_that_would_cover_them(home_rig):
+    """Seen live under KWin: the counters pill drew over the quick menu's
+    first row. Both hang under the strip, so the counters wait."""
+    _session, controller = home_rig(Launcher())
+    pops = controller.popovers
+    assert pops.counters_shown("101")                 # locked in the demo
+    click(controller, "101", L.HOME)
+    assert pops.open_tag("101") == "home" and not pops.counters_shown("101")
+    click(controller, "101", L.HOME)
+    assert pops.counters_shown("101")                 # back when it closes
+    # A menu further along the strip does not touch them.
+    right_click(controller, "101", L.KEYSET, 3)
+    assert pops.open_tag("101") == "set:3" and pops.counters_shown("101")
+
+
 def test_home_panel_goes_with_its_strip(home_rig):
     session, controller = home_rig(Launcher())
     click(controller, "101", L.HOME)
