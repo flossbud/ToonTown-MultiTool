@@ -3,6 +3,13 @@ from __future__ import annotations
 import os
 import sys
 
+# Windows: when this is the copy relaunched as administrator, restore the
+# TTMT_* variables the unelevated copy forwarded (an elevated process starts
+# with a fresh environment). First, because the lines below already read them.
+from utils.win32_elevation import restore_forwarded_env as _restore_forwarded_env
+_restore_forwarded_env()
+del _restore_forwarded_env
+
 # Crash diagnostics: faulthandler dumps a Python traceback for all threads
 # on SIGSEGV/SIGBUS/SIGABRT. Python 3.14 + PySide6 6.10 has a known class
 # of GC-during-paint races where the C stack alone (from coredumpctl) does
@@ -910,13 +917,18 @@ class MultiToonTool(QMainWindow):
         pass
 
     def _maybe_show_admin_notice(self) -> None:
-        """Show the Windows 'run as administrator' banner once (until dismissed)
-        when not running elevated. No-op off Windows / when already dismissed."""
+        """Show the Windows 'run as administrator' banner when not running
+        elevated: always after a declined administrator prompt, otherwise until
+        dismissed. No-op off Windows."""
         import sys
         from utils.win32_integrity import is_running_elevated, should_show_admin_notice
         from utils.settings_keys import WINDOWS_ADMIN_NOTICE_DISMISSED
+        from utils.win32_elevation import startup_prompt_declined
         sm = self.settings_manager
         dismissed = bool(sm.get(WINDOWS_ADMIN_NOTICE_DISMISSED, False)) if sm is not None else False
+        # A launch that just declined the administrator prompt always gets the
+        # warning, even if the banner was dismissed on some earlier launch.
+        dismissed = dismissed and not startup_prompt_declined()
         if should_show_admin_notice(sys.platform == "win32", is_running_elevated(), dismissed):
             self.admin_notice_banner.show()
 
@@ -2341,6 +2353,15 @@ def _show_or_float_at_startup(window, *, settings, env, _show=None) -> None:
 
 
 if __name__ == "__main__":
+    # Windows: ask for administrator access on every launch, before anything
+    # else starts. If it is granted the elevated copy takes over and this
+    # process is done; if it is declined we carry on and show the warning
+    # banner. Helper and one-shot modes never ask.
+    from utils import win32_elevation as _win32_elevation
+    _elevation = _win32_elevation.elevate_at_startup()
+    if _elevation.state == _win32_elevation.RELAUNCHED:
+        sys.exit(0)
+
     # Fit the fixed-size design onto small screens (a 1080p laptop at 150%
     # has only 720 logical pixels of height; the window needs ~860). Qt reads
     # the scale when the QApplication is constructed, so this must run first,
@@ -2394,6 +2415,8 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     release_qt_env()
     print(_ui_scale.stamp())
+    if sys.platform == "win32":
+        print(_elevation.stamp())
     app.setWindowIcon(_resolve_app_icon())
     app.setStyle(NoFocusProxyStyle(app.style()))
     if os.environ.get("TTMT_CLICK_DIAG"):
@@ -2458,6 +2481,8 @@ if __name__ == "__main__":
     apply_theme(app, resolve_theme(settings))
     window = MultiToonTool()
     window.log(_ui_scale.stamp())
+    if sys.platform == "win32":
+        window.log(_elevation.stamp())
     _wire_app_lifecycle(app, window)
     from PySide6.QtCore import QLibraryInfo as _QLI
     # Render cache, part 1: import the legacy flat cache once, BEFORE the

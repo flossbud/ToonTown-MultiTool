@@ -108,3 +108,32 @@ def test_admin_banner_ordered_after_update_banner(qapp, monkeypatch, tmp_path):
         assert ui != -1 and ai != -1 and ai == ui + 1   # admin banner just below update banner
     finally:
         w.close()
+
+
+def _gate_args(qapp, monkeypatch, tmp_path, *, declined):
+    """Build the window with the banner previously dismissed and capture what
+    the show-gate is asked."""
+    import json
+    seen = []
+    (tmp_path / "settings.json").write_text(json.dumps({"windows_admin_notice_dismissed": True}))
+    monkeypatch.setattr("utils.win32_elevation.startup_prompt_declined", lambda: declined)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
+    from utils.install_method import InstallMethod
+    monkeypatch.setattr("utils.install_method.detect", lambda: InstallMethod.SOURCE)
+    monkeypatch.setattr("utils.update_checker.UpdateChecker.check_async",
+                        lambda self, *, manual: True)
+    monkeypatch.setattr("utils.win32_integrity.should_show_admin_notice",
+                        lambda is_win, elevated, dismissed: seen.append(dismissed) or False)
+    from main import MultiToonTool
+    w = MultiToonTool()
+    w.close()
+    return seen
+
+
+def test_declined_prompt_overrides_an_earlier_dismissal(qapp, monkeypatch, tmp_path):
+    assert _gate_args(qapp, monkeypatch, tmp_path, declined=True) == [False]
+
+
+def test_dismissal_still_counts_when_no_prompt_was_declined(qapp, monkeypatch, tmp_path):
+    assert _gate_args(qapp, monkeypatch, tmp_path, declined=False) == [True]

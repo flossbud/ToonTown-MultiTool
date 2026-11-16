@@ -48,6 +48,28 @@ def own_integrity_level():
         return None
 
 
+TOKEN_ELEVATION_TYPE_DEFAULT = 1   # no linked token: standard user, or UAC off
+TOKEN_ELEVATION_TYPE_FULL = 2      # the elevated half of an administrator's token
+TOKEN_ELEVATION_TYPE_LIMITED = 3   # the filtered half: an administrator, not elevated
+
+
+def own_elevation_type():
+    """This process's token elevation type (1, 2 or 3 above), or None off
+    Windows / on failure. LIMITED is the only value that means "this same user
+    can elevate by answering a consent prompt"."""
+    if not _IS_WINDOWS:
+        return None
+    try:
+        import win32api
+        import win32security
+        token = win32security.OpenProcessToken(
+            win32api.GetCurrentProcess(), win32security.TOKEN_QUERY)
+        return int(win32security.GetTokenInformation(
+            token, win32security.TokenElevationType))
+    except Exception:
+        return None
+
+
 def _integrity_rid_from_token(token):
     import win32security
     sid_and_attr = win32security.GetTokenInformation(
