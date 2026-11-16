@@ -66,6 +66,10 @@ class PopoverSurface(QWidget):
                 except Exception:
                     pass
             self.setWindowOpacity(0.0)
+            try:
+                self._backend.apply_input_region(self, QRegion())
+            except Exception:
+                pass
             if self._strategy.shaped():
                 self._apply_shape(False)
             self.show()

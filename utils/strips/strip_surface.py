@@ -185,6 +185,10 @@ class StripSurface(QWidget):
         # is in place, so it can never flash over a window covering the
         # game, and a late first paint never shows as black bands.
         self.setWindowOpacity(0.0)
+        try:
+            self._backend.apply_input_region(self, QRegion())
+        except Exception:
+            pass
         if self._strategy.shaped():
             self._apply_shape(False)      # opacity does nothing here
         self.show()
