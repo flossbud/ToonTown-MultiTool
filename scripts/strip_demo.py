@@ -17,6 +17,8 @@ Prints the [Strips] stamp, then lines an outside check can read:
   STRIP counters <wid> <window id>|hidden
   STRIP popover <wid> <tag> <window id>     STRIP popover-closed <wid> <tag>
   STRIP pill <wid> <index> x y w h dpr <key>  (popover-window-local)
+  STRIP zone <wid> <part> x y w h dpr       (editor parts, popover-window-local)
+  STRIP capture <wid> 0|1                   STRIP bind <wid> <action> <key>
 
 Keysets come from a real KeymapManager on a throwaway config directory
 (--config-dir to keep one), so hiding, showing and adding sets work and
@@ -25,7 +27,8 @@ nothing touches the user's own settings.
 Reads commands on stdin: `stop`, `start` (the broadcast service),
 `features <keep_alive 0|1> <click_sync 0|1>`, `style neon|flat`,
 `hover <wid> 0|1` (pointer on the name), `menu <wid> <kind> <n>` (a
-right-click on that block), `close`, `quit`.
+right-click on that block), `edit <wid> <n>` (the keyset editor), `close`,
+`quit`.
 """
 from __future__ import annotations
 
@@ -142,6 +145,15 @@ def main() -> int:
             r = content.pill_rect(i)
             say("STRIP pill", wid, i, f"{r.x():.1f}", f"{r.y():.1f}",
                 f"{r.width():.1f}", f"{r.height():.1f}", f"{dpr:g}", item.key)
+        if hasattr(content, "bind_requested"):
+            for zone, _rect in content._zones:
+                r = content.zone_rect(*zone)
+                say("STRIP zone", wid, "/".join(zone), f"{r.x():.1f}", f"{r.y():.1f}",
+                    f"{r.width():.1f}", f"{r.height():.1f}", f"{dpr:g}")
+            content.bind_requested.connect(
+                lambda action, key, wid=wid: say("STRIP bind", wid, action, key))
+            content.capture_changed.connect(
+                lambda on, wid=wid: say("STRIP capture", wid, int(on)))
         say("STRIP popover", wid, tag, int(surface.winId()))
 
     popovers.counters_changed.connect(on_counters)
@@ -189,6 +201,8 @@ def main() -> int:
             popovers.set_identity_hover(words[1], words[2] == "1")
         elif words[0] == "menu" and len(words) == 4:
             controller._on_context(words[1], words[2], int(words[3]))
+        elif words[0] == "edit" and len(words) == 3:
+            controller.open_editor(words[1], int(words[2]))
         elif words[0] == "close":
             popovers.close_all()
         elif words[0] == "quit":

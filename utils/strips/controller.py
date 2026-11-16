@@ -201,6 +201,15 @@ class StripController(QObject):
         self._settings = settings_manager
         self._keysets = KeysetView(keymap_manager, keyset_ids)
         self._portrait_fn = portrait_fn
+        self._portraits = None
+        # With the real session there is a looks store: use the render
+        # pipeline the launcher cards use. The fake has none: silhouettes.
+        if portrait_fn is None and getattr(session, "customizations", None) is not None:
+            from utils.strips.portraits import PortraitProvider
+            self._portraits = PortraitProvider(
+                customizations=session.customizations, parent=self)
+            self._portrait_fn = self._portraits.pixmap
+            self._portraits.changed.connect(self._portrait_changed)
         if style is None:
             style = self._style_from_settings()
         self._follower = follower if follower is not None else StripFollower(
@@ -382,6 +391,24 @@ class StripController(QObject):
         toon = self._session.toon(window_id)
         if toon is not None:
             self._session.set_counters_locked(window_id, not toon.counters_locked)
+
+    def customization_changed(self, game: str | None = None,
+                              name: str | None = None) -> None:
+        """The looks editor saved (the shell calls this next to the
+        session's method of the same name): the pose may have changed, so
+        the portrait is looked up again. The accent arrives through the
+        session's toon_changed."""
+        for toon in self._session.toons():
+            if (game is None or toon.game == game) and (name is None or toon.name == name):
+                if self._portraits is not None and toon.name:
+                    self._portraits.forget(toon.game, toon.name)
+                self._refresh_one(toon.window_id)
+
+    def _portrait_changed(self, game: str, name: str) -> None:
+        """A render landed for this toon: repaint its strip."""
+        for toon in self._session.toons():
+            if toon.game == game and toon.name == name:
+                self._refresh_one(toon.window_id)
 
     def _refresh_all(self) -> None:
         for wid in self._follower.surfaces():

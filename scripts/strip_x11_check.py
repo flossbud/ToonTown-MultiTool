@@ -618,6 +618,8 @@ def popover_phase(args, x, chk, demo, standin, game, other, strip, gx, gy) -> No
             chk.ok("clicking a menu item left focus on the game", x.active() == game,
                    hex(x.active()))
 
+    editor_steps(args, x, chk, demo, standin, game, strip, wid, shown, stacked_over_strip)
+
     # Moving the window takes everything with it; locked counters come back.
     menu, mark = open_menu("keyset", 1, "set:1")
     chk.ok("menu open before the move", menu is not None)
@@ -640,6 +642,89 @@ def popover_phase(args, x, chk, demo, standin, game, other, strip, gx, gy) -> No
     chk.shot("popovers-after-move")
     x.move_resize(game, gx, gy)
     time.sleep(0.6)
+
+
+def editor_steps(args, x, chk, demo, standin, game, strip, wid, shown,
+                 stacked_over_strip) -> None:
+    """The keyset editor: the one popover that may hold the keyboard, and
+    only while it waits for a key."""
+    from Xlib import XK
+    mark = len(demo.lines)
+    demo.send(f"edit {wid} 3")
+    got = wait_for(lambda: demo.find(f"STRIP popover {wid} edit:3 ", mark), 4)
+    if not chk.ok("keyset editor opens", bool(got)):
+        return
+    card = int(got[-1].split()[4])
+    chk.ok("editor is shown", bool(wait_for(lambda: shown(card), 4)))
+    stacked_over_strip("editor", card)
+    chk.ok("opening the editor left focus on the game", x.active() == game, hex(x.active()))
+    chk.shot("editor-open")
+    if args.no_pointer:
+        print("SKIP  press-a-key capture and keyboard hand-back (--no-pointer)")
+        demo.send("close")
+        time.sleep(0.3)
+        return
+    zones = {ln.split()[3]: [float(v) for v in ln.split()[4:9]]
+             for ln in demo.find(f"STRIP zone {wid} ", mark)}
+    c = x.rect(card)
+
+    def click_zone(name):
+        zx, zy, zw, zh, dpr = zones[name]
+        x.click(c[0] + (zx + zw / 2) * dpr, c[1] + (zy + zh / 2) * dpr)
+
+    def game_keys(since):
+        return standin.find("STANDIN-KEY game", since)
+
+    def game_gets_a_key(label):
+        since = len(standin.lines)
+        x.key(XK.XK_j)
+        chk.ok(label, bool(wait_for(lambda: game_keys(since), 3)), hex(x.active()))
+
+    # 1. Click a keycap, press a key: bound, and the keyboard goes straight back.
+    mark, smark = len(demo.lines), len(standin.lines)
+    click_zone("cap/gags")
+    chk.ok("clicking a keycap starts the capture",
+           bool(wait_for(lambda: demo.find(f"STRIP capture {wid} 1", mark), 3)))
+    chk.ok("the game window is still the active window during the capture",
+           x.active() == game, hex(x.active()))
+    x.key(XK.XK_k)
+    chk.ok("the pressed key is bound",
+           bool(wait_for(lambda: demo.find(f"STRIP bind {wid} gags k", mark), 3)),
+           str(demo.find("STRIP bind", mark)))
+    chk.ok("the capture ended with the key",
+           bool(wait_for(lambda: demo.find(f"STRIP capture {wid} 0", mark), 3)))
+    time.sleep(0.2)
+    chk.ok("the captured key did not reach the game", not game_keys(smark),
+           str(standin.lines[smark:]))
+    game_gets_a_key("after the capture the keyboard is the game's again")
+
+    # 2. Escape cancels: nothing bound, card still open, keyboard back.
+    mark, smark = len(demo.lines), len(standin.lines)
+    c = x.rect(card)
+    click_zone("cap/tasks")
+    wait_for(lambda: demo.find(f"STRIP capture {wid} 1", mark), 3)
+    x.key(XK.XK_Escape)
+    chk.ok("Escape cancels the capture",
+           bool(wait_for(lambda: demo.find(f"STRIP capture {wid} 0", mark), 3)))
+    time.sleep(0.2)
+    chk.ok("nothing was bound and the card stayed open",
+           not demo.find("STRIP bind", mark) and not demo.find("STRIP popover-closed", mark)
+           and shown(card))
+    chk.ok("that Escape did not reach the game", not game_keys(smark))
+    game_gets_a_key("after a cancelled capture the keyboard is the game's again")
+
+    # 3. Clicking elsewhere mid-capture closes the card and frees the keyboard.
+    mark = len(demo.lines)
+    click_zone("cap/tasks")
+    wait_for(lambda: demo.find(f"STRIP capture {wid} 1", mark), 3)
+    g = x.rect(game)
+    x.click(g[0] + g[2] / 2, g[1] + g[3] - 60)
+    chk.ok("a click elsewhere mid-capture closes the editor",
+           bool(wait_for(lambda: demo.find("STRIP popover-closed", mark), 3)))
+    chk.ok("and ends the capture",
+           bool(wait_for(lambda: demo.find(f"STRIP capture {wid} 0", mark), 3)))
+    game_gets_a_key("after the editor closed mid-capture the keyboard is the game's again")
+    chk.ok("focus never left the game window", x.active() == game, hex(x.active()))
 
 
 def four_windows(args, env, procs, x, chk, gx, gy) -> None:
