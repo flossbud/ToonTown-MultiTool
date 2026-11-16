@@ -510,6 +510,28 @@ class AddRow(QToolButton):
             f" border-color: {alpha(pal['border_light'], 0.45)}; }}")
 
 
+class SecondaryButton(QToolButton):
+    """Small secondary text button: h 26, padding 0 11, radius 999,
+    bg-card fill, border-card outline, 11/600 text-secondary."""
+
+    def __init__(self, text: str, is_dark: bool = True, parent=None):
+        super().__init__(parent)
+        self.setText(text)
+        self.setFixedHeight(26)
+        self.setCursor(Qt.PointingHandCursor)
+        self.apply_theme(is_dark)
+
+    def apply_theme(self, is_dark: bool) -> None:
+        pal = sheet_palette(is_dark)
+        hover_text = "#ffffff" if is_dark else pal["text"]
+        self.setStyleSheet(
+            "QToolButton {"
+            f" background: {pal['bg_card']}; border: 1px solid {pal['border_card']};"
+            f" border-radius: 13px; color: {pal['text_secondary']};"
+            " font-size: 11px; font-weight: 600; padding: 0 11px; }"
+            f"QToolButton:hover {{ color: {hover_text}; border-color: {pal['border_light']}; }}")
+
+
 def with_disabled_state(icon: QIcon, size: int) -> QIcon:
     """The icon plus an explicit Disabled pixmap at 35 % opacity (the
     handoff's disabled icon button), instead of the style's grey-out."""
