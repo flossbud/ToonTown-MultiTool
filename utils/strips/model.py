@@ -16,7 +16,9 @@ class StripModel:
     enabled: bool = True
     running: bool = True                # broadcast service; stopped dims like disabled
     keep_alive: bool | None = True      # None: feature off app-wide, block omitted
-    click_sync: bool | None = True      # None: feature off app-wide, block omitted
+    click_sync: bool | None = True      # None: feature off or unsupported, block omitted
+    click_sync_state: str = ""          # session's off | armed | active | error
+    click_sync_error: str = ""          # why, when the state is "error"
     keysets: tuple[int, ...] = (1, 2, 3)   # visible keyset numbers, ascending
     active: int = 1
     show_add: bool = True               # False at the maximum with none hidden

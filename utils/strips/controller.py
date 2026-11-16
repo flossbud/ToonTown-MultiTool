@@ -69,7 +69,8 @@ class KeysetView:
 def build_model(toon, *, home: bool, running: bool,
                 keep_alive_available: bool, click_sync_available: bool,
                 keysets: KeysetView, portrait=None,
-                home_open: bool = False) -> StripModel:
+                home_open: bool = False, click_sync_state: str = "",
+                click_sync_error: str = "") -> StripModel:
     """What one toon's strip shows. Pure: same inputs, same model."""
     hidden = keysets.hidden_numbers(toon.game)
     return StripModel(
@@ -86,6 +87,8 @@ def build_model(toon, *, home: bool, running: bool,
         click_sync=(bool(toon.click_sync)
                     if click_sync_available and toon.click_sync_supported
                     else None),
+        click_sync_state=click_sync_state,
+        click_sync_error=click_sync_error if click_sync_state == "error" else "",
         keysets=keysets.visible_numbers(toon.game),
         active=keysets.number_for(toon.game, toon.keyset_id),
         show_add=keysets.can_add(toon.game) or bool(hidden),
@@ -130,6 +133,11 @@ class StripController(QObject):
         session.toon_changed.connect(self._refresh_one)
         session.running_changed.connect(lambda _on: self._refresh_all())
         session.features_changed.connect(self._refresh_all)
+        # Membership of the click-sync group, or its error, changed: any
+        # strip's Click Sync block may read differently.
+        changed = getattr(session, "click_sync_state_changed", None)
+        if changed is not None:
+            changed.connect(self._refresh_all)
         # The keymap manager calls back on whatever thread edited it.
         self._keymaps_changed.connect(self._refresh_all)
         if keymap_manager is not None:
@@ -233,8 +241,16 @@ class StripController(QObject):
                 portrait = self._portrait_fn(toon)
             except Exception:
                 portrait = None
+        state, error = "", ""
+        try:
+            state = self._session.click_sync_state(window_id) or ""
+            error = self._session.click_sync_error() or ""
+        except Exception:
+            pass
         return build_model(
             toon,
+            click_sync_state=state,
+            click_sync_error=error,
             home=window_id == self._home_wid,
             running=self._session.is_running(),
             keep_alive_available=self._session.keep_alive_available(),

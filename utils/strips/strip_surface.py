@@ -80,6 +80,9 @@ class StripSurface(QWidget):
     # -- what it shows ------------------------------------------------------
 
     def set_model(self, model: StripModel) -> None:
+        current = self.strip.model()
+        if model == current and model.portrait is current.portrait:
+            return                 # nothing to repaint, resize or re-shape
         self.strip.set_model(model)
         self._fit()
 

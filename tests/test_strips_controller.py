@@ -231,6 +231,25 @@ def test_all_strips_dim_when_the_service_is_stopped(rig):
     assert [model(controller, w).dimmed for w in WIDS] == [False, False, False, True]
 
 
+def test_click_sync_state_reaches_the_strip(rig):
+    session, controller, _rects = rig()
+    strip = controller.follower.surface("101").strip
+    block = strip.strip_layout().find(L.CLICK_SYNC)
+    assert model(controller, "101").click_sync_state == "armed"   # alone in the group
+    assert "second toon" in strip.tooltip_for(block)
+    session.set_click_sync("102", True)
+    settle()
+    assert model(controller, "101").click_sync_state == "active"
+    assert strip.tooltip_for(block) == "Click Sync"
+    session.set_click_sync_error("no pointer access")
+    settle()
+    assert model(controller, "101").click_sync_state == "error"
+    assert strip.tooltip_for(block) == "Click Sync: no pointer access"
+    session.set_click_sync_error(None)
+    settle()
+    assert model(controller, "101").click_sync_error == ""
+
+
 # -- clicks go to the session ---------------------------------------------------
 
 def test_toggles_go_through_the_session(rig):

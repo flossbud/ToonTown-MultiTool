@@ -325,6 +325,10 @@ class StripWidget(QWidget):
         if block.kind == L.KEEP_ALIVE:
             return "Keep-Alive"
         if block.kind == L.CLICK_SYNC:
+            if m.click_sync_state == "error":
+                return f"Click Sync: {m.click_sync_error or 'not working'}"
+            if m.click_sync_state == "armed":
+                return "Click Sync: waiting for a second toon"
             return "Click Sync"
         if block.kind == L.KEYSET:
             return f"Keyset {block.number} · right-click for options"
