@@ -153,6 +153,7 @@ class StripFollower(QObject):
         surface = self._surfaces.get(wid)
         if surface is None:
             surface = StripSurface(self._strategy, self._backend, self.scale())
+            surface.set_size_policy(self._size, self.scale() / settings_keys.float_strip_size_factor(self._size))
             surface.set_style(self._style)
             surface.set_game_window(wid)
             self._surfaces[wid] = surface
@@ -175,7 +176,7 @@ class StripFollower(QObject):
         return self._size
 
     def scale(self) -> float:
-        """The scale every strip is drawn at."""
+        """Configured maximum scale; a narrow strip may step down a preset."""
         factor = settings_keys.float_strip_size_factor(self._size)
         if self._base_scale is None:
             return strip_scale(size=self._size)
@@ -189,7 +190,7 @@ class StripFollower(QObject):
         self._size = size
         scale = self.scale()
         for surface in self._surfaces.values():
-            surface.set_scale(scale)
+            surface.set_size_policy(size, scale / settings_keys.float_strip_size_factor(size))
 
     def own_window_ids(self) -> list[int]:
         ids = [int(s.winId()) for s in self._surfaces.values() if s.isVisible()]

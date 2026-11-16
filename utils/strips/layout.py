@@ -9,6 +9,8 @@ from PySide6.QtCore import QRectF
 
 from utils.strips.model import StripModel
 from utils.strips.tokens import StripStyle, snap, snap_up
+from utils import settings_keys
+from utils.strips.tokens import snapped_style, style_for
 
 HOME = "home"
 PORTRAIT = "portrait"
@@ -30,6 +32,32 @@ ACTIVE_SET_ONLY = 2  # and only the active keyset number plus the +
 
 # A strip must leave this much of the client width free (12 px each side).
 CLIENT_MARGIN = 24.0
+SIZE_HYSTERESIS = 4.0   # logical px of spare client width before stepping up
+
+
+def fitted_size(model: StripModel, look: str, maximum: str, previous: str,
+                client_width: float, base_scale: float, dpr: float) -> str:
+    """Largest allowed preset that fits, with hysteresis when restoring.
+
+    Only the final collapsed row decides a step. Small keeps the existing
+    collapse behaviour even on a client too narrow for that minimum row.
+    """
+    sizes = settings_keys.FLOAT_STRIP_SIZE_VALUES
+    limit = sizes.index(settings_keys.normalize_float_strip_size(maximum))
+    index = min(limit, sizes.index(settings_keys.normalize_float_strip_size(previous)))
+
+    def needed(i):
+        scale = base_scale * settings_keys.float_strip_size_factor(sizes[i])
+        ds = scale * dpr
+        grid = snapped_style(style_for(look), ds)
+        row = layout_strip(model, grid, lambda _text: 0.0, ACTIVE_SET_ONLY, ds)
+        return (row.width + CLIENT_MARGIN) * scale
+
+    while index > 0 and needed(index) > client_width + 1e-6:
+        index -= 1
+    while index < limit and needed(index + 1) + SIZE_HYSTERESIS <= client_width + 1e-6:
+        index += 1
+    return sizes[index]
 
 
 @dataclass(frozen=True)

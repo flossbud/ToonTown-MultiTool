@@ -76,6 +76,7 @@ class StripPopovers(QObject):
         surface.presentation_changed.connect(
             lambda shown, wid=wid: self._on_presentation(wid, shown))
         surface.geometry_applied.connect(lambda wid=wid: self._on_geometry(wid))
+        surface.scale_changing.connect(lambda wid=wid: self.close(wid))
 
     def detach_strip(self, wid: str) -> None:
         entry = self._entries.pop(str(wid), None)
@@ -419,6 +420,9 @@ class StripPopovers(QObject):
         if entry is None:
             return
         if entry.counters_surface is not None:
+            surface = self._follower.surface(wid)
+            if surface is not None:
+                entry.counters_view.set_scale(surface.strip.scale())
             self._place_counters(wid, entry)
         if entry.popover is not None and not self._place_popover(wid, entry):
             self.close(wid)      # its anchor block is gone
