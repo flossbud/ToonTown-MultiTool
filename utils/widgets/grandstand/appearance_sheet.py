@@ -34,7 +34,7 @@ from utils.widgets.grandstand.appearance_controls import (
 from utils.widgets.grandstand.appearance_draft import (
     FILL_GRADIENT, FILL_SOLID, POSE_LABELS, AppearanceDraft,
 )
-from utils.widgets.grandstand.draft import unique_toons
+from utils.widgets.grandstand.draft import slot_toons, unique_toons
 from utils.widgets.grandstand.look_paint import ART_INSET, HEAD_SCALE, HEAD_SHIFT
 from utils.widgets.grandstand.model import (
     CARD_POSE, PORTRAIT_RENDER, PORTRAIT_SPECIES,
@@ -128,6 +128,8 @@ class AppearanceSheet(QWidget):
         self._is_dark = True
         self._draft: Optional[AppearanceDraft] = None
         self._toons: list = []
+        self._all_toons: list = []
+        self._retarget_only = False
         self._primary: Optional[str] = None
         self._open_well: Optional[ColorWell] = None
         self._watching = False
@@ -336,7 +338,9 @@ class AppearanceSheet(QWidget):
         sheet and the browser."""
         self._close_popovers()
         self._draft = draft
-        self._toons = unique_toons(list(toons))
+        self._all_toons = unique_toons(list(toons))
+        self._toons = (slot_toons(self._all_toons, primary_name, draft.toon_name)
+                       if self._retarget_only else list(self._all_toons))
         self._primary = primary_name
         self.pattern_chips.set_choices(
             [(None, PATTERN_NONE)] + draft.pattern_choices())
@@ -350,6 +354,7 @@ class AppearanceSheet(QWidget):
         self._close_popovers()
         self._draft = None
         self._toons = []
+        self._all_toons = []
         self._primary = None
 
     def is_open(self) -> bool:
@@ -691,6 +696,11 @@ class AppearanceSheet(QWidget):
     def set_retarget_only(self, retarget_only: bool) -> None:
         """The toon switcher picks whose look is edited and nothing more
         (the primary toon is set elsewhere)."""
+        self._retarget_only = bool(retarget_only)
+        self._close_popovers()
+        if self._draft is not None:
+            self._toons = (slot_toons(self._all_toons, self._primary, self._draft.toon_name)
+                           if self._retarget_only else list(self._all_toons))
         self.switcher.set_retarget_only(retarget_only)
         self.pill.setToolTip("Edit another toon's look" if retarget_only
                              else "Change which toon this account shows")

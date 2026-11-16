@@ -82,6 +82,25 @@ def unique_toons(records: list) -> list:
     return out
 
 
+TOON_SLOTS = 6
+
+
+def slot_toons(records: list, *keep_names) -> list:
+    """Six recent slots, substituting older kept toons for unkept slots."""
+    shown = list(records[:TOON_SLOTS])
+    place = len(shown) - 1
+    for rec in records[TOON_SLOTS:]:
+        if rec.toon_name not in keep_names:
+            continue
+        while place >= 0 and shown[place].toon_name in keep_names:
+            place -= 1
+        if place < 0:
+            break
+        shown[place] = rec
+        place -= 1
+    return shown
+
+
 def shown_record(records: list, primary_name):
     """The record an account shows on the launcher: its primary while that
     name is still known, else the newest. Mirrors RecentToonsStore.get so the

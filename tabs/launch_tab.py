@@ -1626,7 +1626,7 @@ class LaunchTab(QWidget):
         if self._accounts_router is not None:
             # With an Accounts sheet the switcher only picks whose look is
             # edited; the primary toon is set with the star there.
-            self._open_appearance_sheet(game, account_id, identity_changed=True,
+            self._open_appearance_sheet(game, account_id, identity_changed=False,
                                         toon_name=toon_name)
             return
         self._recent_toons.set_primary(account_id, toon_name)

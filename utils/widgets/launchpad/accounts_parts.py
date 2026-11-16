@@ -11,9 +11,11 @@ Metrics are the design's, in logical px.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+import json
+
+from PySide6.QtCore import QMimeData, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
-    QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen, QPixmap,
+    QColor, QDrag, QFont, QFontMetricsF, QPainter, QPainterPath, QPen, QPixmap,
 )
 from PySide6.QtWidgets import (
     QAbstractButton, QApplication, QFrame, QGridLayout, QHBoxLayout, QLabel,
@@ -43,6 +45,7 @@ BLUE = "#0077ff"
 FORM_BORDER = "#3399ff"
 
 ROW_H = 56
+ACCOUNT_MIME = "application/x-ttmt-account"
 ROW_RADIUS = 8
 ROW_PAD = 12
 ROW_DISC = 40
@@ -389,12 +392,16 @@ class AccountRow(QAbstractButton):
 
     opened = Signal(str)
     fix_requested = Signal(str)
+    reorder_requested = Signal(str, str, bool)   # source id, target id, before
 
     def __init__(self, account, look_entry: dict | None = None, is_dark: bool = True,
                  parent: QWidget | None = None):
         super().__init__(parent)
         self._account = account
         self._dark = bool(is_dark)
+        self._reorder_enabled = False
+        self._drag_origin = None
+        self._drop_before = None
         self.setFixedHeight(ROW_H)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
@@ -417,6 +424,88 @@ class AccountRow(QAbstractButton):
 
     def account(self):
         return self._account
+
+    def set_reorder_enabled(self, enabled: bool) -> None:
+        self._reorder_enabled = bool(enabled)
+        self.setAcceptDrops(self._reorder_enabled)
+        self.setToolTip("Click to open. Drag to reorder accounts." if enabled else "")
+        self.update()
+
+    def _drag_source(self, mime):
+        if not self._reorder_enabled or not mime.hasFormat(ACCOUNT_MIME):
+            return None
+        try:
+            source = json.loads(bytes(mime.data(ACCOUNT_MIME)).decode("utf-8"))
+            if (source["game"] == self._account.game
+                    and isinstance(source["id"], str) and source["id"]
+                    and source["id"] != self._account.id):
+                return source["id"]
+        except (KeyError, TypeError, ValueError, UnicodeError):
+            pass
+        return None
+
+    def mousePressEvent(self, event) -> None:
+        self._drag_origin = (event.position().toPoint()
+                             if self._reorder_enabled and event.button() == Qt.LeftButton else None)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if (self._drag_origin is not None and event.buttons() & Qt.LeftButton
+                and (event.position().toPoint() - self._drag_origin).manhattanLength()
+                >= QApplication.startDragDistance()):
+            self._drag_origin = None
+            self.setDown(False)       # a completed drag must never open the account
+            drag = QDrag(self)
+            mime = QMimeData()
+            mime.setData(ACCOUNT_MIME, json.dumps({
+                "game": self._account.game, "id": self._account.id}).encode("utf-8"))
+            drag.setMimeData(mime)
+            drag.setPixmap(self.grab())
+            drag.setHotSpot(event.position().toPoint())
+            try:
+                drag.exec(Qt.MoveAction)
+            except RuntimeError:
+                pass              # the source row disappeared during the drag
+            finally:
+                try:
+                    drag.deleteLater()
+                except RuntimeError:
+                    pass          # a roster refresh may have destroyed the source
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        self._drag_origin = None
+        super().mouseReleaseEvent(event)
+
+    def dragEnterEvent(self, event) -> None:
+        if self._drag_source(event.mimeData()) is None:
+            event.ignore()
+            return
+        self._drop_before = event.position().y() < self.height() / 2
+        event.setDropAction(Qt.MoveAction)
+        event.accept()
+        self.update()
+
+    def dragMoveEvent(self, event) -> None:
+        self.dragEnterEvent(event)
+
+    def dragLeaveEvent(self, event) -> None:
+        self._drop_before = None
+        self.update()
+        event.accept()
+
+    def dropEvent(self, event) -> None:
+        source_id = self._drag_source(event.mimeData())
+        self._drop_before = None
+        self.update()
+        if source_id is None:
+            event.ignore()
+            return
+        event.setDropAction(Qt.MoveAction)
+        event.accept()
+        self.reorder_requested.emit(source_id, self._account.id,
+                                     event.position().y() < self.height() / 2)
 
     def title_text(self) -> str:
         return self._account.title
@@ -507,6 +596,16 @@ class AccountRow(QAbstractButton):
         sub = QFontMetricsF(sub_font).elidedText(
             self.sub_text(), Qt.ElideRight, max(10.0, avail - (sub_x - left)))
         p.drawText(QRectF(sub_x, 28, avail, 18), Qt.AlignVCenter | Qt.AlignLeft, sub)
+        if self._reorder_enabled:
+            p.setPen(Qt.NoPen)
+            p.setBrush(pal["muted"])
+            for x in (ROW_PAD + ROW_DISC + 3, ROW_PAD + ROW_DISC + 7):
+                for y in (self.height() / 2 - 4, self.height() / 2, self.height() / 2 + 4):
+                    p.drawEllipse(QPointF(x, y), .8, .8)
+        if self._drop_before is not None:
+            y = 2 if self._drop_before else self.height() - 2
+            p.setPen(QPen(QColor(FORM_BORDER), 2))
+            p.drawLine(ROW_PAD, y, self.width() - ROW_PAD, y)
         p.end()
 
 
