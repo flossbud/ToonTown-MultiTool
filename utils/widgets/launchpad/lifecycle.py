@@ -45,7 +45,8 @@ ACCOUNTS = "accounts"
 KEYSETS = "keysets"
 SETTINGS = "settings"
 ACCOUNT = "account"            # with an account id
-TARGETS = (LAUNCHER, ACCOUNTS, KEYSETS, SETTINGS, ACCOUNT)
+CURRENT = "current"            # as it was left: whatever sheet was open stays
+TARGETS = (LAUNCHER, ACCOUNTS, KEYSETS, SETTINGS, ACCOUNT, CURRENT)
 
 VISIBLE = "visible"
 HIDDEN = "hidden"
@@ -126,6 +127,14 @@ class WindowLifecycle:
 
     def setting_changed(self, hide_when_toons_up: bool) -> list[Command]:
         self.hide_when_toons_up = bool(hide_when_toons_up)
+        return []
+
+    def observed(self, window: str) -> list[Command]:
+        """The window's real state, when something other than these commands
+        changed it (the user minimized or restored it). No commands: it only
+        keeps the machine's idea of the window true."""
+        if window in (VISIBLE, HIDDEN, MINIMIZED):
+            self.window = window
         return []
 
     def tray_changed(self, available: bool) -> list[Command]:

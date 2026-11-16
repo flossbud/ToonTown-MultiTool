@@ -42,6 +42,10 @@ from utils.widgets.window_chrome_style import (
     card_qss, header_top_radius_qss, window_edge_colors,
 )
 from utils.window_corner_state import corner_state_signature, should_skip_restyle
+from utils.settings_keys import (
+    HIDE_WINDOW_WHEN_TOONS_UP, HIDE_WINDOW_WHEN_TOONS_UP_DEFAULT, TRAY_ICON,
+)
+from utils.widgets.launchpad import lifecycle
 
 NEXT_UI_ENV = "TTMT_NEXT_UI"
 STAMP = "[NextUI] launchpad window + float strips (TTMT_NEXT_UI=1)"
@@ -114,6 +118,8 @@ class LaunchpadWindow(QMainWindow):
         self._chat_active = False
         self._chrome = None
         self._uipi_dialog = None
+        self._quitting = False
+        self._launch_states: dict[str, str] = {}
 
         self.setWindowTitle(window_title())
         self.setObjectName("MultiToonToolMainWindow")
@@ -244,6 +250,8 @@ class LaunchpadWindow(QMainWindow):
 
         if self.strips is not None:
             self.strips.start()
+
+        self._build_lifecycle_and_tray()
 
         self.log(f"[Debug] {app_name()} launched.")
         self._maybe_show_admin_notice()
@@ -431,23 +439,158 @@ class LaunchpadWindow(QMainWindow):
         self.activateWindow()
 
     def _on_strip_open_window(self, target: str) -> None:
-        self.show_window()
+        """The home block's Settings / Open MultiTool / Open full Launcher."""
         if target == "settings":
-            self.open_sheet(SHEET_SETTINGS)
+            self.request_window(lifecycle.SETTINGS)
         elif target == "launcher":
-            self.open_sheet(None)
+            self.request_window(lifecycle.LAUNCHER)
+        else:                                   # "main": as it was left
+            self.request_window(lifecycle.CURRENT)
 
     def _on_strip_appearance(self, game: str, toon_name: str) -> None:
         """A strip's "Change color": this window, on that toon's look."""
-        self.show_window()
-        self.open_sheet(None)
+        self.request_window(lifecycle.LAUNCHER)
         if not self.launch_tab.open_appearance_for_toon(game, toon_name):
             self.log(f"[NextUI] no saved account has {toon_name}: "
                      "its look opens once it has been seen on an account")
 
     def quit_app(self) -> None:
-        """Quit for good: the same route as closing the window."""
-        self.close()
+        """Quit for good, whatever the lifecycle would do with a close: the
+        home menu's and the tray's Quit. Same shutdown order as closing the
+        window with nothing running (strips first)."""
+        self._quitting = True
+        if not self.close():
+            # A close that did not reach closeEvent (the window was never
+            # shown) still ends the app.
+            self._shutdown_and_quit()
+
+    # ── Lifecycle and tray ─────────────────────────────────────────────────
+
+    def _build_lifecycle_and_tray(self) -> None:
+        """One authority on when this window shows, hides, minimizes or
+        quits (utils/widgets/launchpad/lifecycle.py), and the tray icon that
+        brings it back."""
+        from utils.widgets.launchpad.tray import LaunchpadTray
+        self.tray = LaunchpadTray(self.settings_manager, parent=self)
+        self.tray.launch_accounts_requested.connect(
+            lambda: self.request_window(lifecycle.LAUNCHER))
+        self.tray.settings_requested.connect(
+            lambda: self.request_window(lifecycle.SETTINGS))
+        # Open MultiTool brings the window back as it was left: hiding does
+        # not close a sheet, so whatever was open is still open.
+        self.tray.open_requested.connect(
+            lambda: self.request_window(lifecycle.CURRENT))
+        self.tray.stop_all_requested.connect(self.session.stop)
+        self.tray.start_all_requested.connect(self.session.start)
+        self.tray.quit_requested.connect(self.quit_app)
+        self.session.running_changed.connect(self.tray.set_running)
+        self.tray.set_running(self.session.is_running())
+
+        self.lifecycle = lifecycle.WindowLifecycle(
+            hide_when_toons_up=bool(self.settings_manager.get(
+                HIDE_WINDOW_WHEN_TOONS_UP, HIDE_WINDOW_WHEN_TOONS_UP_DEFAULT)),
+            tray_available=self.tray.reachable())
+        # main.py shows the window right after building it, so the start's
+        # "show on the launcher" is already what happens.
+        self.lifecycle.started(live_windows=len(self.session.toons()))
+        self._launch_states = self._read_launch_states()
+        self._refresh_tray_count()
+        self.launch_tab.launch_states_changed.connect(self._on_launch_states_changed)
+        self.launcher_port.changed.connect(self._refresh_tray_count)
+        self.session.toons_changed.connect(self._on_live_toons_changed)
+
+    def request_window(self, target: str = lifecycle.LAUNCHER,
+                       account_id: str | None = None) -> None:
+        """Show this window on `target` (the launcher, a sheet or an
+        account): the home block's and the tray's way in."""
+        self._run_lifecycle(self.lifecycle.requested(target, account_id))
+
+    def _sync_tray_reachability(self) -> None:
+        """The tray can come and go (setting, a panel restarting): tell the
+        lifecycle before it decides between hiding and minimizing."""
+        self._run_lifecycle(self.lifecycle.tray_changed(self.tray.reachable()),
+                            "no tray to bring it back")
+
+    def _run_lifecycle(self, commands, reason: str = "") -> None:
+        """Carry out the lifecycle's commands. The one place this window is
+        shown, hidden, minimized or quit on the lifecycle's say."""
+        for cmd in commands:
+            if cmd.kind == lifecycle.SHOW:
+                self.show_window()
+                if cmd.target == lifecycle.LAUNCHER:
+                    self.open_sheet(None)
+                elif cmd.target == lifecycle.ACCOUNTS:
+                    self.open_sheet(SHEET_ACCOUNTS)
+                elif cmd.target == lifecycle.KEYSETS:
+                    self.open_sheet(SHEET_KEYSETS)
+                elif cmd.target == lifecycle.SETTINGS:
+                    self.open_sheet(SHEET_SETTINGS)
+                elif cmd.target == lifecycle.ACCOUNT:
+                    self.open_sheet(SHEET_ACCOUNTS)
+                    sheet = self._sheets.get(SHEET_ACCOUNTS)
+                    if sheet is not None and hasattr(sheet, "open_account"):
+                        sheet.open_account(cmd.account_id)
+                if reason:
+                    print(f"[NextUI] window shown: {reason}")
+            elif cmd.kind == lifecycle.HIDE:
+                self.hide()
+                print(f"[NextUI] window hidden: {reason}")
+            elif cmd.kind == lifecycle.MINIMIZE:
+                self.showMinimized()
+                print(f"[NextUI] window minimized (no tray to bring it back): {reason}")
+            elif cmd.kind == lifecycle.QUIT:
+                print(f"[NextUI] quitting: {reason}")
+                self.quit_app()
+
+    def _read_launch_states(self) -> dict[str, str]:
+        """idle | launching | running | failed per account. Accounts waiting
+        in a staggered party launch count as launching."""
+        from utils.launcher_port import STATE_LAUNCHING, STATE_RUNNING, port_state
+        from services.ttr_login_service import LoginState
+        staged = self.launch_tab.staged_launches()
+        out = {}
+        for item in self.launch_tab.launch_overview():
+            aid, raw = item["account_id"], item["state"]
+            state = port_state(raw)
+            if aid in staged or state == STATE_LAUNCHING:
+                out[aid] = "launching"
+            elif state == STATE_RUNNING:
+                out[aid] = "running"
+            elif raw == LoginState.FAILED:
+                out[aid] = "failed"
+            else:
+                out[aid] = "idle"
+        return out
+
+    def _on_launch_states_changed(self) -> None:
+        """Turn the launcher's state changes into pending / landed / failed.
+        A launch that falls back to idle (cancelled) counts as failed: it
+        ended without a game window, so the window stays up."""
+        before, now = self._launch_states, self._read_launch_states()
+        self._launch_states = now
+        self._sync_tray_reachability()
+        commands = []
+        for aid in set(before) | set(now):
+            was, is_ = before.get(aid, "idle"), now.get(aid, "idle")
+            if is_ == "launching" and was != "launching":
+                commands += self.lifecycle.launch_pending(aid)
+            elif was == "launching" and is_ == "running":
+                commands += self.lifecycle.launch_landed(aid)
+            elif was == "launching" and is_ != "launching":
+                commands += self.lifecycle.launch_failed(aid)
+        self._run_lifecycle(commands, "all launches landed")
+        self._refresh_tray_count()
+
+    def _on_live_toons_changed(self) -> None:
+        self._run_lifecycle(self.lifecycle.windows(len(self.session.toons())),
+                            "last game window closed")
+
+    def _refresh_tray_count(self) -> None:
+        from utils.launcher_port import STATE_RUNNING
+        tray = getattr(self, "tray", None)
+        if tray is not None:
+            tray.set_running_count(sum(
+                1 for a in self.launcher_port.accounts() if a.state == STATE_RUNNING))
 
     # ── Settings sheet ─────────────────────────────────────────────────────
 
@@ -626,6 +769,10 @@ class LaunchpadWindow(QMainWindow):
             self.on_theme_changed()
 
     def _on_setting_changed(self, key, value) -> None:
+        if key == HIDE_WINDOW_WHEN_TOONS_UP and getattr(self, "lifecycle", None):
+            self.lifecycle.setting_changed(bool(value))
+        elif key == TRAY_ICON and getattr(self, "lifecycle", None):
+            self._sync_tray_reachability()
         if key == "theme":
             self.on_theme_changed()
         elif key == "show_debug_tab":
@@ -741,6 +888,8 @@ class LaunchpadWindow(QMainWindow):
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange:
+            self._observe_window()
         if event.type() != QEvent.WindowStateChange or self._chrome is None:
             return
         flush_timer = getattr(self, "_perf_state_flush", None)
@@ -758,6 +907,27 @@ class LaunchpadWindow(QMainWindow):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._update_window_mask()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._observe_window()
+
+    def hideEvent(self, event) -> None:
+        super().hideEvent(event)
+        self._observe_window()
+
+    def _observe_window(self) -> None:
+        """The user minimized or restored the window (or the lifecycle did):
+        keep the lifecycle's idea of it true."""
+        lc = getattr(self, "lifecycle", None)
+        if lc is None:
+            return
+        if self.isMinimized():
+            lc.observed(lifecycle.MINIMIZED)
+        elif self.isVisible():
+            lc.observed(lifecycle.VISIBLE)
+        else:
+            lc.observed(lifecycle.HIDDEN)
 
     def _capture_multitool_window_id(self) -> None:
         # xdotool is X11-only; the gate is the Qt platform, not the session
@@ -919,6 +1089,7 @@ class LaunchpadWindow(QMainWindow):
         # partway through.
         for label, attribute, method in (
             ("strips", "strips", "shutdown"),
+            ("tray", "tray", "shutdown"),
             ("hotkeys", "hotkeys", "stop"),
             ("launch_tab", "launch_tab", "shutdown"),
             ("session", "session", "shutdown"),
@@ -942,6 +1113,19 @@ class LaunchpadWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         print(f"[closeEvent] entered pid={os.getpid()}")
+        lc = getattr(self, "lifecycle", None)
+        if not self._quitting and lc is not None and not self._shutdown_complete:
+            self._sync_tray_reachability()
+            commands = lc.close_requested()
+            if not any(c.kind == lifecycle.QUIT for c in commands):
+                # Game windows (or launches) are still up: the window steps
+                # aside, the app keeps running behind the strips and tray.
+                event.ignore()
+                self._run_lifecycle(commands, "closed while toons are up")
+                print(f"[closeEvent] kept running pid={os.getpid()}")
+                return
+            self._quitting = True
+            print("[NextUI] quitting: closed with no game windows and nothing launching")
         self.shutdown()
         super().closeEvent(event)
         if event.isAccepted():

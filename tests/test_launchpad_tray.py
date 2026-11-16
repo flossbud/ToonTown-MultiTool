@@ -183,3 +183,12 @@ def test_real_tray_icon_constructs_offscreen(qapp):
     assert t.tray.contextMenu() is t.menu
     if not QSystemTrayIcon.isSystemTrayAvailable():
         assert not t.tray.isVisible()
+
+
+def test_shutdown_removes_the_icon_for_good(qapp):
+    t, sm = _tray()
+    assert t.is_shown()
+    t.shutdown()
+    assert not t.is_shown() and t.tray.menu is None
+    sm.set(sk.TRAY_ICON, True)                     # a late setting change
+    assert not t.is_shown()
