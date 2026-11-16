@@ -249,8 +249,8 @@ def test_general_page_theme_control_is_segmented_pill(app, settings_manager):
     """The Appearance (theme) control on the General page is a v2 SegmentedPill
     (System/Light/Dark), not a dropdown."""
     from utils.widgets.pill_controls import SegmentedPill
-    from tabs.settings_tab import SettingsTab
-    tab = SettingsTab(settings_manager)
+    from tests._settings_rows_harness import RowsUnderTest
+    tab = RowsUnderTest(settings_manager)
     seg = tab._theme_segment
     tab.deleteLater()
     assert isinstance(seg, SegmentedPill), (
@@ -262,8 +262,8 @@ def test_all_settings_combos_are_settings_combobox(app, settings_manager):
     """All 4 known Settings dropdowns must be SettingsComboBox instances."""
     from PySide6.QtWidgets import QComboBox
     from utils.shared_widgets import SettingsComboBox
-    from tabs.settings_tab import SettingsTab
-    tab = SettingsTab(settings_manager)
+    from tests._settings_rows_harness import RowsUnderTest
+    tab = RowsUnderTest(settings_manager)
     combos = tab.findChildren(QComboBox)
     # Filter to direct settings combos (delegate may install a QComboBox-like
     # internal somewhere, but the visible ones we set_control() into rows
@@ -335,9 +335,9 @@ def test_reduce_motion_segment_uses_short_option_text(app, settings_manager):
     """The Reduce motion SegmentedPill's first option reads "System" (the
     fuller explanation lives in the row's helper text below the control,
     not a truncated dropdown item)."""
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
 
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     seg = tab._rm_segment
     assert seg is not None, "could not find Reduce motion segment"
 
@@ -351,8 +351,8 @@ def test_reduce_motion_segment_uses_short_option_text(app, settings_manager):
 
 def test_chat_handling_tiles_exist_with_expected_values(app, settings_manager):
     from utils.widgets.option_tiles import OptionTileGrid
-    from tabs.settings_tab import SettingsTab
-    tab = SettingsTab(settings_manager)
+    from tests._settings_rows_harness import RowsUnderTest
+    tab = RowsUnderTest(settings_manager)
     try:
         tiles = tab._chat_handling_tiles
         assert isinstance(tiles, OptionTileGrid)
@@ -365,9 +365,9 @@ def test_chat_handling_tiles_exist_with_expected_values(app, settings_manager):
 
 
 def test_chat_handling_tiles_normalizes_legacy_advanced(app, settings_manager):
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     settings_manager.set("chat_handling_mode", "advanced")
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     try:
         assert tab._chat_handling_tiles.value() == "per_toon"
     finally:
@@ -378,9 +378,9 @@ def test_chat_handling_tiles_resets_legacy_simple_to_default(app, settings_manag
     """A persisted legacy 'simple' (the old implicit default) selects
     Focused Toon Only: only a choice made in the new control counts as an
     explicit mode selection."""
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     settings_manager.set("chat_handling_mode", "simple")
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     try:
         assert tab._chat_handling_tiles.value() == "focused_only"
     finally:
@@ -388,8 +388,8 @@ def test_chat_handling_tiles_resets_legacy_simple_to_default(app, settings_manag
 
 
 def test_chat_handling_tiles_default_focused_only(app, settings_manager):
-    from tabs.settings_tab import SettingsTab
-    tab = SettingsTab(settings_manager)
+    from tests._settings_rows_harness import RowsUnderTest
+    tab = RowsUnderTest(settings_manager)
     try:
         assert tab._chat_handling_tiles.value() == "focused_only"
     finally:
@@ -400,12 +400,12 @@ def test_chat_handling_build_never_writes_setting(app, settings_manager):
     """Hardened no-write regression: spy on settings_manager.set so even a
     write-and-restore during construction is caught (a final-value
     comparison alone would miss it)."""
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     settings_manager.set("chat_handling_mode", "advanced")
     calls = []
     orig_set = settings_manager.set
     settings_manager.set = lambda k, v: (calls.append((k, v)), orig_set(k, v))[1]
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     try:
         chat_writes = [kv for kv in calls if kv[0] == "chat_handling_mode"]
         assert chat_writes == [], f"construction wrote: {chat_writes}"
@@ -420,8 +420,8 @@ def test_chat_handling_tiles_change_persists_and_emits(app, settings_manager):
     carrying that value (matches the old dropdown test's coverage)."""
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
-    from tabs.settings_tab import SettingsTab
-    tab = SettingsTab(settings_manager)
+    from tests._settings_rows_harness import RowsUnderTest
+    tab = RowsUnderTest(settings_manager)
     received = []
     tab.chat_handling_mode_changed.connect(received.append)
     try:
@@ -441,8 +441,8 @@ def test_chat_handling_tiles_fit_compact_width(app, settings_manager):
     usable panel width (~349px), so the card cannot overflow at compact
     window sizes. Promotes the smoke probe's tab-level assertion into the
     committed suite."""
-    from tabs.settings_tab import SettingsTab
-    tab = SettingsTab(settings_manager)
+    from tests._settings_rows_harness import RowsUnderTest
+    tab = RowsUnderTest(settings_manager)
     try:
         tab.resize(420, 700)
         app.processEvents()
@@ -456,7 +456,7 @@ def test_chat_handling_theme_pass_reaches_tiles(app, settings_manager, monkeypat
     the method catches a missing findChildren loop, which direct
     apply_theme calls in widget tests would not)."""
     from utils.widgets.option_tiles import OptionTileGrid
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     calls = []
     orig = OptionTileGrid.apply_theme
     monkeypatch.setattr(
@@ -464,7 +464,7 @@ def test_chat_handling_theme_pass_reaches_tiles(app, settings_manager, monkeypat
         lambda self, is_dark, accent_key="blue": (
             calls.append(self), orig(self, is_dark, accent_key))[-1],
     )
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     try:
         calls.clear()  # ignore constructor-time default application
         tab.refresh_theme()

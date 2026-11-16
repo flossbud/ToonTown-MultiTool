@@ -44,16 +44,17 @@ def _field(tab, label):
 
 
 def test_advanced_has_logging_input_backend_clear_credentials(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     from utils.widgets.inset_row import InsetRow
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     labels = {f.label_widget.text() for f in tab.pages["advanced"].findChildren(InsetRow)}
     assert {"Enable Logging", "Input Backend", "Clear Stored Credentials"} <= labels
 
 
 def test_advanced_logging_toggle_persists_and_emits(qapp, settings_manager):
-    from tabs.settings_tab import SettingsTab, Switch
-    tab = SettingsTab(settings_manager)
+    from tests._settings_rows_harness import RowsUnderTest
+    from utils.shared_widgets import Switch
+    tab = RowsUnderTest(settings_manager)
     received = []
     tab.debug_visibility_changed.connect(received.append)
     field = _field(tab, "Enable Logging")
@@ -64,9 +65,9 @@ def test_advanced_logging_toggle_persists_and_emits(qapp, settings_manager):
 
 
 def test_advanced_clear_credentials_emits_signal(qapp, settings_manager, monkeypatch):
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     from PySide6.QtWidgets import QMessageBox
-    tab = SettingsTab(settings_manager)
+    tab = RowsUnderTest(settings_manager)
     # Bypass the modal — answer "Yes".
     monkeypatch.setattr(QMessageBox, "exec", lambda self: QMessageBox.Yes)
     received = []

@@ -34,29 +34,32 @@ def _find_field(tab, label_text):
 
 def test_hide_cc_console_field_exists_and_defaults_on(qapp):
     """Defaults to ON when the key is missing from settings."""
-    from tabs import settings_tab
+    from utils.widgets import settings_rows
+    from tests._settings_rows_harness import RowsUnderTest
     settings = _SettingsStub({})
-    tab = settings_tab.SettingsTab(settings_manager=settings)
+    tab = RowsUnderTest(settings_manager=settings)
     field = _find_field(tab, "Hide CC launch console")
     assert field is not None
     assert field.control_widget.isChecked() is True
 
 
 def test_hide_cc_console_field_reflects_stored_off(qapp):
-    from tabs import settings_tab
+    from utils.widgets import settings_rows
+    from tests._settings_rows_harness import RowsUnderTest
     from utils.settings_keys import CC_HIDE_LAUNCH_CONSOLE
     settings = _SettingsStub({CC_HIDE_LAUNCH_CONSOLE: False})
-    tab = settings_tab.SettingsTab(settings_manager=settings)
+    tab = RowsUnderTest(settings_manager=settings)
     field = _find_field(tab, "Hide CC launch console")
     assert field is not None
     assert field.control_widget.isChecked() is False
 
 
 def test_hide_cc_console_field_toggling_writes_setting(qapp):
-    from tabs import settings_tab
+    from utils.widgets import settings_rows
+    from tests._settings_rows_harness import RowsUnderTest
     from utils.settings_keys import CC_HIDE_LAUNCH_CONSOLE
     settings = _SettingsStub({})
-    tab = settings_tab.SettingsTab(settings_manager=settings)
+    tab = RowsUnderTest(settings_manager=settings)
     field = _find_field(tab, "Hide CC launch console")
     assert field is not None
     # Switch.setChecked(<different>) emits toggled, which writes the setting.

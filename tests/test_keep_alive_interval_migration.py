@@ -2,7 +2,7 @@
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from tabs.settings_tab import SettingsTab
+from tests._settings_rows_harness import RowsUnderTest
 
 
 class FakeSettings:
@@ -22,20 +22,20 @@ def app():
 
 
 def test_ten_min_option_gone(app):
-    tab = SettingsTab(FakeSettings())
+    tab = RowsUnderTest(FakeSettings())
     assert "10 min" not in tab._ka_delay_options
     assert tab._ka_delay_options[-1] == "5 min"
 
 
 def test_persisted_ten_min_migrates(app):
     fake = FakeSettings({"keep_alive_delay": "10 min"})
-    tab = SettingsTab(fake)
+    tab = RowsUnderTest(fake)
     assert fake.get("keep_alive_delay") == "5 min"
     assert tab.get_keep_alive_delay_seconds() == 300
 
 
 def test_gating_disables_rows(app):
-    tab = SettingsTab(FakeSettings())
+    tab = RowsUnderTest(FakeSettings())
     tab._refresh_keep_alive_enabled_state(False)
     assert not tab._ka_action_row.isEnabled()
     assert not tab._ka_delay_row.isEnabled()

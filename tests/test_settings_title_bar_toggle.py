@@ -25,15 +25,15 @@ def qapp():
 
 
 def test_title_bar_switch_present_and_wired(qapp, monkeypatch):
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     from utils.shared_widgets import Switch
     # Suppress the keep-alive warning dialog so setChecked(True) on the
     # keep-alive master switch doesn't block with a modal QMessageBox.exec().
     monkeypatch.setattr(
-        SettingsTab, "_show_keep_alive_warning_dialog", lambda self: True
+        RowsUnderTest, "_show_keep_alive_warning_dialog", lambda self: True
     )
     sm = _StubSettings(theme="dark", use_system_title_bar=False)
-    tab = SettingsTab(sm)
+    tab = RowsUnderTest(sm)
     switches = tab.findChildren(Switch)
     assert switches, "no Switch widgets found in settings"
     matches = []

@@ -14,9 +14,9 @@ def _settings_tab(monkeypatch, tmp_path):
     monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path))
     monkeypatch.setenv("TTMT_NO_VENV_REEXEC", "1")
     monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
-    from tabs.settings_tab import SettingsTab
+    from tests._settings_rows_harness import RowsUnderTest
     from utils.settings_manager import SettingsManager
-    return SettingsTab(settings_manager=SettingsManager())
+    return RowsUnderTest(settings_manager=SettingsManager())
 
 
 def test_control_switch_defaults_checked(qt_app, monkeypatch, tmp_path):
