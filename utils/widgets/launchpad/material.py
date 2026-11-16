@@ -138,12 +138,14 @@ def _style_label(lbl: QLabel, size_px: float, weight: int, color: str) -> None:
 # ── Group card ──────────────────────────────────────────────────────────────
 
 class _HeadDisc(QWidget):
-    """30 px disc filled with the card colour, carrying a 15 px white glyph."""
+    """30 px disc filled with the card colour, carrying a 15 px white glyph;
+    or, given a logo, the 30 px logo on no disc (the handoff's .gico.logo)."""
 
-    def __init__(self, color: str, glyph: QIcon | None, parent=None):
+    def __init__(self, color: str, glyph: QIcon | None, parent=None, logo=None):
         super().__init__(parent)
         self._color = color
         self._glyph = glyph
+        self._logo = logo
         self.setFixedSize(HEAD_DISC, HEAD_DISC)
 
     def set_color(self, color: str) -> None:
@@ -153,6 +155,14 @@ class _HeadDisc(QWidget):
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        if self._logo is not None and not self._logo.isNull():
+            scaled = self._logo.scaled(HEAD_DISC, HEAD_DISC, Qt.KeepAspectRatio,
+                                       Qt.SmoothTransformation)
+            p.drawPixmap((HEAD_DISC - scaled.width()) // 2,
+                         (HEAD_DISC - scaled.height()) // 2, scaled)
+            p.end()
+            return
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(self._color))
         p.drawEllipse(QRectF(0, 0, HEAD_DISC, HEAD_DISC))
@@ -168,7 +178,8 @@ class GroupCard(QFrame):
     header of disc + title + optional right-aligned meta (text or widget)."""
 
     def __init__(self, color: str, title: str, glyph: QIcon | None = None,
-                 meta: str | None = None, is_dark: bool = True, parent=None):
+                 meta: str | None = None, is_dark: bool = True, parent=None,
+                 logo=None):
         super().__init__(parent)
         self._color = color
         self._is_dark = is_dark
@@ -188,7 +199,7 @@ class GroupCard(QFrame):
         hl = QHBoxLayout(head)
         hl.setContentsMargins(2, 0, 2, 2)
         hl.setSpacing(10)
-        self.disc = _HeadDisc(color, glyph, head)
+        self.disc = _HeadDisc(color, glyph, head, logo=logo)
         hl.addWidget(self.disc)
         self.title_label = _label(15, 700, self._pal["text"], head)
         self.title_label.setText(title)
@@ -403,8 +414,8 @@ class SheetSegmented(SegmentedPill):
     FONT_PX = 11
 
     def __init__(self, options: list[str], accent: str = "#0077ff",
-                 is_dark: bool = True, parent=None):
-        super().__init__(options, parent=parent)
+                 is_dark: bool = True, parent=None, stretch: bool = False):
+        super().__init__(options, stretch=stretch, parent=parent)
         self.set_fill(accent)
         self.apply_sheet_theme(is_dark)
 
