@@ -27,6 +27,16 @@ class StripModel:
     home_open: bool = False
 
     @property
+    def click_sync_lit(self) -> bool:
+        """Lit while on and working. On but in error is drawn unlit with a
+        warning dot."""
+        return bool(self.click_sync) and self.click_sync_state != "error"
+
+    @property
+    def click_sync_failed(self) -> bool:
+        return bool(self.click_sync) and self.click_sync_state == "error"
+
+    @property
     def dimmed(self) -> bool:
         """Identity, tools and keysets dim; Enable never does."""
         return not (self.enabled and self.running)

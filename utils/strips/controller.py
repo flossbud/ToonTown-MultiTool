@@ -10,11 +10,19 @@ from typing import Callable
 
 from PySide6.QtCore import QObject, Signal
 
-from utils import settings_keys
+from utils import cartoonival, settings_keys
 from utils.strips import layout as L
 from utils.strips import tokens
 from utils.strips.follow import StripFollower
 from utils.strips.model import StripModel
+from utils.strips.popovers.counters import CountersModel
+from utils.strips.popovers.manager import IDENTITY, StripPopovers
+from utils.strips.popovers.menu import MenuItem
+
+# Where the shell should take the user when a strip asks for the window.
+WINDOW_MAIN = "main"
+WINDOW_SETTINGS = "settings"
+WINDOW_LAUNCHER = "launcher"
 
 class KeysetView:
     """The keysets of a game as a strip needs them: every set has an id, a
@@ -60,6 +68,12 @@ class KeysetView:
                 return set_id
         return None
 
+    def entry_for_number(self, game: str, number: int):
+        for entry in self.entries(game):
+            if entry[1] == number:
+                return entry
+        return None
+
     def can_add(self, game: str) -> bool:
         """True while the game has room for another set (and there is a
         keymap manager to add it to)."""
@@ -98,12 +112,26 @@ def build_model(toon, *, home: bool, running: bool,
     )
 
 
+def build_counters(toon, *, collapsed: bool, today=None) -> CountersModel:
+    """The counters under one toon's name. The token cell exists only for a
+    TTR toon during Cartoonival when the game reported a value."""
+    show = cartoonival.show_tokens(toon.game, today, toon.tokens)
+    return CountersModel(
+        beans=toon.beans, bank=toon.bank,
+        tokens=toon.tokens if show else None,
+        locked=bool(toon.counters_locked),
+        accent=toon.accent,
+        # With the name plate collapsed, the name leads the counters.
+        name=(toon.name or f"Toon {toon.slot + 1}") if collapsed else "",
+    )
+
+
 class StripController(QObject):
-    # For the popovers and the home block (later milestones); window id first.
-    context_requested = Signal(str, str, int)   # window id, block kind, number
-    add_menu_requested = Signal(str)            # + pressed while sets are hidden
+    # What a strip cannot do alone: the shell connects these.
+    appearance_requested = Signal(str, str)     # game, toon name: open the looks editor
+    open_window_requested = Signal(str)         # WINDOW_MAIN | _SETTINGS | _LAUNCHER
+    keyset_edit_requested = Signal(str, int)    # window id, keyset number
     home_clicked = Signal(str)
-    identity_hovered = Signal(str, bool)
     home_moved = Signal(str)                    # window id now carrying the home block
     _keymaps_changed = Signal()
     _style_changed = Signal(str)
@@ -112,6 +140,8 @@ class StripController(QObject):
                  keymap_manager=None, settings_manager=None,
                  style: str | None = None, keyset_ids: dict | None = None,
                  portrait_fn: Callable | None = None,
+                 popovers: StripPopovers | None = None,
+                 today_fn: Callable | None = None,
                  parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._session = session
@@ -124,6 +154,11 @@ class StripController(QObject):
         self._follower = follower if follower is not None else StripFollower(
             style=style, parent=self)
         self._follower.set_style(style)
+        self._today_fn = today_fn
+        self._popovers = popovers if popovers is not None else StripPopovers(
+            self._follower, parent=self)
+        self._popovers.lock_toggled.connect(self._toggle_lock)
+        self._popovers.menu_chosen.connect(self._on_menu)
         self._wired: set[str] = set()
         self._home_wid: str | None = None
         self._home_open = False
@@ -163,8 +198,13 @@ class StripController(QObject):
         self._sync()
         self._follower.start()
 
+    @property
+    def popovers(self) -> StripPopovers:
+        return self._popovers
+
     def shutdown(self) -> None:
         self._started = False
+        self._popovers.shutdown()
         self._follower.shutdown()
         self._wired.clear()
         self._home_wid = None
@@ -185,6 +225,7 @@ class StripController(QObject):
 
     def set_style(self, name: str) -> None:
         self._follower.set_style(name)
+        self._popovers.set_style(tokens.style_for(name).name)
 
     def set_home_open(self, is_open: bool) -> None:
         """The quick menu opened or closed: the home block shows its ring."""
@@ -206,6 +247,7 @@ class StripController(QObject):
         wanted = {t.window_id for t in toons}
         for wid in list(self._follower.surfaces()):
             if wid not in wanted:
+                self._popovers.detach_strip(wid)
                 self._follower.remove(wid)
                 self._wired.discard(wid)
         for toon in toons:
@@ -224,12 +266,16 @@ class StripController(QObject):
 
     def _wire(self, wid: str, surface) -> None:
         strip = surface.strip
+        self._popovers.attach_strip(wid)
         strip.clicked.connect(lambda kind, n, wid=wid: self._on_click(wid, kind, n))
         strip.context_requested.connect(
-            lambda kind, n, wid=wid: self.context_requested.emit(wid, kind, n))
+            lambda kind, n, wid=wid: self._on_context(wid, kind, n))
         strip.hover_changed.connect(
-            lambda kind, _n, wid=wid: self.identity_hovered.emit(
+            lambda kind, _n, wid=wid: self._popovers.set_identity_hover(
                 wid, kind in (L.PORTRAIT, L.NAME)))
+        # The narrow collapse is decided when the strip is placed, and the
+        # counters carry the name once the plate is gone.
+        surface.geometry_applied.connect(lambda wid=wid: self._refresh_counters(wid))
 
     def model_for(self, window_id: str) -> StripModel | None:
         toon = self._session.toon(window_id)
@@ -265,6 +311,24 @@ class StripController(QObject):
         model = self.model_for(window_id)
         if surface is not None and model is not None:
             surface.set_model(model)
+            self._refresh_counters(window_id)
+
+    def counters_for(self, window_id: str) -> CountersModel | None:
+        toon = self._session.toon(window_id)
+        surface = self._follower.surface(window_id)
+        if toon is None or surface is None:
+            return None
+        collapsed = surface.strip.strip_layout().collapse >= L.NO_NAME
+        today = self._today_fn() if self._today_fn is not None else None
+        return build_counters(toon, collapsed=collapsed, today=today)
+
+    def _refresh_counters(self, window_id: str) -> None:
+        self._popovers.set_counters(window_id, self.counters_for(window_id))
+
+    def _toggle_lock(self, window_id: str) -> None:
+        toon = self._session.toon(window_id)
+        if toon is not None:
+            self._session.set_counters_locked(window_id, not toon.counters_locked)
 
     def _refresh_all(self) -> None:
         for wid in self._follower.surfaces():
@@ -287,9 +351,73 @@ class StripController(QObject):
         elif kind == L.CLICK_SYNC:
             self._session.set_click_sync(wid, not toon.click_sync)
         elif kind == L.ADD:
-            if self._keysets.hidden_numbers(toon.game):
-                self.add_menu_requested.emit(wid)
+            hidden = self._keysets.hidden_numbers(toon.game)
+            if hidden:
+                items = [MenuItem(f"show:{n}", f"Show keyset {n}") for n in hidden]
+                items.append(MenuItem("new", "New keyset",
+                                      disabled=not self._keysets.can_add(toon.game)))
+                self._popovers.toggle_menu(wid, "add", L.ADD, 0, tokens.ADD_MENU, items)
             elif self._keymap_manager is not None:
                 self._keymap_manager.add_set(toon.game)
         elif kind == L.HOME:
             self.home_clicked.emit(wid)
+
+    # -- menus ----------------------------------------------------------------
+
+    def _on_context(self, wid: str, kind: str, number: int) -> None:
+        toon = self._session.toon(wid)
+        if toon is None:
+            return
+        if kind == L.KEYSET:
+            last_visible = len(self._keysets.visible_numbers(toon.game)) < 2
+            items = [
+                MenuItem("edit", "Edit keyset",
+                         disabled=self._keymap_manager is None),
+                MenuItem("hide", "Hide keyset",
+                         disabled=last_visible or self._keymap_manager is None),
+            ]
+            self._popovers.toggle_menu(wid, f"set:{number}", L.KEYSET, number,
+                                       tokens.set_color(number), items)
+        elif kind in (L.PORTRAIT, L.NAME):
+            running = self._session.is_running()
+            items = [
+                MenuItem("lock", "Lock counters", checked=bool(toon.counters_locked)),
+                MenuItem("color", "Change color\u2026", disabled=not toon.name),
+                MenuItem("stop", "Stop all toons" if running else "Start all toons"),
+                MenuItem("open", "Open MultiTool"),
+            ]
+            self._popovers.toggle_menu(wid, "toon", IDENTITY, 0, toon.accent, items)
+
+    def _on_menu(self, wid: str, tag: str, key: str) -> None:
+        toon = self._session.toon(wid)
+        if toon is None:
+            return
+        km = self._keymap_manager
+        if tag == "toon":
+            if key == "lock":
+                self._toggle_lock(wid)
+            elif key == "color":
+                if toon.name:
+                    self.appearance_requested.emit(toon.game, toon.name)
+            elif key == "stop":
+                if self._session.is_running():
+                    self._session.stop()
+                else:
+                    self._session.start()
+            elif key == "open":
+                self.open_window_requested.emit(WINDOW_MAIN)
+        elif tag.startswith("set:"):
+            number = int(tag.split(":", 1)[1])
+            if key == "edit":
+                self.keyset_edit_requested.emit(wid, number)
+            elif key == "hide" and km is not None:
+                set_id = self._keysets.id_for(toon.game, number)
+                if set_id is not None:
+                    km.set_hidden(toon.game, set_id, True)
+        elif tag == "add" and km is not None:
+            if key == "new":
+                km.add_set(toon.game)
+            elif key.startswith("show:"):
+                set_id = self._keysets.id_for(toon.game, int(key.split(":", 1)[1]))
+                if set_id is not None:
+                    km.set_hidden(toon.game, set_id, False)

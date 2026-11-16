@@ -312,3 +312,18 @@ def test_number_block_paints_without_a_strip_widget(qapp):
     assert close(flat.pixelColor(30, 17), "#ffffff")         # inset ring
     assert flat.pixelColor(30, 13) == MAGENTA
     assert close(render("flat", False).pixelColor(21, 21), tokens.dk("#E05252", 46))
+
+
+def test_click_sync_error_is_unlit_with_an_amber_dot(mount):
+    model = FLOSSBUD.with_(click_sync=True, click_sync_state="error")
+    host, strip = mount(model, "flat")
+    image = grab(host)
+    block = strip.block_rect(L.CLICK_SYNC)
+    assert close(at(image, strip, block, 4, 20), tokens.dk("#d4548a", 30))   # unlit
+    assert close(at(image, strip, block, block.width() - 5, 5), "#ffb020")   # dot
+    # Armed is still lit and carries no dot.
+    host, strip = mount(FLOSSBUD.with_(click_sync_state="armed"), "flat")
+    image = grab(host)
+    block = strip.block_rect(L.CLICK_SYNC)
+    assert close(at(image, strip, block, 4, 20), "#d4548a")
+    assert close(at(image, strip, block, block.width() - 5, 5), "#d4548a")

@@ -52,10 +52,11 @@ class AttachStrategy:
         return True
 
     def visible_region(self, strip_rect: QRect, game_wid: str,
-                       own_window_ids) -> QRegion | None:
+                       own_window_ids, clip: bool = True) -> QRegion | None:
         """Gated strategies: the part of `strip_rect` (logical, global) that
         may show, in strip-local coordinates. None means "no information,
-        show everything"; an empty region means fully covered."""
+        show everything"; an empty region means fully covered. `clip` False
+        is for popovers, which may hang past the game window's edge."""
         return None
 
     def to_logical(self, x: float, y: float) -> tuple[int, int]:
@@ -108,7 +109,7 @@ def _own_ids(own_window_ids) -> set[int]:
 
 
 def _gate_region(strip_rect: QRect, game_wid: str, snapshot, own_window_ids,
-                 to_logical) -> QRegion | None:
+                 to_logical, clip: bool = True) -> QRegion | None:
     """Shared occlusion maths: the strip, clipped to its game window and
     carved by every foreign window above the game. The strips' own surfaces
     never count as occluders; every other window does, this app's main
@@ -123,6 +124,9 @@ def _gate_region(strip_rect: QRect, game_wid: str, snapshot, own_window_ids,
     own = _own_ids(own_window_ids)
     foreign = [entry for entry in snapshot if entry[0] not in own]
     inputs = _scan_region_inputs(target, foreign, (), to_logical)
+    if inputs is not None and not clip:
+        # Carved by what covers the game, but not cut at the game's edge.
+        inputs = (QRect(strip_rect), inputs[1])
     return _region_from_inputs(strip_rect, inputs)
 
 
@@ -142,10 +146,10 @@ class Win32TopmostAttach(AttachStrategy):
         backend.set_non_activating(surface)
         return True
 
-    def visible_region(self, strip_rect, game_wid, own_window_ids):
+    def visible_region(self, strip_rect, game_wid, own_window_ids, clip=True):
         from utils.ghost_cursors import _win32_zorder_snapshot
         return _gate_region(strip_rect, game_wid, _win32_zorder_snapshot(),
-                            own_window_ids, self.to_logical)
+                            own_window_ids, self.to_logical, clip)
 
 
 # NSWindowCollectionBehaviorFullScreenAuxiliary: lets the panel share a
@@ -186,11 +190,11 @@ class CocoaPanelAttach(AttachStrategy):
         self._fullscreen_auxiliary(surface, backend)
         return True
 
-    def visible_region(self, strip_rect, game_wid, own_window_ids):
+    def visible_region(self, strip_rect, game_wid, own_window_ids, clip=True):
         from utils.ghost_cursors import _darwin_zorder_snapshot
         # Strips are not layer-0 windows, so they are never in the snapshot.
         return _gate_region(strip_rect, game_wid, _darwin_zorder_snapshot(),
-                            (), self.to_logical)
+                            (), self.to_logical, clip)
 
 
 def pick_attach_strategy(platform_name: str | None = None) -> AttachStrategy:
