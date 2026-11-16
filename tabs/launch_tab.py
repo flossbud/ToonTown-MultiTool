@@ -385,6 +385,10 @@ class MacOSVaultLockedBanner(QFrame):
             )
 
 
+# Left, top, right, bottom around the Grandstand view inside the tab's scroll
+# area. Sides only: see _build_grandstand.
+GRANDSTAND_TAB_MARGINS = (16, 0, 16, 0)
+
 class LaunchTab(QWidget):
     # Cross-thread bridge for credential-manager debug messages. Emitted
     # from the keyring probe worker thread; auto-connected to the main-
@@ -1177,6 +1181,12 @@ class LaunchTab(QWidget):
             self._party.prune(game, valid_ids[game])
 
         self.grandstand = GrandstandView(self._party, log=self.log, parent=self)
+        # The view brings its own top and bottom margins. Stacked on the
+        # tab's 16px they made the roster need 678px, more than the content
+        # band has once a banner is showing (measured live on Windows: the
+        # tab's scroll bar appeared for a few pixels of travel and took an
+        # 18px gutter out of the right side only).
+        self._layout.setContentsMargins(*GRANDSTAND_TAB_MARGINS)
         self._push_credential_state()
         # star_changed needs no handler here: LaunchParty persists the star
         # and the view restyles its own surfaces; a rerender would only

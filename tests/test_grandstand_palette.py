@@ -168,8 +168,79 @@ def test_hero_ghost_button_has_dark_translucent_backing():
     assert gp.hero_ghost_button(True)["bg"] == with_alpha("#000000", 0.26)
 
 
+def _luminance(c: QColor) -> float:
+    def lin(v):
+        v /= 255.0
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    return 0.2126 * lin(c.red()) + 0.7152 * lin(c.green()) + 0.0722 * lin(c.blue())
+
+
+def _contrast(a: QColor, b: QColor) -> float:
+    hi, lo = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+ROSTER_THEMED = (
+    (gp.panel, ()), (gp.card_surface, ("#4a8fe7", False)),
+    (gp.card_surface, ("#4a8fe7", True)), (gp.card_ink, (False,)),
+    (gp.card_ink, (True,)), (gp.control_chip, (False,)),
+    (gp.control_chip, (True,)), (gp.card_star, (False,)),
+    (gp.card_star, (True,)), (gp.card_placeholder, ()),
+    (gp.status_ink, ("idle",)), (gp.status_ink, ("running",)),
+    (gp.head_link, (True, False)), (gp.head_link, (True, True)),
+    (gp.head_link, (False, False)), (gp.shelf_head_ink, ()),
+    (gp.add_tile, ()), (gp.ribbon, (False,)), (gp.advisory_strip, ()),
+    (gp.game_card, ("ttr", False)), (gp.game_card, ("cc", False)),
+)
+
+
+def test_every_roster_token_has_a_light_branch_of_its_own():
+    """The roster shipped dark-only: on the light app its panel, cards and
+    inks were the dark ones. A light branch that returns the dark value is
+    the same bug, so each must differ."""
+    for fn, args in ROSTER_THEMED:
+        assert fn(*args, True) != fn(*args, False), (fn.__name__, args)
+
+
+def test_light_roster_text_is_readable_on_the_light_panel():
+    """AA for the text a user has to read on a white panel. The dark hues
+    (grey #888, green #56d66a, gold #e8c14d) measure 2.2 to 3.5 on white."""
+    white = gp.panel(False)["bg"]
+    inks = {
+        "card name": gp.card_ink(False, False)["name"],
+        "card user": gp.card_ink(False, False)["user"],
+        "head title": gp.shelf_head_ink(False)["title"],
+        "link": gp.head_link(True, False, False),
+        "gold link": gp.head_link(True, True, False),
+        "add tile": gp.add_tile(False)["ink"],
+        "chip": gp.control_chip(False, False)["ink"],
+        "inactive game": gp.game_card("ttr", False, False)["name_ink"],
+    }
+    for state in ("idle", "running", "failed", "need_2fa", "queued",
+                  "logging_in", "launching", "loading"):
+        inks[f"status {state}"] = gp.status_ink(state, False)["text"]
+    for name, ink in inks.items():
+        assert _contrast(ink, white) >= 4.5, (name, ink.name(),
+                                              round(_contrast(ink, white), 2))
+
+
+def test_active_game_card_meta_reads_on_the_game_art():
+    """It was --text-muted grey on the TTR blue. It sits on game art in both
+    themes, so it is a white alpha and does not follow the app theme."""
+    for game in ("ttr", "cc"):
+        dark, light = (gp.game_card(game, True, t) for t in (True, False))
+        assert dark == light
+        assert dark["meta_ink"].red() == 255 and dark["meta_ink"].alphaF() >= 0.7
+
+
+def test_disabled_control_chip_drops_to_the_disabled_ink():
+    assert gp.control_chip(False, True, False)["ink"] == QColor("#666666")
+    assert gp.control_chip(False, True, False) != gp.control_chip(False, True, True)
+    assert gp.control_chip(False, False, False) != gp.control_chip(False, False, True)
+
+
 def test_every_function_accepts_both_themes():
-    """The light branch is unimplemented, but no signature may reject it."""
+    """No signature may reject either theme."""
     for fn, args in (
         (gp.game_card, ("ttr", True)), (gp.hero_base, ("ttr",)),
         (gp.hero_scrim, ("ttr",)), (gp.play_button, (True,)),

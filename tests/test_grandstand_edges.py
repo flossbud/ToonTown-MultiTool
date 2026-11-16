@@ -296,6 +296,34 @@ def test_launch_tab_delete_prunes_the_mounted_party(monkeypatch, qapp):
         tab.close()
 
 
+@pytest.mark.parametrize("band_h", [646, 662, 688])
+def test_the_roster_fits_the_band_without_a_scroll_bar_gutter(
+        monkeypatch, qapp, band_h):
+    """Live on Windows, 2026-11-16: with the administrator banner showing the
+    content band is about 662 px, not 688. The roster needed 678 (the tab's
+    16 px top and bottom on top of the view's own margins), so the tab's
+    vertical scroll bar appeared for a few pixels of travel and took an 18 px
+    gutter out of the right side only. It needs 646 now."""
+    tab, _cred = _make_grandstand_launch_tab(
+        monkeypatch, ["a", "b"], blocked=False)
+    try:
+        tab.resize(880, band_h)
+        tab.show()
+        for _ in range(6):
+            qapp.processEvents()
+        bar = tab._scroll.verticalScrollBar()
+        assert bar.maximum() == 0, (band_h, bar.maximum())
+        view = tab.grandstand
+        from PySide6.QtCore import QPoint
+        left = view.selector.mapTo(tab, QPoint(0, 0)).x()
+        right = tab.width() - (left + view.selector.width())
+        assert left == right, (band_h, left, right)
+        assert tab._scroll_widget.minimumSizeHint().height() <= 646
+    finally:
+        tab.shutdown()
+        tab.close()
+
+
 def test_a_short_window_scrolls_the_tab_rather_than_clipping_the_cards(
         monkeypatch, qapp):
     """Live 2026-09-21: the cards' bottom borders were cut off. The shelf's

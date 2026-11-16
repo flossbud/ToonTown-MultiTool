@@ -580,3 +580,69 @@ def test_a_card_with_no_toon_name_never_reads_the_facade(render_cache, qapp, mon
     pf.render_landed.emit("ttr", "", CARD_POSE)
     pf.set_promoted.emit("ttr", "")
     assert asked == []
+
+
+# ── a card with nothing to draw ─────────────────────────────────────────────
+
+def _ink_pixels(img, x0, y0, x1, y1, base):
+    """How many pixels in the box differ visibly from `base`."""
+    n = 0
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            c = img.pixelColor(x, y)
+            if (abs(c.red() - base.red()) + abs(c.green() - base.green())
+                    + abs(c.blue() - base.blue())) > 24:
+                n += 1
+    return n
+
+
+def _render_card_in_host(card, is_dark):
+    from PySide6.QtGui import QRegion
+    host = QWidget()
+    host.resize(CARD_W, CARD_H)
+    card.setParent(host)
+    card.move(0, 0)
+    card.apply_theme(is_dark)
+    host.show()
+    QApplication.instance().processEvents()
+    pm = QPixmap(CARD_W, CARD_H)
+    pm.fill(QColor("#252525" if is_dark else "#ffffff"))
+    card.render(pm, QPoint(), QRegion(), QWidget.DrawChildren)
+    return host, pm.toImage()
+
+
+@pytest.mark.parametrize("is_dark", [True, False])
+def test_a_toonless_card_draws_a_ring_with_the_account_initial(qapp, render_cache,
+                                                               is_dark):
+    """Seen live: two thirds of a toonless card was blank. No species means
+    no silhouette either, so the card draws the hero's empty-slot vocabulary
+    (dashed ring, initial) at card size."""
+    from utils.widgets.grandstand.roster_card import PLACEHOLDER_D, PORTRAIT
+    card = RosterCard()
+    card.set_entry(_entry(toon=None, species=None, mode="waiting",
+                          footer="No toon yet"))
+    host, img = _render_card_in_host(card, is_dark)
+    cx, cy = CARD_W // 2, 12 + PORTRAIT // 2
+    # The wash at the ring's centre row, well left of the ring.
+    wash = img.pixelColor(12, cy)
+    half = PLACEHOLDER_D // 2
+    painted = _ink_pixels(img, cx - half - 2, cy - half - 2,
+                          cx + half + 2, cy + half + 2, wash)
+    assert painted > 150, painted          # a ring and a glyph, not a speck
+    host.close()
+
+
+@pytest.mark.parametrize("is_dark", [True, False])
+def test_a_card_with_a_species_keeps_its_silhouette_not_the_ring(
+        qapp, render_cache, monkeypatch, is_dark):
+    """The ring is only for 'nothing to draw'. A known species still gets
+    its silhouette while its render is outstanding."""
+    import utils.widgets.grandstand.roster_card as rc
+    calls = []
+    monkeypatch.setattr(rc.RosterCard, "_paint_placeholder",
+                        lambda self, p, box, e: calls.append(e.account_id))
+    card = RosterCard()
+    card.set_entry(_entry(species="cat"))
+    host, _img = _render_card_in_host(card, is_dark)
+    assert calls == []
+    host.close()

@@ -39,8 +39,8 @@ RIBBON_PLUS = "+"
 # Copy, verbatim from handoff §4.7.
 EMPTY_TITLE = "No toons discovered on {user} yet"
 EMPTY_BODY = ("Launch this account once and play a toon. The launcher records "
-              "who you played, then pulls that toon's render — until then "
-              "there is nothing for it to show.")
+              "who you played, then pulls that toon's render. Until then there "
+              "is nothing for it to show.")
 
 
 def title_for(display_name: str) -> str:
@@ -278,7 +278,7 @@ class ToonBrowser(QFrame):
         self._strip = QWidget()
         _transparent(self._strip, "gs_browser_strip")
         self._row = QHBoxLayout(self._strip)
-        self._row.setContentsMargins(2, 16, 2, 12)     # the shelf's strip
+        self._row.setContentsMargins(2, 6, 2, 12)      # the shelf's strip
         self._row.setSpacing(SHELF_GAP)
         self._row.setSizeConstraint(QLayout.SetMinimumSize)
         self._row.addStretch()
@@ -300,7 +300,6 @@ class ToonBrowser(QFrame):
         for label in (self.empty_title, self.empty_body):
             label.setWordWrap(True)
             label.setAlignment(Qt.AlignCenter)
-            label.setMaximumWidth(EMPTY_MAX_W)
             col.addWidget(label, 0, Qt.AlignHCenter)
         col.addStretch(1)
         self.empty.setVisible(False)
@@ -336,7 +335,30 @@ class ToonBrowser(QFrame):
         self.empty_body.setText(EMPTY_BODY)
         self.scroll.setVisible(bool(records))
         self.empty.setVisible(not records)
+        self._fit_empty()
         self._fit_strip()
+
+    def _fit_empty(self) -> None:
+        """Give the two wrapped labels the width they wrap at and the height
+        that wrapping needs.
+
+        A layout item placed with an alignment is sized from sizeHint(), and a
+        word-wrapped QLabel's sizeHint() is a guess that knows neither the
+        column it will get nor the stylesheet's font. Seen live on Windows:
+        the copy wrapped into a narrow column and was cut off top and bottom.
+        """
+        # The panel's own width, not self.empty's: during this widget's
+        # resizeEvent its children still hold their previous geometry.
+        left, _top, right, _bottom = BROWSER_MARGINS
+        width = max(120, min(EMPTY_MAX_W, self.width() - left - right))
+        for label in (self.empty_title, self.empty_body):
+            label.ensurePolished()
+            label.setFixedWidth(width)
+            label.setFixedHeight(label.heightForWidth(width))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit_empty()
 
     def cards(self) -> list[_ToonCard]:
         return list(self._cards)
@@ -437,5 +459,6 @@ class ToonBrowser(QFrame):
             " background: transparent;")
         self.empty_body.setStyleSheet(
             f"color: {e['body'].name()}; font-size: 12px; background: transparent;")
+        self._fit_empty()
         for card in self._cards:
             card.apply_theme(is_dark)

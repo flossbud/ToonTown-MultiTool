@@ -480,6 +480,30 @@ def test_browser_containers_do_not_paint_the_app_background(themed_app, render_c
     browser.close()
 
 
+def test_browser_empty_state_copy_is_not_clipped(themed_app, render_cache):
+    """Live on Windows, 2026-11-16: the title and body wrapped into a narrow
+    column and were cut off top and bottom. Measured the way it is mounted:
+    inside a host, under the real stylesheet, at the live shelf size."""
+    _qapp, theme = themed_app
+    host = QWidget()
+    browser = ToonBrowser(host)
+    browser.setGeometry(0, 0, 800, 292)
+    browser.apply_theme(theme == "dark")
+    browser.open("ttr", "a", "hirofloss", [], None)
+    _render(host, 800, 292)
+    for label in (browser.empty_title, browser.empty_body):
+        needed = label.heightForWidth(label.width())
+        assert label.height() >= needed, (theme, label.text()[:20],
+                                          label.height(), needed)
+        # One line of title, and a body that wraps at a readable measure
+        # rather than the ~265 px sliver the layout guessed.
+        assert label.width() >= 400, (theme, label.width())
+        top = label.mapTo(browser, QPoint(0, 0)).y()
+        assert 0 <= top and top + label.height() <= browser.height()
+    assert browser.empty_title.height() < 2 * browser.empty_title.fontMetrics().height()
+    host.close()
+
+
 def test_browser_empty_state_does_not_paint_the_app_background(themed_app, render_cache):
     _qapp, theme = themed_app
     browser = _browser(theme, [])

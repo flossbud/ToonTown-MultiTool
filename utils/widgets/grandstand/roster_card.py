@@ -14,7 +14,9 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QLinearGradient, QPainter, QPixmap
+from PySide6.QtGui import (
+    QColor, QFontMetrics, QLinearGradient, QPainter, QPen, QPixmap,
+)
 from PySide6.QtWidgets import (
     QApplication, QFrame, QLabel, QPushButton, QToolButton, QWidget,
 )
@@ -30,6 +32,8 @@ CARD_W = 148
 CARD_H = 216
 CARD_RADIUS = 16
 PORTRAIT = 128
+PLACEHOLDER_D = 76
+PLACEHOLDER_INITIAL_PX = 28
 FOOTER_PX = 11
 
 PENCIL_TOOLTIP = "Customize appearance"
@@ -657,10 +661,31 @@ class RosterCard(QFrame):
             x = box.center().x() - w // 2
             y = box.top() + int(PORTRAIT * shift_pct / 100.0)
             p.drawPixmap(QRect(x, y, w, h), self._pixmap)
-        else:
-            paint_race_silhouette(p, box, e.species, e.accent)
+        elif not paint_race_silhouette(p, box, e.species, e.accent):
+            self._paint_placeholder(p, box, e)
 
         p.setBrush(Qt.NoBrush)
         p.setPen(d["border"])
         p.drawRoundedRect(r, CARD_RADIUS, CARD_RADIUS)
         p.end()
+
+    def _paint_placeholder(self, p: QPainter, box: QRect, e) -> None:
+        """No render and no species to silhouette: an account nobody has
+        played yet. The hero's empty slot is a dashed ring holding the
+        account's initial; the card says the same thing at card size rather
+        than leaving two thirds of itself blank."""
+        ink = gp.card_placeholder(self._is_dark)
+        ring = QRect(0, 0, PLACEHOLDER_D, PLACEHOLDER_D)
+        ring.moveCenter(box.center())
+        pen = QPen(ink["ring"])
+        pen.setWidthF(1.5)
+        pen.setStyle(Qt.DashLine)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawEllipse(ring)
+        font = p.font()
+        font.setPixelSize(PLACEHOLDER_INITIAL_PX)
+        font.setBold(True)
+        p.setFont(font)
+        p.setPen(ink["initial"])
+        p.drawText(ring, Qt.AlignCenter, e.initial)

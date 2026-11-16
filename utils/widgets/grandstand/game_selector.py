@@ -7,7 +7,9 @@ painted rather than styled because QSS cannot express `saturate()`.
 from __future__ import annotations
 
 from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPainterPath, QPixmap
+from PySide6.QtGui import (
+    QBrush, QColor, QImage, QLinearGradient, QPainter, QPainterPath, QPixmap,
+)
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from utils.asset_paths import asset_path
@@ -160,6 +162,11 @@ class GameCard(QFrame):
                  else (self.height() - scaled.height()) // 2)
             painter.drawPixmap(0, y, scaled)
             painter.setOpacity(1.0)
+            if self._active:
+                wash = QLinearGradient(rect.topLeft(), rect.topRight())
+                for stop, colour in gp.game_card_scrim(self._game, self._is_dark):
+                    wash.setColorAt(stop, colour)
+                painter.fillRect(rect, wash)
         painter.restore()
 
         painter.setBrush(Qt.NoBrush)

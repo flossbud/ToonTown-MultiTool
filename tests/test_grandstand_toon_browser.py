@@ -131,9 +131,9 @@ def test_empty_state_copy(browser):
     assert EMPTY_TITLE == "No toons discovered on {user} yet"
     assert browser.empty_body.text() == EMPTY_BODY == (
         "Launch this account once and play a toon. The launcher records who "
-        "you played, then pulls that toon's render — until then there is "
+        "you played, then pulls that toon's render. Until then there is "
         "nothing for it to show.")
-    assert browser.empty_title.maximumWidth() == 460
+    assert browser.empty_title.maximumWidth() <= 460
     assert browser.scroll.isVisibleTo(browser) is False
     _open(browser)
     assert browser.is_empty_state() is False

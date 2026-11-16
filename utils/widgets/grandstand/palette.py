@@ -81,6 +81,18 @@ def game_card(game: str, active: bool, is_dark: bool) -> dict:
     }
 
 
+def game_card_scrim(game: str, is_dark: bool) -> list[tuple[float, QColor]]:
+    """Left-to-right wash over the ACTIVE game card's art, in the card's own
+    base colour, so the logo and name sit on the game's identity and the art
+    opens up to the right (the handoff's selector card). Without it Corporate
+    Clash's blue-teal skyline covered the whole card and the orange game read
+    as a blue one. Art-facing, so the same in both themes."""
+    rgb = QColor(_GAME[game]["card_bg"])
+    base = (rgb.red(), rgb.green(), rgb.blue())
+    return [(0.0, _rgba(base, 0.92)), (0.45, _rgba(base, 0.62)),
+            (1.0, _rgba(base, 0.0))]
+
+
 def hero_base(game: str, is_dark: bool) -> QColor:
     """Flat fill under the hero art — also the fallback if the art fails to
     load (spec §7)."""
@@ -138,6 +150,17 @@ def card_surface(accent: str, selected: bool, is_dark: bool) -> dict:
         "bot": with_alpha("#0f172a", 0.05),
         "border": QColor("#0077ff") if selected else QColor("#cbd5e1"),
     }
+
+
+def card_placeholder(is_dark: bool) -> dict:
+    """A card with nothing to draw yet: the dashed ring and the account's
+    initial inside it. Quieter than the hero's placeholder, which sits on
+    game art; this one sits on the card's own wash."""
+    if is_dark:
+        return {"ring": with_alpha("#ffffff", 0.26),
+                "initial": with_alpha("#ffffff", 0.50)}
+    return {"ring": with_alpha("#0f172a", 0.26),
+            "initial": with_alpha("#0f172a", 0.46)}
 
 
 def card_ink(selected: bool, is_dark: bool) -> dict:
