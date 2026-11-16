@@ -383,6 +383,7 @@ class MultiToonTool(QMainWindow):
         # primary-toon portraits render the saved pose (matching the radial menu).
         self.launch_tab.set_customizations_manager(self.multitoon_tab.customizations)
         self.launch_tab.appearance_requested.connect(self.open_customization_for_toon)
+        self.launch_tab.look_saved.connect(self._on_launcher_look_saved)
         self.settings_tab = SettingsTab(
             self.settings_manager,
             keymap_manager=self.keymap_manager,
@@ -1725,13 +1726,25 @@ class MultiToonTool(QMainWindow):
             slots = [slot]
         else:
             _game, name = self._customization_toon
-            slots = [i for i, live in enumerate(tab.toon_names)
-                     if live and live == name
-                     and i < len(tab.slot_badges)
-                     and tab.slot_badges[i].game == game]
+            slots = self._slots_playing(game, name)
         for index in slots:
             tab._on_customization_saved(index, game)
         self.launch_tab.on_customization_changed(game)
+
+    def _slots_playing(self, game: str, toon_name) -> list:
+        """The Multitoon slots currently showing one toon of one game."""
+        tab = self.multitoon_tab
+        return [i for i, live in enumerate(tab.toon_names)
+                if live and live == toon_name
+                and i < len(tab.slot_badges)
+                and tab.slot_badges[i].game == game]
+
+    def _on_launcher_look_saved(self, game: str, toon_name: str) -> None:
+        """A look was saved from the launcher's own appearance editor. The
+        launcher has already repainted its cards; the Multitoon slots playing
+        that toon follow."""
+        for index in self._slots_playing(game, toon_name):
+            self.multitoon_tab._on_customization_saved(index, game)
 
     # ── Theme ──────────────────────────────────────────────────────────────
 

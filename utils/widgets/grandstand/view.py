@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 import utils.motion as motion
 from utils.credential_copy import KEYRING_WARNING_COPY, MACOS_VAULT_COPY
 from utils.effects_flags import effects_disabled
+from utils.widgets.grandstand import appearance_sheet as appearance
 from utils.widgets.grandstand import palette as gp
 from utils.widgets.grandstand.account_sheet import (
     CROSS_LINK, note_for, subtitle_for, title_for,
@@ -45,6 +46,12 @@ STAMP_PREFIX = "[Grandstand] view active"
 # Running-code stamp for sub-project C, printed on every sheet-surface open:
 # "[Grandstand] sheet: account <id>" / "... account add" / "... toon-browser <id>".
 SHEET_STAMP_PREFIX = "[Grandstand] sheet:"
+
+# The two surfaces of the focus-mode sheet (handoff §4.5). One editing
+# session can hold a draft for each; the cross-link moves between them.
+SURFACE_ACCOUNT = "account"
+SURFACE_APPEARANCE = "appearance"
+NO_TOON_STAMP = "(no toon)"
 
 # Body pages and the shelf's slot (spec §2).
 PAGE_ROSTER = 0
@@ -126,6 +133,10 @@ class GrandstandView(QWidget):
     account_remove_requested = Signal(str, str)       # game, account_id
     toon_chosen = Signal(str, str, str)               # game, account_id, toon
 
+    # Sub-project B: the appearance editor's intents, on the same terms.
+    appearance_save_requested = Signal(str, object)   # game, AppearanceDraft
+    subject_toon_chosen = Signal(str, str, str)       # game, account_id, toon
+
     def __init__(self, party, log=None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._log = log or (lambda _msg: None)
@@ -147,6 +158,7 @@ class GrandstandView(QWidget):
         self._sheet_game: str | None = None
         self._sheet_toons: list = []
         self._sheet_primary: str | None = None
+        self._surface = SURFACE_ACCOUNT
         self._browser_account: str | None = None
         self._browser_game: str | None = None
         self._browser_return_to = "settings"
@@ -223,6 +235,10 @@ class GrandstandView(QWidget):
         self.sheet = SheetShell(self.pages)
         self.account_sheet = AccountSheet(self.sheet)
         self.sheet.set_body(self.account_sheet)
+        # The appearance editor is the sheet's other body (sub-project B).
+        # It waits hidden, owned by the sheet, until a surface switch.
+        self.appearance_sheet = appearance.AppearanceSheet(self.sheet)
+        self.appearance_sheet.hide()
         self.pages.addWidget(self.sheet)
         self.pages.setCurrentIndex(PAGE_ROSTER)
 
@@ -257,6 +273,8 @@ class GrandstandView(QWidget):
         self.sheet.cross_link_requested.connect(self._on_sheet_cross_link)
         self.account_sheet.remove_requested.connect(self._on_sheet_remove)
         self.account_sheet.choose_toon_requested.connect(self._on_choose_toon)
+        self.appearance_sheet.toon_switch_requested.connect(
+            self._on_subject_toon_picked)
         self.browser.back_requested.connect(self.close_toon_browser)
         self.browser.toon_picked.connect(self._on_toon_picked)
 
@@ -314,13 +332,14 @@ class GrandstandView(QWidget):
         if self._browser_account is not None and self._browser_account not in ids:
             self.close_sheet()
             return
-        aid = self.account_sheet.account_id()
+        aid = self._focus_account()
         if not aid:
             return                                   # closed, or add mode
         if aid not in ids:
             self.close_sheet()
             return
-        self.account_sheet.set_base_entry(self.entry_for(game, aid))
+        if self.account_sheet.is_open():
+            self.account_sheet.set_base_entry(self._account_base_entry(game, aid))
 
     def set_account_state(self, game: str, account_id: str, state: str,
                           message: str = "", raw: str = "") -> None:
@@ -382,6 +401,9 @@ class GrandstandView(QWidget):
         self.hero.crew_area.apply_theme(is_dark)
         self.shelf.apply_theme(is_dark)
         self.sheet.apply_theme(is_dark)               # forwards to the body
+        for body in (self.account_sheet, self.appearance_sheet):
+            if body is not self.sheet.body():        # the surface in waiting
+                body.apply_theme(is_dark)
         self.browser.apply_theme(is_dark)
 
     def _on_game_clicked(self, game: str) -> None:
@@ -497,6 +519,65 @@ class GrandstandView(QWidget):
         self._log(message)
         print(message)
 
+    def _focus_account(self) -> str:
+        """The account the open sheet is about, whichever surface holds a
+        draft for it; "" when the sheet is closed or in add mode."""
+        return self.account_sheet.account_id() or self.appearance_sheet.account_id()
+
+    def _same_session(self, game: str, account_id: str) -> bool:
+        """Whether opening a surface for this account continues the editing
+        session already in focus, so the other surface's draft is kept
+        (handoff §4.5: switching surfaces keeps the draft)."""
+        return (bool(account_id) and self.in_focus_mode()
+                and self._sheet_game == game
+                and self._focus_account() == account_id)
+
+    def _account_base_entry(self, game: str, account_id: str):
+        """The roster entry the account preview inherits. While a look is
+        being edited for the same toon the card takes the draft's accent, so
+        an accent change is judged where it will be seen (handoff §4.4)."""
+        entry = self.entry_for(game, account_id) if account_id else None
+        look = self.appearance_sheet.draft()
+        if (entry is not None and look is not None and look.has_toon
+                and look.account_id == account_id
+                and look.toon_name == entry.toon_name):
+            entry = dataclasses.replace(entry, accent=look.resolved_accent())
+        return entry
+
+    def surface(self) -> str:
+        return self._surface
+
+    def _show_surface(self, surface: str) -> None:
+        """Put one surface's body, header, cross-link and note in the shell,
+        and stamp it. The other body stays owned by the sheet, hidden, with
+        its draft intact."""
+        to_look = surface == SURFACE_APPEARANCE
+        body = self.appearance_sheet if to_look else self.account_sheet
+        other = self.account_sheet if to_look else self.appearance_sheet
+        if self.sheet.body() is not body:
+            self.sheet.set_body(body)            # un-parents the outgoing body
+            other.setParent(self.sheet)          # owned and hidden, not a stray window
+            other.hide()
+            body.show()
+        self._surface = surface
+        if to_look:
+            look = self.appearance_sheet.draft()
+            self._stamp(f"{SHEET_STAMP_PREFIX} appearance "
+                        f"{look.game}::{look.toon_name or NO_TOON_STAMP}")
+            self.sheet.set_header(appearance.title_for(look),
+                                  appearance.subtitle_for(look))
+            self.sheet.set_cross_link(appearance.CROSS_LINK)
+            self.sheet.set_note(appearance.note_for(look))
+            return
+        draft = self.account_sheet.draft()
+        self._stamp(f"{SHEET_STAMP_PREFIX} account {draft.id or 'add'}")
+        self.sheet.set_header(title_for(draft), subtitle_for(draft))
+        # The cross-link opens the look of the toon this account shows; with
+        # no toon discovered there is no look to open, so it is not offered.
+        self.sheet.set_cross_link(
+            CROSS_LINK if draft.mode != MODE_ADD and self._sheet_toons else "")
+        self.sheet.set_note(note_for(self.account_sheet.toon_count()))
+
     def open_account_sheet(self, game: str, draft: AccountDraft, toons: list,
                            primary_name) -> None:
         """Enter focus mode on the account surface. `toons` is the account's
@@ -506,23 +587,46 @@ class GrandstandView(QWidget):
         self._browser_account = None
         self._browser_game = None
         self._browser_return_to = "settings"
+        if not self._same_session(game, draft.id):
+            self.appearance_sheet.clear()
         self._sheet_game = game
         self._sheet_toons = list(toons)
         self._sheet_primary = primary_name
-        self._stamp(f"{SHEET_STAMP_PREFIX} account {draft.id or 'add'}")
-        base = self.entry_for(game, draft.id) if draft.id else None
+        base = self._account_base_entry(game, draft.id)
         self.account_sheet.open(draft, self._sheet_toons, primary_name, base)
         live = self._live_states.get((game, draft.id)) if draft.id else None
         if live is not None:
             self.account_sheet.set_account_state(*live)
-        self.sheet.set_header(title_for(draft), subtitle_for(draft))
-        # The cross-link opens the look of the toon this account shows; with
-        # no toon discovered there is no look to open, so it is not offered.
-        self.sheet.set_cross_link(
-            CROSS_LINK if draft.mode != MODE_ADD and toons else "")
-        self.sheet.set_note(note_for(self.account_sheet.toon_count()))
+        self._show_surface(SURFACE_ACCOUNT)
         self._go_to_page(PAGE_SHEET)
         self.account_sheet.focus_first()
+
+    def open_appearance_sheet(self, game: str, draft, toons: list,
+                              primary_name, identity_changed: bool = False) -> None:
+        """Enter focus mode on the appearance surface (sub-project B).
+        `draft` is the AppearanceDraft LaunchTab built from the stores.
+        `identity_changed` says the account has just adopted this toon from
+        the subject row: the hero is rebuilt for the new identity rather
+        than diffed into place (handoff §6.3)."""
+        if self.browser_open():
+            self.shelf_stack.setCurrentIndex(SLOT_SHELF)
+        self._browser_account = None
+        self._browser_game = None
+        self._browser_return_to = "settings"
+        if not self._same_session(game, draft.account_id):
+            self.account_sheet.clear()
+        self._sheet_game = game
+        self._sheet_toons = list(toons)
+        self._sheet_primary = primary_name
+        self.appearance_sheet.open(draft, self._sheet_toons, primary_name)
+        if self.account_sheet.is_open():
+            # The account half of the session follows a toon switch.
+            self.account_sheet.set_toons(self._sheet_toons, primary_name)
+        if identity_changed:
+            self._rebuild_lineup(game)
+        self._show_surface(SURFACE_APPEARANCE)
+        self._go_to_page(PAGE_SHEET)
+        self.appearance_sheet.focus_first()
 
     def sheet_draft(self) -> AccountDraft | None:
         """A snapshot of the open draft, or None. For an owner that must
@@ -541,6 +645,7 @@ class GrandstandView(QWidget):
         if self.in_focus_mode():
             self._go_to_page(PAGE_ROSTER)
         self.account_sheet.clear()
+        self.appearance_sheet.clear()
         self._sheet_game = None
         self._sheet_toons = []
         self._sheet_primary = None
@@ -604,29 +709,72 @@ class GrandstandView(QWidget):
         group.deleteLater()
 
     def _on_sheet_save(self) -> None:
-        """Validate, then hand the draft to the owner. Errors repaint inline
-        and the sheet stays open; the view never writes and never closes on
-        its own — LaunchTab calls close_sheet() after the write (spec §3)."""
-        draft = self.account_sheet.draft()
-        if draft is None or self._sheet_game is None:
+        """Validate, then hand each draft the session holds to the owner
+        (handoff §4.5: Save commits both halves). Errors repaint inline and
+        the sheet stays open; the view never writes — LaunchTab performs
+        each write and calls close_sheet() (spec §3)."""
+        if self._sheet_game is None:
             return
-        errors = draft.validate()
-        if errors:
-            self.account_sheet.show_errors(errors)
+        game = self._sheet_game
+        account = self.account_sheet.draft()
+        look = self.appearance_sheet.draft()
+        if account is None and look is None:
             return
-        self.account_sheet.clear_errors()
-        # A snapshot, not the live draft: the sheet stays open across the
-        # emit, so the consumer must not observe edits made afterwards.
-        self.account_save_requested.emit(
-            self._sheet_game, dataclasses.replace(draft))
+        if account is not None:
+            errors = account.validate()
+            if errors:
+                # The messages live on the account surface: bring it forward.
+                if self._surface != SURFACE_ACCOUNT:
+                    self._show_surface(SURFACE_ACCOUNT)
+                self.account_sheet.show_errors(errors)
+                return
+            self.account_sheet.clear_errors()
+        # Snapshots, never the live drafts, and both taken before either
+        # intent: the owner closes the sheet from the first handler it runs,
+        # and a consumer must not observe edits made after the emit.
+        account_snapshot = (dataclasses.replace(account)
+                            if account is not None else None)
+        look_snapshot = (look.copy()
+                         if look is not None and look.has_toon else None)
+        if look_snapshot is not None:
+            self.appearance_save_requested.emit(game, look_snapshot)
+        if account_snapshot is not None:
+            self.account_save_requested.emit(game, account_snapshot)
+        if look_snapshot is None and account_snapshot is None:
+            # An account with no toon has no look to store: nothing for the
+            # owner to write, so Save is Back.
+            self.close_sheet()
 
     def _on_sheet_cross_link(self) -> None:
         """One cross-link, pointing at the surface you are not on (handoff
-        §4.5). It routes exactly where the pencil does."""
-        draft = self.account_sheet.draft()
-        if draft is None or self._sheet_game is None or not draft.id:
+        §4.5). A surface this session has already visited comes back as it
+        was left; one it has not is opened by the owner from the stores,
+        through the same intent the card's pencil and gear emit."""
+        game, account_id = self._sheet_game, self._focus_account()
+        if game is None or not account_id:
             return
-        self.edit_requested.emit(self._sheet_game, draft.id, "appearance")
+        if self._surface == SURFACE_APPEARANCE:
+            if self.account_sheet.is_open():
+                self.account_sheet.set_base_entry(
+                    self._account_base_entry(game, account_id))
+                self._show_surface(SURFACE_ACCOUNT)
+                self.account_sheet.focus_first()
+            else:
+                self.edit_requested.emit(game, account_id, SURFACE_ACCOUNT)
+            return
+        if self.appearance_sheet.is_open():
+            self._show_surface(SURFACE_APPEARANCE)
+            self.appearance_sheet.focus_first()
+        else:
+            self.edit_requested.emit(game, account_id, SURFACE_APPEARANCE)
+
+    def _on_subject_toon_picked(self, toon_name: str) -> None:
+        """The subject row's switcher (handoff §4.3). The primary-toon write
+        and the editor's re-entry on the new toon belong to the owner."""
+        account_id = self.appearance_sheet.account_id()
+        if self._sheet_game is None or not account_id:
+            return
+        self.subject_toon_chosen.emit(self._sheet_game, account_id, toon_name)
 
     def _on_sheet_remove(self) -> None:
         """The danger button. Confirmation and the delete belong to the owner
@@ -678,6 +826,13 @@ class GrandstandView(QWidget):
             self._sheet_primary = primary_name
             if self.account_sheet.is_open():
                 self.account_sheet.set_toons(self._sheet_toons, primary_name)
+            look = self.appearance_sheet.draft()
+            if look is not None and not look.is_dirty():
+                # The session's look was for the toon the account no longer
+                # shows. Untouched, it is dropped so the cross-link opens the
+                # new toon's; with edits it stays, and still saves to the
+                # toon they were made for.
+                self.appearance_sheet.clear()
             self._rebuild_lineup(game)
         if self._browser_return_to == "settings" and self.account_sheet.is_open():
             self._go_to_page(PAGE_SHEET)

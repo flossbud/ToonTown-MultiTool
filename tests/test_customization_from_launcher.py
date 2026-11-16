@@ -103,3 +103,35 @@ def test_a_look_saved_from_a_multitoon_slot_also_repaints_the_launcher(qapp):
     win._on_customization_changed(1, "ttr")
     win.multitoon_tab._on_customization_saved.assert_called_once_with(1, "ttr")
     win.launch_tab.on_customization_changed.assert_called_once_with("ttr")
+
+
+# ── the launcher's own appearance editor (Grandstand sub-project B) ─────────
+
+def test_a_look_saved_in_the_launchers_editor_reaches_the_slots_playing_it(qapp):
+    """LaunchTab writes the look and repaints its own cards, then reports
+    (game, toon). The window's part is the Multitoon slots playing that
+    toon, matched by game and name, never by a slot index."""
+    win, _overlay = _window(
+        names=("Hiro", "Flossbud", None, "Flossbud"),
+        games=("ttr", "ttr", "ttr", "cc"))
+    win._on_launcher_look_saved("ttr", "Flossbud")
+    saved = win.multitoon_tab._on_customization_saved
+    assert [c.args for c in saved.call_args_list] == [(1, "ttr")]
+    # The launcher already repainted itself: a second pass would rebuild
+    # every card for nothing.
+    win.launch_tab.on_customization_changed.assert_not_called()
+
+
+def test_a_look_saved_in_the_launchers_editor_with_the_toon_not_running(qapp):
+    win, _overlay = _window(names=("Hiro", None, None, None))
+    win._on_launcher_look_saved("ttr", "Flossbud")
+    win.multitoon_tab._on_customization_saved.assert_not_called()
+
+
+def test_the_window_listens_for_the_launchers_saved_looks():
+    """The connection itself, pinned in the source: nothing else would
+    notice the signal going unheard until a live session."""
+    import inspect
+    import main
+    source = inspect.getsource(main.MultiToonTool)
+    assert "self.launch_tab.look_saved.connect(self._on_launcher_look_saved)" in source

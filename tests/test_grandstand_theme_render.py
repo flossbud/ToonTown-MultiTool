@@ -513,3 +513,249 @@ def test_browser_card_shows_the_waving_render_under_the_real_stylesheet(
         f"{theme}: figure painted {face.name()}, not the disk render")
     assert card.portrait_pixmap() is not None
     browser.close()
+
+
+# ── sub-project B: the appearance editor, in the whole view ─────────────────
+# Mounted in the assembled GrandstandView inside a host, never as a top-level
+# window: Qt fills a top-level's background whatever the widget does, which is
+# how a missing styled background passed here before (HANDOFF 2026-11-16).
+
+from utils.widgets.grandstand.appearance_draft import AppearanceDraft   # noqa: E402
+from utils.widgets.grandstand.party import LaunchParty                  # noqa: E402
+from utils.widgets.grandstand.view import GrandstandView                # noqa: E402
+
+
+def _editor_view(theme, entry, *, game="ttr", toon="Ta", dna="7400",
+                 species="cat", size=(880, 688)):
+    host = QWidget()
+    view = GrandstandView(LaunchParty(None), parent=host)
+    view.setGeometry(0, 0, *size)
+    view.apply_theme(theme == "dark")
+    view.set_accounts("ttr", [_entry("a")])
+    rec = ToonRecord(toon, game, dna, 137, None, species, None) if toon else None
+    draft = AppearanceDraft.for_record(
+        account_id="a", account_name="La", game=game, rec=rec, entry=entry)
+    view.open_appearance_sheet(game, draft, [rec] if rec else [], toon)
+    _render(host, *size)
+    # A second pass: the first show lays the scroll area out.
+    QApplication.instance().processEvents()
+    img = _render(host, *size)
+    return host, view, view.appearance_sheet, img
+
+
+def _at(widget, host, dx, dy):
+    point = widget.mapTo(host, QPoint(dx, dy))
+    return point.x(), point.y()
+
+
+def test_the_sheet_surface_differs_from_the_app_background_in_both_themes(
+        themed_app):
+    """Guards the probes below against a vacuous pass."""
+    _qapp, theme = themed_app
+    host = QWidget()
+    bare = _render(host, 40, 40).pixelColor(20, 20)
+    surface = gp.sheet_surface(theme == "dark")["bg"]
+    stage = gp.appearance_stage(theme == "dark")["bg"]
+    assert _distance(bare, surface) >= 10
+    assert _distance(surface, stage) >= 10
+    host.close()
+
+
+def test_appearance_containers_do_not_paint_the_app_background(
+        themed_app, render_cache):
+    """The subject row, the columns, each group and each row are plain
+    containers: under the real stylesheet each must show the sheet surface,
+    not a block of page colour."""
+    _qapp, theme = themed_app
+    host, _view, editor, img = _editor_view(theme, {})
+    surface = gp.sheet_surface(theme == "dark")["bg"]
+    none_chip = editor.pattern_chips.chip(None)
+    probes = {
+        "subject row, between the scope line and the links":
+            _at(editor.surprise, host, -30, editor.surprise.height() // 2),
+        "gap between the stage and the controls":
+            _at(editor.stage, host, editor.stage.width() + 10, 120),
+        "controls column, below the last group":
+            _at(editor.controls, host, editor.controls.width() // 2,
+                editor.controls.height() - 6),
+        "pattern row, right of the chips":
+            _at(editor.pattern_row, host, editor.pattern_row.width() - 8,
+                editor.pattern_row.height() // 2),
+        "between two chips":
+            _at(none_chip, host, none_chip.width() + 3, none_chip.height() // 2),
+        "looks row, between two labels":
+            _at(editor.looks.swatches[1], host, -2,
+                editor.looks.swatches[1].height() - 6),
+        "group header, between label and note":
+            _at(editor.backdrop_header.label, host,
+                editor.backdrop_header.label.width() + 12, 6),
+        "accent row, right of the readout":
+            _at(editor.accent_row, host, editor.accent_row.width() - 8,
+                editor.accent_row.height() // 2),
+        "pose strip, between two tiles":
+            _at(editor.pose_strip.tiles[1], host, -4, 30),
+    }
+    for area, (x, y) in probes.items():
+        probe = img.pixelColor(x, y)
+        assert _distance(probe, surface) < 6, (
+            f"{theme}: appearance {area} painted {probe.name()} over surface "
+            f"{surface.name()} at ({x},{y})")
+    host.close()
+
+
+def test_the_stage_paints_its_panel_and_its_corners_show_the_sheet(
+        themed_app, render_cache):
+    _qapp, theme = themed_app
+    host, _view, editor, img = _editor_view(theme, {})
+    stage = gp.appearance_stage(theme == "dark")
+    surface = gp.sheet_surface(theme == "dark")["bg"]
+    inside = img.pixelColor(*_at(editor.stage, host, 8, editor.stage.height() // 2))
+    assert _distance(inside, stage["bg"]) < 6, (theme, inside.name())
+    corner = img.pixelColor(*_at(editor.stage, host, 1, 1))
+    assert _distance(corner, surface) < 6, (
+        f"{theme}: the stage's square corner painted {corner.name()}")
+    # The hint and the sliders sit on the panel, not on blocks of their own.
+    beside_sliders = img.pixelColor(*_at(editor.sliders, host, -6, 10))
+    assert _distance(beside_sliders, stage["bg"]) < 6, (theme, beside_sliders.name())
+    between_rows = img.pixelColor(*_at(editor.zoom_row, host, 60, editor.zoom_row.height() + 3))
+    assert _distance(between_rows, stage["bg"]) < 6, (theme, between_rows.name())
+    host.close()
+
+
+def test_the_canvas_paints_the_backdrop_and_the_ring_and_nothing_else(
+        themed_app, render_cache):
+    """No render on disk, so the disc is the look alone: backdrop inside,
+    accent ring at the rim, and the stage untouched at the canvas's own
+    square corners."""
+    _qapp, theme = themed_app
+    entry = {"accent": "#e74a4a", "portrait": {"color": "#56c856"}}
+    host, _view, editor, img = _editor_view(theme, entry)
+    canvas = editor.canvas
+    centre = img.pixelColor(*_at(canvas, host, 120, 120))
+    assert _distance(centre, QColor("#56c856")) < 4, (theme, centre.name())
+    rim = img.pixelColor(*_at(canvas, host, 120, 2))
+    assert _distance(rim, QColor("#e74a4a")) < 12, (theme, rim.name())
+    corner = img.pixelColor(*_at(canvas, host, 4, 4))
+    stage = gp.appearance_stage(theme == "dark")["bg"]
+    assert _distance(corner, stage) < 6, (
+        f"{theme}: the canvas painted {corner.name()} in its corner")
+    host.close()
+
+
+def test_an_unset_backdrop_paints_the_neutral_disc_not_a_colour(
+        themed_app, render_cache):
+    _qapp, theme = themed_app
+    host, _view, editor, img = _editor_view(theme, {})
+    centre = img.pixelColor(*_at(editor.canvas, host, 120, 120))
+    assert _distance(centre, gp.portrait_fallback(theme == "dark")) < 4
+    host.close()
+
+
+def test_the_canvas_a_pose_tile_and_a_look_show_the_disk_render(
+        themed_app, render_cache):
+    _qapp, theme = themed_app
+    _facade, store, _pf = render_cache
+    expected = QColor("#ff0000")
+    complete_set(store, "ttr", "Ta", "7400", expected.name())
+    host, _view, editor, img = _editor_view(theme, {})
+    face = img.pixelColor(*_at(editor.canvas, host, 120, 120))
+    assert _distance(face, expected) < 4, (
+        f"{theme}: canvas painted {face.name()}, not the disk render")
+    tile = editor.pose_strip.tiles[0]
+    tile_face = img.pixelColor(*_at(tile, host, 34, 34))
+    assert _distance(tile_face, expected) < 4, (theme, tile_face.name())
+    swatch = editor.looks.swatches[4]                     # Lagoon: no pattern
+    disc = swatch.disc_rect().center().toPoint()
+    look_face = img.pixelColor(*_at(swatch, host, disc.x(), disc.y()))
+    assert _distance(look_face, expected) < 4, (theme, look_face.name())
+    host.close()
+
+
+def test_the_pattern_is_tiled_over_the_backdrop(themed_app, render_cache):
+    """Both the pattern colour and the backdrop must show down the disc."""
+    _qapp, theme = themed_app
+    entry = {"portrait": {"color": "#1a1d29",
+                          "pattern": {"name": "stripes_horiz", "color": "#ff00ff"}}}
+    host, _view, editor, img = _editor_view(theme, entry)
+    ox, oy = _at(editor.canvas, host, 0, 0)
+    column = [img.pixelColor(ox + 120, oy + y) for y in range(20, 220)]
+    stripe = sum(1 for c in column if _distance(c, QColor("#ff00ff")) < 60)
+    backdrop = sum(1 for c in column if _distance(c, QColor("#1a1d29")) < 60)
+    assert stripe > 10 and backdrop > 10, (theme, stripe, backdrop)
+    host.close()
+
+
+def test_the_swatch_popover_paints_its_own_floating_surface(
+        themed_app, render_cache):
+    _qapp, theme = themed_app
+    host, _view, editor, _img = _editor_view(theme, {})
+    editor.wells["accent"].click()
+    img = _render(host, 880, 688)
+    popover = editor.swatch_popover
+    assert popover.isVisible()
+    d = gp.well_popover(theme == "dark")
+    inside = img.pixelColor(*_at(popover, host, popover.width() // 2, 4))
+    assert _distance(inside, d["bg"]) < 6, (theme, inside.name(), d["bg"].name())
+    # The swatches are their own colours, on that surface.
+    first = popover.swatches()[0]
+    swatch = img.pixelColor(*_at(first, host, 12, 12))
+    assert _distance(swatch, QColor(gp.SWATCHES[0])) < 6, (theme, swatch.name())
+    between = img.pixelColor(*_at(first, host, 24 + 3, 12))
+    assert _distance(between, d["bg"]) < 6, (theme, between.name())
+    host.close()
+
+
+def test_the_toon_switcher_paints_its_own_floating_surface(
+        themed_app, render_cache):
+    _qapp, theme = themed_app
+    host, _view, editor, _img = _editor_view(theme, {})
+    editor.pill.click()
+    img = _render(host, 880, 688)
+    switcher = editor.switcher
+    assert switcher.isVisible()
+    d = gp.switcher_popover(theme == "dark")
+    inside = img.pixelColor(*_at(switcher, host, switcher.width() - 12, 4))
+    assert _distance(inside, d["bg"]) < 6, (theme, inside.name(), d["bg"].name())
+    # The row of the toon the account shows is tinted over that surface.
+    row = switcher.rows()[0]
+    row_px = img.pixelColor(*_at(row, host, row.width() - 40, row.height() // 2))
+    assert _distance(row_px, d["bg"]) >= 6, (theme, row_px.name())
+    host.close()
+
+
+def test_the_species_panel_and_tag_paint_on_their_surfaces(themed_app, render_cache):
+    _qapp, theme = themed_app
+    host, _view, editor, img = _editor_view(
+        theme, {}, game="cc", toon="Cogsworth", dna="", species="DOG")
+    d = gp.standin(theme == "dark")
+    panel = editor.standin
+    assert panel.isVisible() and editor.tag.isVisible()
+    inside = img.pixelColor(*_at(panel, host, panel.width() - 6, panel.height() - 6))
+    assert _distance(inside, d["bg"]) < 6, (theme, inside.name())
+    corner = img.pixelColor(*_at(panel, host, 1, 1))
+    assert _distance(corner, gp.sheet_surface(theme == "dark")["bg"]) < 6
+    # The race icon is drawn: the disc's centre is not the bare backdrop.
+    centre = img.pixelColor(*_at(editor.canvas, host, 120, 130))
+    assert _distance(centre, gp.portrait_fallback(theme == "dark")) >= 10
+    host.close()
+
+
+@pytest.mark.parametrize("size", [(880, 688), (828, 646)])
+def test_the_editor_renders_whole_at_the_short_band(themed_app, render_cache, size):
+    """A real laptop's band measured 646 px, not the handoff's 688. The last
+    group and the footer must both be on screen, unclipped, with no scroll."""
+    _qapp, theme = themed_app
+    host, view, editor, img = _editor_view(theme, {}, size=size)
+    assert editor.scroll.verticalScrollBar().maximum() == 0
+    surface = gp.sheet_surface(theme == "dark")["bg"]
+    strip_bottom = editor.pose_strip.mapTo(host, QPoint(0, editor.pose_strip.height())).y()
+    save_top = view.sheet.save_button.mapTo(host, QPoint(0, 0)).y()
+    assert strip_bottom <= save_top, (size, strip_bottom, save_top)
+    assert view.sheet.save_button.mapTo(
+        host, QPoint(0, view.sheet.save_button.height())).y() <= size[1]
+    # Save is the blue button, painted, inside the frame.
+    blue = gp.sheet_footer_button(True, False, theme == "dark")["bg"]
+    save_px = img.pixelColor(*_at(view.sheet.save_button, host, 6, 15))
+    assert _distance(save_px, blue) < 6, (theme, size, save_px.name())
+    assert _distance(surface, blue) >= 10
+    host.close()
