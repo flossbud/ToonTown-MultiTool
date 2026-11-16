@@ -13,7 +13,8 @@ from utils.settings_keys import CLICK_SYNC_ENABLED
 
 
 @pytest.fixture
-def make(qapp, tmp_path):
+def make(qapp, tmp_path, monkeypatch):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path / "config"))
     rigs = []
 
     def _make(**kwargs):

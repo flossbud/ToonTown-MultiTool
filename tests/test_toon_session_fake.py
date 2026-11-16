@@ -5,13 +5,7 @@ import inspect
 
 import pytest
 
-from services.toon_session import (
-    ToonSession,
-    ToonState,
-    keyset_id_for_index,
-    keyset_index_for_id,
-    toon_identity,
-)
+from services.toon_session import ToonSession, ToonState, toon_identity
 from services.toon_session_fake import FakeToonSession
 
 
@@ -74,14 +68,6 @@ def test_toon_state_is_immutable(demo):
         state.enabled = False
 
 
-def test_keyset_id_helpers_round_trip():
-    for index in range(8):
-        assert keyset_index_for_id(keyset_id_for_index(index)) == index
-    assert keyset_index_for_id("not-a-number") == 0
-    assert keyset_index_for_id(None, default=2) == 2
-    assert keyset_index_for_id("-3") == 0
-
-
 def test_toon_identity_key():
     assert toon_identity("ttr", "Flossbud") == "ttr::Flossbud"
     assert toon_identity("cc", None) is None
@@ -110,7 +96,8 @@ def test_demo_matches_the_handoff(demo):
     # Click sync exists for Toontown Rewritten windows only.
     assert [t.click_sync_supported for t in toons] == [True, True, False, True]
     assert moe.click_sync is False
-    assert {t.keyset_id for t in toons} == {"0", "1"}
+    assert [t.keyset_id for t in toons] == [
+        "demo-ttr-1", "demo-ttr-2", "demo-cc-2", "demo-ttr-1"]
     assert demo.is_running()
     assert demo.keep_alive_available() and demo.click_sync_available()
 
@@ -121,6 +108,12 @@ def test_demo_accepts_real_window_ids(qapp):
     assert session.toon("103").name == "Moe"
     with pytest.raises(ValueError):
         FakeToonSession.demo(window_ids=["only-one"])
+
+
+def test_demo_sits_on_the_keysets_the_harness_has(qapp):
+    session = FakeToonSession.demo(keyset_ids={"ttr": ["aa", "bb"], "cc": ["cc"]})
+    # Corporate Clash has a single set here, so Moe falls back to it.
+    assert [t.keyset_id for t in session.toons()] == ["aa", "bb", "cc", "aa"]
 
 
 def test_toon_lookup(demo):
@@ -145,7 +138,7 @@ def test_handles(demo):
     ("set_keep_alive", "keep_alive", "demo-1", False),
     ("set_click_sync", "click_sync", "demo-2", True),
     ("set_click_sync", "click_sync", "demo-1", False),
-    ("set_keyset", "keyset_id", "demo-1", "2"),
+    ("set_keyset", "keyset_id", "demo-1", "demo-ttr-3"),
     ("set_counters_locked", "counters_locked", "demo-2", True),
     ("set_counters_locked", "counters_locked", "demo-1", False),
 ])
@@ -162,7 +155,7 @@ def test_setter_changes_the_field_and_emits_once(demo, spy, setter, field, wid, 
     ("set_enabled", "demo-1", True),
     ("set_keep_alive", "demo-1", True),
     ("set_click_sync", "demo-1", True),
-    ("set_keyset", "demo-1", "0"),
+    ("set_keyset", "demo-1", "demo-ttr-1"),
     ("set_counters_locked", "demo-1", True),
 ])
 def test_setter_with_the_current_value_emits_nothing(demo, spy, setter, wid, value):
@@ -388,14 +381,15 @@ def test_update_of_an_unknown_window_is_ignored(demo, spy):
 def test_load_profile_applies_by_slot_and_emits_per_changed_toon(demo, spy):
     demo.set_profile(2, {
         0: {"enabled": True, "keep_alive": True},        # Flossbud: no change
-        1: {"enabled": False, "keyset_id": "0"},         # Hector: two fields
+        1: {"enabled": False, "keyset_id": "demo-ttr-1"},   # Hector: two fields
         3: {"enabled": True},                            # Linux: one field
         6: {"enabled": True},                            # no toon in that slot
     })
     demo.load_profile(2)
     assert demo.loaded_profiles == [2]
     assert spy.events == [("toon", "demo-2"), ("toon", "demo-4")]
-    assert (demo.toon("demo-2").enabled, demo.toon("demo-2").keyset_id) == (False, "0")
+    assert (demo.toon("demo-2").enabled, demo.toon("demo-2").keyset_id) == (
+        False, "demo-ttr-1")
     assert demo.toon("demo-4").enabled is True
 
 

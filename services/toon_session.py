@@ -75,25 +75,6 @@ def _hex_colour(value) -> str | None:
     return f"#{digits}"
 
 
-def keyset_id_for_index(index: int) -> str:
-    """Stable id of the keyset at ``index``.
-
-    Until keysets carry their own ``"id"`` the position is the id. Everything
-    that turns a position into an id (or back) goes through this pair, so the
-    switch is one edit.
-    """
-    return str(int(index))
-
-
-def keyset_index_for_id(keyset_id: str, default: int = 0) -> int:
-    """Position of the keyset with ``keyset_id``; ``default`` when unknown."""
-    try:
-        index = int(keyset_id)
-    except (TypeError, ValueError):
-        return default
-    return index if index >= 0 else default
-
-
 def toon_identity(game: str, name: str | None) -> str | None:
     """Persistence key ``"<game>::<toon name>"``, or None while unnamed."""
     if not name:
@@ -130,63 +111,60 @@ class ToonState:
 
 
 class _Keysets:
-    """The keysets of a game as the session needs them: id, position, hidden.
+    """The keysets of a game as the session needs them, by stable id.
 
-    A set's id is its own ``"id"`` when it has one and its position otherwise
-    (see ``keyset_id_for_index``). Everything is read fresh from
-    ``KeymapManager`` on each call, so an edit is seen at once.
+    Everything is asked of ``KeymapManager`` at call time and nothing is
+    kept: a set's position changes when sets are deleted or moved, its id
+    does not. Without a keymap manager there are no keysets and every toon
+    sits on the empty id at position 0.
     """
 
     def __init__(self, keymap_manager):
         self._keymap_manager = keymap_manager
 
-    def entries(self, game: str) -> list[tuple[str, int, bool, str]]:
-        """``(id, index, hidden, name)`` for every set of ``game``, in order."""
-        if self._keymap_manager is None:
-            return [(keyset_id_for_index(0), 0, False, "Default")]
-        try:
-            sets = self._keymap_manager.get_sets(game) or []
-        except Exception:  # noqa: BLE001
-            sets = []
-        out = []
-        for index, entry in enumerate(sets):
-            raw = entry.get("id")
-            keyset_id = str(raw) if raw else keyset_id_for_index(index)
-            out.append((keyset_id, index, bool(entry.get("hidden", False)),
-                        entry.get("name", f"Set {index + 1}")))
-        return out
-
     def known(self, game: str, keyset_id: str) -> bool:
-        return any(e[0] == keyset_id for e in self.entries(game))
+        manager = self._keymap_manager
+        return manager is not None and manager.index_of(game, keyset_id) >= 0
 
     def usable(self, game: str, keyset_id: str) -> bool:
         """Known and not hidden."""
-        return any(e[0] == keyset_id and not e[2] for e in self.entries(game))
+        manager = self._keymap_manager
+        return (manager is not None
+                and manager.index_of(game, keyset_id) >= 0
+                and not manager.is_hidden(game, keyset_id))
 
     def index(self, game: str, keyset_id: str) -> int:
-        for entry in self.entries(game):
-            if entry[0] == keyset_id:
-                return entry[1]
-        return 0
+        """Position InputService routes by; 0 (the base set) when unknown."""
+        manager = self._keymap_manager
+        if manager is None:
+            return 0
+        return max(0, manager.index_of(game, keyset_id))
 
     def name(self, game: str, keyset_id: str) -> str:
-        for entry in self.entries(game):
-            if entry[0] == keyset_id:
-                return entry[3]
-        return "Default"
+        manager = self._keymap_manager
+        entry = manager.get_set_by_id(game, keyset_id) if manager is not None else None
+        return entry.get("name", "Default") if entry else "Default"
 
     def id_for_name(self, game: str, name: str) -> str | None:
-        for entry in self.entries(game):
-            if entry[3] == name:
-                return entry[0]
+        """Id of the first set called ``name``. Profiles store sets by name,
+        and names are not unique."""
+        manager = self._keymap_manager
+        if manager is None:
+            return None
+        for entry in manager.get_sets(game):
+            if entry.get("name") == name:
+                return entry.get("id")
         return None
 
     def lowest_visible(self, game: str) -> str:
-        entries = self.entries(game)
-        for entry in entries:
-            if not entry[2]:
-                return entry[0]
-        return entries[0][0] if entries else keyset_id_for_index(0)
+        manager = self._keymap_manager
+        if manager is None:
+            return ""
+        keyset_id = manager.lowest_visible_id(game)
+        if keyset_id is None:
+            ids = manager.get_set_ids(game)
+            keyset_id = ids[0] if ids else ""
+        return keyset_id
 
 
 class _Toon:
