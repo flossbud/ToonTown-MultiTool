@@ -1,0 +1,288 @@
+"""The painted strip under the app's real stylesheet, mounted in a parent.
+
+The parent paints magenta, a colour no strip block uses: wherever the strip
+is supposed to be see-through, the grab must still be magenta.
+"""
+import os
+from contextlib import contextmanager
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import pytest
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QColor, QPainter, QPalette
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QWidget
+
+from utils import theme_manager
+from utils.strips import layout as L
+from utils.strips import paint, tokens
+from utils.strips.model import StripModel
+from utils.strips.strip_widget import MARGIN, StripWidget
+
+MAGENTA = QColor(255, 0, 255)
+
+
+class Host(QWidget):
+    def paintEvent(self, _event):
+        QPainter(self).fillRect(self.rect(), MAGENTA)
+
+
+@contextmanager
+def _temporary_theme(qapp, theme):
+    before_sheet = qapp.styleSheet()
+    before_palette = QPalette(qapp.palette())
+    before_marker = theme_manager._APPLIED_THEME
+    try:
+        theme_manager.apply_theme(qapp, theme)
+        yield
+    finally:
+        qapp.setStyleSheet(before_sheet)
+        qapp.setPalette(before_palette)
+        theme_manager._APPLIED_THEME = before_marker
+
+
+@pytest.fixture(params=["light", "dark"])
+def themed_app(qapp, request):
+    with _temporary_theme(qapp, request.param):
+        yield qapp
+
+
+@pytest.fixture
+def mount(themed_app):
+    hosts = []
+
+    def _mount(model, style="neon", scale=1.0, client_width=None):
+        host = Host()
+        host.resize(700, 120)
+        strip = StripWidget(host)
+        strip.set_style(style)
+        strip.set_scale(scale)
+        strip.set_client_width(client_width)
+        strip.set_model(model)
+        strip.move(20, 20)
+        host.show()
+        QApplication.processEvents()
+        hosts.append(host)
+        return host, strip
+
+    yield _mount
+    for host in hosts:
+        host.close()
+        host.deleteLater()
+
+
+def grab(host):
+    QApplication.processEvents()
+    return host.grab().toImage()
+
+
+def at(image, strip, rect, dx, dy):
+    """Pixel at an offset from a strip-local rect's top-left corner."""
+    p = strip.pos() + QPoint(int(rect.x() + dx), int(rect.y() + dy))
+    return image.pixelColor(p)
+
+
+def close(a, b, tolerance=3):
+    b = QColor(b)
+    return (abs(a.red() - b.red()) <= tolerance
+            and abs(a.green() - b.green()) <= tolerance
+            and abs(a.blue() - b.blue()) <= tolerance)
+
+
+FLOSSBUD = StripModel(name="Flossbud", accent="#4a8fe7", species="rabbit")
+
+
+def test_strip_has_no_background_between_blocks(mount):
+    host, strip = mount(FLOSSBUD, "flat")
+    image = grab(host)
+    two, three = strip.block_rect(L.KEYSET, 2), strip.block_rect(L.KEYSET, 3)
+    gap_x = (two.right() + three.left()) / 2.0
+    p = strip.pos() + QPoint(int(gap_x), int(two.center().y()))
+    assert image.pixelColor(p) == MAGENTA
+    # Corners of the widget, far outside any block.
+    assert image.pixelColor(strip.pos() + QPoint(1, 1)) == MAGENTA
+    assert image.pixelColor(strip.geometry().bottomRight() - QPoint(1, 1)) == MAGENTA
+
+
+def test_neon_lit_and_unlit_signs(mount):
+    host, strip = mount(FLOSSBUD, "neon")
+    image = grab(host)
+    lit = strip.block_rect(L.KEYSET, 1)
+    assert close(at(image, strip, lit, 6, 6), "#4A8FE7")           # fill
+    assert close(at(image, strip, lit, 14, 1), tokens.lt("#4A8FE7", 62))  # border
+    unlit = at(image, strip, strip.block_rect(L.KEYSET, 2), 6, 6)
+    # body(#E05252): somewhere between dk15 and dk30, red-dominant.
+    assert 0x22 <= unlit.red() <= 0x43 and unlit.red() > 2 * unlit.green()
+    assert close(at(image, strip, strip.block_rect(L.KEEP_ALIVE), 5, 5), "#ff9500")
+    assert close(at(image, strip, strip.block_rect(L.ENABLE), 5, 5), "#4fc95c")
+
+
+def test_neon_glow_spills_outside_a_lit_block_only(mount):
+    host, strip = mount(FLOSSBUD.with_(click_sync=False), "neon")
+    image = grab(host)
+    lit = strip.block_rect(L.KEEP_ALIVE)
+    halo = at(image, strip, lit, 14, -2)
+    assert halo != MAGENTA and halo.green() > 20       # orange over magenta
+    unlit = strip.block_rect(L.CLICK_SYNC)
+    assert at(image, strip, unlit, 14, 31) == MAGENTA
+
+
+def test_flat_fills_and_active_ring(mount):
+    host, strip = mount(FLOSSBUD, "flat")
+    image = grab(host)
+    active = strip.block_rect(L.KEYSET, 1)
+    assert close(at(image, strip, active, 13, 1), "#ffffff")       # inset ring
+    assert close(at(image, strip, active, 5, 5), "#4A8FE7")
+    inactive = strip.block_rect(L.KEYSET, 2)
+    assert close(at(image, strip, inactive, 5, 5), tokens.dk("#E05252", 46))
+    assert close(at(image, strip, inactive, 13, 1), tokens.dk("#E05252", 46))
+    # No halo anywhere in Flat.
+    assert at(image, strip, active, 13, -2) == MAGENTA
+
+
+def test_tools_off_are_unlit(mount):
+    host, strip = mount(FLOSSBUD.with_(keep_alive=False, click_sync=False), "flat")
+    image = grab(host)
+    assert close(at(image, strip, strip.block_rect(L.KEEP_ALIVE), 4, 4),
+                 tokens.dk("#ff9500", 30))
+    assert close(at(image, strip, strip.block_rect(L.CLICK_SYNC), 4, 4),
+                 tokens.dk("#d4548a", 30))
+
+
+def test_disabled_toon_dims_tools_and_keysets_but_not_enable(mount):
+    host, strip = mount(FLOSSBUD.with_(enabled=False), "neon")
+    image = grab(host)
+    lit = at(image, strip, strip.block_rect(L.KEYSET, 1), 6, 6)
+    assert close(lit, tokens.css_saturate_brightness(QColor("#4A8FE7")))
+    # Enable shows its own off state at full strength: unlit grey sign.
+    enable = at(image, strip, strip.block_rect(L.ENABLE), 6, 6)
+    assert 0x14 <= enable.red() <= 0x29 and enable.red() == enable.green()
+    # Identity goes neutral.
+    plate = strip.block_rect(L.NAME)
+    assert close(at(image, strip, plate, plate.width() - 8, 6), "#222222")
+
+
+def test_flat_disabled_group_fades_as_one_layer(mount):
+    host, strip = mount(FLOSSBUD.with_(enabled=False), "flat")
+    image = grab(host)
+    active = strip.block_rect(L.KEYSET, 1)
+
+    def over_magenta(c):
+        c = QColor(c)
+        a = tokens.FLAT_DIM_OPACITY
+        return QColor(round(c.red() * a + 255 * (1 - a)),
+                      round(c.green() * a),
+                      round(c.blue() * a + 255 * (1 - a)))
+
+    assert close(at(image, strip, active, 5, 5), over_magenta("#4A8FE7"), 4)
+    # The ring fades with the block: white at 42%, not white over the fill.
+    assert close(at(image, strip, active, 13, 1), over_magenta("#ffffff"), 4)
+    assert close(at(image, strip, strip.block_rect(L.NAME), 60, 4), "#4a4a4a")
+
+
+def test_stopped_service_dims_like_a_disabled_toon_and_keeps_enable_lit(mount):
+    host, strip = mount(FLOSSBUD.with_(running=False), "neon")
+    image = grab(host)
+    assert close(at(image, strip, strip.block_rect(L.KEYSET, 1), 6, 6),
+                 tokens.css_saturate_brightness(QColor("#4A8FE7")))
+    assert close(at(image, strip, strip.block_rect(L.ENABLE), 5, 5), "#4fc95c")
+
+
+def test_identity_colours(mount):
+    host, strip = mount(FLOSSBUD, "flat")
+    image = grab(host)
+    plate = strip.block_rect(L.NAME)
+    assert close(at(image, strip, plate, plate.width() - 6, 4), "#4a8fe7")
+    portrait = strip.block_rect(L.PORTRAIT)
+    assert close(at(image, strip, portrait, 18, 1), "#4a8fe7")               # border
+    assert close(at(image, strip, portrait, 18, 5), tokens.lt("#4a8fe7", 55))  # fill
+    # The silhouette is drawn: some pixel in the middle is its dk(42) tint.
+    tint = QColor(tokens.dk("#4a8fe7", 42))
+    assert any(close(at(image, strip, portrait, x, y), tint, 6)
+               for x in range(10, 27) for y in range(10, 27))
+
+
+def test_text_is_pixel_sized_by_the_strip_not_the_stylesheet(themed_app):
+    assert paint.strip_font(14, 800).pixelSize() == 14
+    assert paint.name_font(tokens.NEON_STYLE).pixelSize() == 13
+    host = Host()
+    strip = StripWidget(host)
+    strip.set_model(FLOSSBUD.with_(name="A much longer toon name"))
+    text_w = paint.measure_name(tokens.NEON_STYLE, "A much longer toon name")
+    assert strip.block_rect(L.NAME).width() == pytest.approx(2 + 18 + text_w + 10 + 2)
+    host.deleteLater()
+
+
+def test_clicks_report_the_block(mount):
+    host, strip = mount(FLOSSBUD)
+    clicks, menus = [], []
+    strip.clicked.connect(lambda kind, n: clicks.append((kind, n)))
+    strip.context_requested.connect(lambda kind, n: menus.append((kind, n)))
+
+    def centre(kind, n=0):
+        return strip.block_rect(kind, n).center().toPoint()
+
+    QTest.mouseClick(strip, Qt.LeftButton, Qt.NoModifier, centre(L.KEYSET, 2))
+    QTest.mouseClick(strip, Qt.LeftButton, Qt.NoModifier, centre(L.ENABLE))
+    QTest.mouseClick(strip, Qt.LeftButton, Qt.NoModifier, centre(L.ADD))
+    QTest.mouseClick(strip, Qt.RightButton, Qt.NoModifier, centre(L.KEYSET, 3))
+    QTest.mouseClick(strip, Qt.RightButton, Qt.NoModifier, centre(L.PORTRAIT))
+    assert clicks == [(L.KEYSET, 2), (L.ENABLE, 0), (L.ADD, 0)]
+    assert menus == [(L.KEYSET, 3), (L.PORTRAIT, 0)]
+
+    # A press that slides off its block is not a click.
+    clicks.clear()
+    QTest.mousePress(strip, Qt.LeftButton, Qt.NoModifier, centre(L.KEYSET, 1))
+    QTest.mouseRelease(strip, Qt.LeftButton, Qt.NoModifier, centre(L.KEYSET, 2))
+    assert clicks == []
+    # Nor is a click in the gap between blocks or on a separator.
+    sep = strip.block_rect(L.SEPARATOR).center().toPoint()
+    QTest.mouseClick(strip, Qt.LeftButton, Qt.NoModifier, sep)
+    assert clicks == []
+
+
+def test_input_rects_cover_the_blocks_and_nothing_else(mount):
+    host, strip = mount(FLOSSBUD.with_(home=True))
+    rects = strip.input_rects()
+    # home, portrait, name, 2 tools, 3 keysets, add, enable
+    assert len(rects) == 10
+    sep = strip.block_rect(L.SEPARATOR).center().toPoint()
+    assert not any(r.contains(sep) for r in rects)
+    assert not any(r.contains(QPoint(2, 2)) for r in rects)
+    for r in rects:
+        assert strip.rect().contains(r)
+
+
+def test_scale_keeps_the_strip_true_size(mount):
+    """With the app shrunk by QT_SCALE_FACTOR 0.8 the surface asks for 1.25:
+    every block is 1.25 times as large in widget px."""
+    host, strip = mount(FLOSSBUD, scale=1.25)
+    assert strip.block_rect(L.ENABLE).width() == pytest.approx(35.0)
+    assert strip.width() == round((strip.strip_layout().width + 2 * MARGIN) * 1.25)
+    image = grab(host)
+    assert close(at(image, strip, strip.block_rect(L.KEYSET, 1), 8, 8), "#4A8FE7")
+
+
+def test_narrow_client_collapses_the_name(mount):
+    host, strip = mount(FLOSSBUD, client_width=320)
+    assert strip.strip_layout().collapse == L.NO_NAME
+    assert strip.block_rect(L.NAME) is None
+    assert strip.row_size().width() == 373 - 77
+
+
+def test_every_state_paints_in_both_looks(mount):
+    states = [
+        FLOSSBUD.with_(keysets=(1,)),
+        FLOSSBUD.with_(keysets=tuple(range(1, 9)), active=5, show_add=False),
+        FLOSSBUD.with_(enabled=False),
+        FLOSSBUD.with_(keep_alive=None, click_sync=None),
+        FLOSSBUD.with_(keysets=(1, 2), hidden_sets=True, home=True, home_open=True),
+        FLOSSBUD.with_(home=True, running=False, species=None),
+    ]
+    for style in tokens.STYLES:
+        for model in states:
+            host, strip = mount(model, style)
+            image = grab(host)
+            enable = strip.block_rect(L.ENABLE)
+            assert at(image, strip, enable, 5, 5) != MAGENTA
