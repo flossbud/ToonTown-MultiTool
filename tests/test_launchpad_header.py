@@ -29,12 +29,13 @@ def test_pressing_the_lit_button_closes_and_another_swaps():
     assert next_open_sheet(SHEET_KEYSETS, SHEET_SETTINGS) == SHEET_SETTINGS
 
 
-@pytest.mark.parametrize("count, text", [
-    (0, "No toons running"), (-2, "No toons running"),
-    (1, "1 toon running"), (2, "2 toons running"), (4, "4 toons running"),
+@pytest.mark.parametrize("count, running, text", [
+    (0, True, ""), (-2, True, ""), (0, False, ""),
+    (1, True, "1 toon"), (2, True, "2 toons"), (4, True, "4 toons"),
+    (1, False, "1 toon \u00b7 stopped"), (3, False, "3 toons \u00b7 stopped"),
 ])
-def test_session_status_text(count, text):
-    assert session_status_text(count) == text
+def test_session_status_text(count, running, text):
+    assert session_status_text(count, running) == text
 
 
 def test_the_three_buttons_in_order_with_their_identity_colours():
@@ -106,11 +107,15 @@ def test_placement_follows_the_design(mounted):
 
 def test_status_stays_right_aligned_as_the_count_changes(mounted):
     mounted.set_toon_count(3)
-    assert mounted.status.text() == "3 toons running"
+    assert mounted.status.text() == "3 toons"
+    assert mounted.status.isVisible()
+    assert mounted.status.geometry().right() + 1 == 880 - STATUS_RIGHT
+    mounted.set_running(False)
+    assert mounted.status.text() == "3 toons \u00b7 stopped"
     assert mounted.status.geometry().right() + 1 == 880 - STATUS_RIGHT
     mounted.set_toon_count(0)
-    assert mounted.status.text() == "No toons running"
-    assert mounted.status.geometry().right() + 1 == 880 - STATUS_RIGHT
+    assert mounted.status.text() == ""
+    assert not mounted.status.isVisible()
 
 
 @pytest.mark.parametrize("width", [820, 880, 1280])

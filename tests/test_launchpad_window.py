@@ -239,19 +239,24 @@ def test_main_can_drive_it_like_the_classic_window(window):
 
 def test_session_status_follows_the_toons(window, qapp):
     wm = window.window_manager
-    assert window.header.status.text() == "No toons running"
+    assert window.header.status.text() == ""
+    assert not window.header.status.isVisible()
     wm.ttr_window_ids = ["101", "102"]
     wm.window_games = {"101": "ttr", "102": "ttr"}
     window.session._on_window_ids(["101", "102"])
-    assert window.header.status.text() == "2 toons running"
+    window.session.start()
+    assert window.header.status.text() == "2 toons"
+    assert window.header.status.isVisible()
     wm.ttr_window_ids = ["101"]
     window.session._on_window_ids(["101"])
-    assert window.header.status.text() == "1 toon running"
-    window.session.stop()                       # stopped toons are still running
-    assert window.header.status.text() == "1 toon running"
+    assert window.header.status.text() == "1 toon"
+    window.session.stop()                       # the toon is still up, broadcast stopped
+    assert window.header.status.text() == "1 toon \u00b7 stopped"
+    window.session.start()
+    assert window.header.status.text() == "1 toon"
     wm.ttr_window_ids = []
     window.session._on_window_ids([])
-    assert window.header.status.text() == "No toons running"
+    assert window.header.status.text() == ""
 
 
 def test_hints_toggle_persists_and_blocks_tooltips(window):
