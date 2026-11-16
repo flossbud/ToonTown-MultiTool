@@ -121,3 +121,46 @@ def test_none_sm_is_noop():
     s = RecentToonsStore(None)
     s.record("a", "Moe", "ttr", "dna1")
     assert s.list("a") == [] and s.get("a") is None
+
+
+# ── When a toon was last played ─────────────────────────────────────────────
+
+def test_recording_stamps_when_the_toon_was_played(monkeypatch):
+    import utils.recent_toons as mod
+    monkeypatch.setattr(mod.time, "time", lambda: 1_000_000.0)
+    store = RecentToonsStore(_FakeSettings())
+    store.record("a", "Flossbud", "ttr", dna="x")
+    assert store.get("a").played_at == 1_000_000.0
+
+
+def test_the_stamp_is_not_part_of_a_toons_identity():
+    assert ToonRecord("A", "ttr", "x", played_at=1.0) == ToonRecord("A", "ttr", "x")
+
+
+def test_the_stamp_only_moves_once_it_is_stale(monkeypatch):
+    """A toon being played is recorded on every poll that changes it; the
+    stamp alone must not turn each of those into a write."""
+    import utils.recent_toons as mod
+    clock = [1_000_000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: clock[0])
+    sm = _FakeSettings()
+    store = RecentToonsStore(sm)
+    store.record("a", "Flossbud", "ttr", dna="x")
+    writes = sm.set_calls
+    clock[0] += 30
+    store.record("a", "Flossbud", "ttr", dna="x")
+    assert sm.set_calls == writes                       # same toon, fresh stamp
+    assert store.get("a").played_at == 1_000_000.0
+    clock[0] += mod._PLAYED_STEP_S
+    store.record("a", "Flossbud", "ttr", dna="x")
+    assert sm.set_calls == writes + 1
+    assert store.get("a").played_at == 1_000_000.0 + 30 + mod._PLAYED_STEP_S
+
+
+def test_records_from_before_the_stamp_existed_read_as_unknown():
+    sm = _FakeSettings()
+    sm.d["recent_toons"] = {"_v": 2, "accounts": {"a": {"primary": None, "toons": [
+        {"toon_name": "Old", "game": "ttr", "dna": "x"},
+        {"toon_name": "Odd", "game": "ttr", "dna": "y", "played_at": "yesterday"}]}}}
+    store = RecentToonsStore(sm)
+    assert [r.played_at for r in store.list("a")] == [None, None]

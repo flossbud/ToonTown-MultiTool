@@ -15,12 +15,17 @@ degrade to a no-op (never persists, always empty).
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 
 from utils.ttr_dna import parse_dna
 
 _KEY = "recent_toons"
 _CAP = 8
+# A toon being played is re-recorded on every poll that changes it; its
+# "played" stamp only moves once it is this many seconds old, so the stamp
+# alone never causes a write per poll.
+_PLAYED_STEP_S = 600
 
 
 @dataclass(frozen=True)
@@ -32,6 +37,9 @@ class ToonRecord:
     max_laff: int | None = None
     species: str | None = None
     accent: str | None = None
+    # Epoch seconds the toon was last seen in a game. Not part of a toon's
+    # identity: two records of the same toon are equal whenever it was played.
+    played_at: float | None = field(default=None, compare=False)
 
 
 def _rec_from_dict(d: dict) -> ToonRecord | None:
@@ -45,6 +53,8 @@ def _rec_from_dict(d: dict) -> ToonRecord | None:
         d.get("max_laff") if isinstance(d.get("max_laff"), int) else None,
         d.get("species") if isinstance(d.get("species"), str) else None,
         d.get("accent") if isinstance(d.get("accent"), str) else None,
+        float(d["played_at"]) if isinstance(d.get("played_at"), (int, float))
+        and not isinstance(d.get("played_at"), bool) else None,
     )
 
 
@@ -152,6 +162,11 @@ class RecentToonsStore:
                 new[k] = v
             else:
                 new.setdefault(k, None)
+        now = time.time()
+        played = new.get("played_at")
+        if (not isinstance(played, (int, float)) or isinstance(played, bool)
+                or now - played >= _PLAYED_STEP_S or played > now):
+            new["played_at"] = int(now)
         toons.insert(0, new)
         del toons[_CAP:]
         acct["toons"] = toons
