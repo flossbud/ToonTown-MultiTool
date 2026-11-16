@@ -90,6 +90,34 @@ class AttachStrategy:
         except Exception:
             return 1.0
 
+    def rect_to_logical(self, native) -> QRect:
+        """Convert a whole native rect using the screen owning its origin.
+
+        Mapping the far corner independently can select the next monitor's
+        scale, even when the window merely ends at the screen boundary.
+        """
+        x, y, width, height = native
+        if self.logical_native:
+            return QRect(int(x), int(y), int(width), int(height))
+        if type(self).to_logical is not AttachStrategy.to_logical:
+            # Preserve custom coordinate transforms supplied by strategies.
+            left, top = self.to_logical(x, y)
+            right, bottom = self.to_logical(x + width, y + height)
+            return QRect(left, top, right - left, bottom - top)
+        screens = QGuiApplication.screens()
+        target = screens[0] if screens else None
+        for screen in screens:
+            g, dpr = screen.geometry(), screen.devicePixelRatio()
+            if (g.x() <= x < g.x() + g.width() * dpr
+                    and g.y() <= y < g.y() + g.height() * dpr):
+                target = screen
+                break
+        if target is None:
+            return QRect(int(x), int(y), int(width), int(height))
+        left, top = screen_coords.native_to_logical(x, y, [target])
+        ratio = target.devicePixelRatio()
+        return QRect(left, top, round(width / ratio), round(height / ratio))
+
 
 class X11TransientAttach(AttachStrategy):
     """Managed, never keep-above, never a DOCK: the strip takes its place in
@@ -147,7 +175,7 @@ def _own_ids(own_window_ids) -> set[int]:
 
 
 def _gate_region(strip_rect: QRect, game_wid: str, snapshot, own_window_ids,
-                 to_logical, clip: bool = True) -> QRegion | None:
+                 to_logical, clip: bool = True, rect_to_logical=None) -> QRegion | None:
     """Shared occlusion maths: the strip, clipped to its game window and
     carved by every foreign window above the game. The strips' own surfaces
     never count as occluders; every other window does, this app's main
@@ -161,11 +189,71 @@ def _gate_region(strip_rect: QRect, game_wid: str, snapshot, own_window_ids,
     from utils.ghost_cursors import _region_from_inputs, _scan_region_inputs
     own = _own_ids(own_window_ids)
     foreign = [entry for entry in snapshot if entry[0] not in own]
-    inputs = _scan_region_inputs(target, foreign, (), to_logical)
+    if rect_to_logical is None:
+        inputs = _scan_region_inputs(target, foreign, (), to_logical)
+    else:
+        inputs, occluders = None, []
+        for wid, (left, top, right, bottom), _pid in foreign:
+            rect = rect_to_logical((left, top, right - left, bottom - top))
+            if wid == target:
+                inputs = (rect, occluders)
+                break
+            occluders.append(rect)
     if inputs is not None and not clip:
         # Carved by what covers the game, but not cut at the game's edge.
         inputs = (QRect(strip_rect), inputs[1])
     return _region_from_inputs(strip_rect, inputs)
+
+
+WS_EX_TRANSPARENT = 0x00000020
+_DWMWA_EXTENDED_FRAME_BOUNDS = 9
+
+
+def _win32_ex_style(hwnd: int) -> int:
+    """The window's extended style bits; 0 when it cannot be read."""
+    try:
+        import win32con
+        import win32gui
+        return int(win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE))
+    except Exception:
+        return 0
+
+
+def _win32_frame_bounds(hwnd: int):
+    """(left, top, right, bottom) of what the window visibly covers, physical
+    px, or None. GetWindowRect includes the invisible resize border Windows
+    10 and 11 put around a window (about 7 px a side); this does not."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        rect = wintypes.RECT()
+        result = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            wintypes.HWND(hwnd), _DWMWA_EXTENDED_FRAME_BOUNDS,
+            ctypes.byref(rect), ctypes.sizeof(rect))
+        if result != 0:
+            return None
+        return (rect.left, rect.top, rect.right, rect.bottom)
+    except Exception:
+        return None
+
+
+def win32_occluders(snapshot, game_hwnd: int, own_window_ids):
+    """The z-order snapshot reduced to what can really cover the game's
+    strip: everything above the game except our own surfaces and windows
+    that let the pointer through (other software's click-through overlays,
+    our ghost gloves), each with its visible frame instead of its window
+    rectangle. The game's entry is kept, last, with its visible frame too.
+    None when the game is not in the snapshot."""
+    own = _own_ids(own_window_ids)
+    out = []
+    for hwnd, rect, pid in snapshot:
+        if hwnd == game_hwnd:
+            out.append((hwnd, _win32_frame_bounds(hwnd) or rect, pid))
+            return out
+        if hwnd in own or _win32_ex_style(hwnd) & WS_EX_TRANSPARENT:
+            continue
+        out.append((hwnd, _win32_frame_bounds(hwnd) or rect, pid))
+    return None
 
 
 class Win32TopmostAttach(AttachStrategy):
@@ -186,8 +274,18 @@ class Win32TopmostAttach(AttachStrategy):
 
     def visible_region(self, strip_rect, game_wid, own_window_ids, clip=True):
         from utils.ghost_cursors import _win32_zorder_snapshot
-        return _gate_region(strip_rect, game_wid, _win32_zorder_snapshot(),
-                            own_window_ids, self.to_logical, clip)
+        snapshot = _win32_zorder_snapshot()
+        if snapshot is None:
+            return None                         # no information: show it all
+        try:
+            game = int(game_wid)
+        except (TypeError, ValueError):
+            return None
+        occluders = win32_occluders(snapshot, game, own_window_ids)
+        if occluders is None:
+            return QRegion()                    # minimized or gone: show nothing
+        return _gate_region(strip_rect, game_wid, occluders, (), self.to_logical,
+                            clip, self.rect_to_logical)
 
 
 # NSWindowCollectionBehaviorFullScreenAuxiliary: lets the panel share a
@@ -232,7 +330,7 @@ class CocoaPanelAttach(AttachStrategy):
         from utils.ghost_cursors import _darwin_zorder_snapshot
         # Strips are not layer-0 windows, so they are never in the snapshot.
         return _gate_region(strip_rect, game_wid, _darwin_zorder_snapshot(),
-                            (), self.to_logical, clip)
+                            (), self.to_logical, clip, self.rect_to_logical)
 
 
 def pick_attach_strategy(platform_name: str | None = None) -> AttachStrategy:

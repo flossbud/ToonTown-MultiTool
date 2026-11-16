@@ -78,9 +78,16 @@ def confine(ghost_wid: int, game_wid: int) -> bool:
         from Xlib.protocol import event as xevent
 
         d = _get_display()
+        errors = []
+
+        def request_error(error, _request):
+            errors.append(error)
+            return True
+
         ghost = d.create_resource_object("window", int(ghost_wid))
         ghost.change_property(d.intern_atom("WM_TRANSIENT_FOR"),
-                              Xatom.WINDOW, 32, [int(game_wid)])
+                              Xatom.WINDOW, 32, [int(game_wid)],
+                              onerror=request_error)
 
         root = d.screen().root
         redirect = X.SubstructureRedirectMask | X.SubstructureNotifyMask
@@ -89,7 +96,7 @@ def confine(ghost_wid: int, game_wid: int) -> bool:
             ev = xevent.ClientMessage(
                 window=ghost, client_type=d.intern_atom(type_name),
                 data=(32, data))
-            root.send_event(ev, event_mask=redirect)
+            root.send_event(ev, event_mask=redirect, onerror=request_error)
 
         def send_state(action, *names):
             atoms = [d.intern_atom(n) for n in names]
@@ -103,8 +110,12 @@ def confine(ghost_wid: int, game_wid: int) -> bool:
         # data.l = [source(2=pager/user), sibling, detail, 0, 0]
         send_message("_NET_RESTACK_WINDOW",
                      [2, int(game_wid), X.Above, 0, 0])
-        d.flush()
-        return True
+        # One reply fences the preceding asynchronous requests and verifies
+        # the parent still exists. Merely flushing reports success before
+        # a BadWindow has arrived. Request handlers leave the display's
+        # shared default handler untouched.
+        d.create_resource_object("window", int(game_wid)).get_attributes()
+        return not errors
     except Exception:
         _drop_display()
         return False

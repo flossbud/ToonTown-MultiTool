@@ -114,7 +114,7 @@ class StripSurface(QWidget):
             return
         self._game_wid = wid
         if wid is not None and self._attached:
-            self._strategy.attach(self, self._backend, wid)
+            self._reassert()
 
     def is_presented(self) -> bool:
         """True while the strip is really on show (not concealed, not
@@ -141,10 +141,7 @@ class StripSurface(QWidget):
     def client_logical(self) -> QRect | None:
         if self._client is None:
             return None
-        x, y, w, h = self._client
-        left, top = self._strategy.to_logical(x, y)
-        right, bottom = self._strategy.to_logical(x + w, y + h)
-        return QRect(left, top, right - left, bottom - top)
+        return self._strategy.rect_to_logical(self._client)
 
     def _apply_geometry(self) -> None:
         client = self.client_logical()
@@ -185,6 +182,10 @@ class StripSurface(QWidget):
         # is in place, so it can never flash over a window covering the
         # game, and a late first paint never shows as black bands.
         self.setWindowOpacity(0.0)
+        try:
+            self._backend.apply_input_region(self, QRegion())
+        except Exception:
+            pass
         if self._strategy.shaped():
             self._apply_shape(False)      # opacity does nothing here
         self.show()
@@ -237,11 +238,13 @@ class StripSurface(QWidget):
         and put the presentation back."""
         if not self.isVisible():
             return
+        self._attached = True
         if self._game_wid is not None:
             try:
-                self._strategy.attach(self, self._backend, self._game_wid)
+                self._attached = bool(self._strategy.attach(
+                    self, self._backend, self._game_wid))
             except Exception:
-                pass
+                self._attached = False
         self._present()
 
     def closeEvent(self, event) -> None:
