@@ -14,7 +14,7 @@ from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QRegion
 from PySide6.QtWidgets import QWidget
 
-from utils import ui_scale
+from utils import settings_keys, ui_scale
 from utils.overlay.backend import OverlayBackend, get_overlay_backend
 from utils.overlay.region import controls_region
 from utils.strips.attach import AttachStrategy, pick_attach_strategy
@@ -25,14 +25,18 @@ from utils.strips.strip_widget import StripWidget
 ANCHOR_INSET = 10.0
 
 
-def strip_scale(environ=os.environ) -> float:
-    """What to multiply strip metrics by so a strip is true-size on the game
-    window: the inverse of the UI scale the app shrank itself by."""
+def strip_scale(environ=os.environ, size: str | None = None) -> float:
+    """What to multiply strip metrics by: the inverse of the UI scale the
+    app shrank itself by, so a strip is true-size on the game window, times
+    the factor of the strip size the user picked (`size`, a FLOAT_STRIP_SIZE
+    value; None for no factor). Everything that hangs off a strip takes its
+    scale from the strip, so this is the one place the two meet."""
+    factor = 1.0 if size is None else settings_keys.float_strip_size_factor(size)
     try:
         active = float(environ.get(ui_scale.ENV_ACTIVE, "") or 1.0)
     except ValueError:
-        return 1.0
-    return 1.0 / active if 0.3 <= active <= 3.0 else 1.0
+        return factor
+    return (1.0 / active if 0.3 <= active <= 3.0 else 1.0) * factor
 
 
 def strip_origin(client: QRect, row: QSize, row_offset, scale: float) -> QPoint:
@@ -94,6 +98,12 @@ class StripSurface(QWidget):
 
     def set_style(self, name: str) -> None:
         self.strip.set_style(name)
+        self._fit()
+
+    def set_scale(self, scale: float) -> None:
+        """A new strip size: same place on the game window, larger or
+        smaller around the row's centre."""
+        self.strip.set_scale(scale)
         self._fit()
 
     def _fit(self) -> None:

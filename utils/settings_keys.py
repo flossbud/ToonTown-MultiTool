@@ -136,6 +136,19 @@ FLOAT_STRIP_STYLE_FLAT = "flat"
 FLOAT_STRIP_STYLE_VALUES = (FLOAT_STRIP_STYLE_NEON, FLOAT_STRIP_STYLE_FLAT)
 FLOAT_STRIP_STYLE_DEFAULT = FLOAT_STRIP_STYLE_NEON
 
+# How large the strips are drawn: a factor on top of their true size on the
+# game window. Small is the size they were first built at.
+FLOAT_STRIP_SIZE = "float_strip_size"
+FLOAT_STRIP_SIZE_SMALL = "small"
+FLOAT_STRIP_SIZE_MEDIUM = "medium"
+FLOAT_STRIP_SIZE_LARGE = "large"
+FLOAT_STRIP_SIZE_VALUES = (FLOAT_STRIP_SIZE_SMALL, FLOAT_STRIP_SIZE_MEDIUM,
+                           FLOAT_STRIP_SIZE_LARGE)
+FLOAT_STRIP_SIZE_DEFAULT = FLOAT_STRIP_SIZE_MEDIUM
+FLOAT_STRIP_SIZE_FACTORS = {FLOAT_STRIP_SIZE_SMALL: 1.0,
+                            FLOAT_STRIP_SIZE_MEDIUM: 1.25,
+                            FLOAT_STRIP_SIZE_LARGE: 1.5}
+
 # Hide the launchpad window once toons are up.
 HIDE_WINDOW_WHEN_TOONS_UP = "hide_window_when_toons_up"
 HIDE_WINDOW_WHEN_TOONS_UP_DEFAULT = True
@@ -153,6 +166,16 @@ KEYSET_EDITOR_LAYOUT_DEFAULT = KEYSET_EDITOR_LAYOUT_LIST
 def normalize_float_strip_style(raw) -> str:
     """A stored strip style, or the default for anything unknown."""
     return raw if raw in FLOAT_STRIP_STYLE_VALUES else FLOAT_STRIP_STYLE_DEFAULT
+
+
+def normalize_float_strip_size(raw) -> str:
+    """A stored strip size, or the default for anything unknown."""
+    return raw if raw in FLOAT_STRIP_SIZE_VALUES else FLOAT_STRIP_SIZE_DEFAULT
+
+
+def float_strip_size_factor(raw) -> float:
+    """What a stored strip size multiplies the strip's scale by."""
+    return FLOAT_STRIP_SIZE_FACTORS[normalize_float_strip_size(raw)]
 
 
 def normalize_keyset_editor_layout(raw) -> str:

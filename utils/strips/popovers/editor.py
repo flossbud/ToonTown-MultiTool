@@ -400,6 +400,8 @@ class KeysetEditor(QWidget):
                                               dk(c, 24), dk(c, 11)))
             caret_fill = QColor(dk(c, 22))
         else:
+            # Flat has no halo; the card still lifts off the game.
+            paint.paint_drop_shadow(p, card, radius)
             fill = QBrush(QColor(tokens.POPOVER_BASE))
             caret_fill = QColor(tokens.POPOVER_BASE)
         cx = self._caret_x if self._caret_x is not None else card.center().x()

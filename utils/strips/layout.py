@@ -8,7 +8,7 @@ from typing import Callable
 from PySide6.QtCore import QRectF
 
 from utils.strips.model import StripModel
-from utils.strips.tokens import StripStyle
+from utils.strips.tokens import StripStyle, snap, snap_up
 
 HOME = "home"
 PORTRAIT = "portrait"
@@ -93,14 +93,23 @@ def visible_keysets(model: StripModel, collapse: int) -> tuple[int, ...]:
 
 def layout_strip(model: StripModel, style: StripStyle,
                  measure_name: Callable[[str], float],
-                 collapse: int = FULL) -> StripLayout:
-    """Lay the row out left to right, everything vertically centred."""
+                 collapse: int = FULL, device_scale: float = 0.0) -> StripLayout:
+    """Lay the row out left to right, everything vertically centred.
+
+    With a `device_scale` (design px to device px) and a style snapped to it
+    (tokens.snapped_style), every edge lands on a whole device pixel: the
+    two things the style cannot settle, a block's centred top and the name
+    plate's text-driven width, are snapped here."""
     h = style.height
     blocks: list[Block] = []
     x = 0.0
 
+    def top(height: float) -> float:
+        y = (h - height) / 2.0
+        return snap(y, device_scale) if device_scale > 0 and y > 0 else y
+
     def centred(width: float, height: float) -> QRectF:
-        return QRectF(x, (h - height) / 2.0, width, height)
+        return QRectF(x, top(height), width, height)
 
     def advance(width: float, extra: float = 0.0) -> None:
         nonlocal x
@@ -115,8 +124,10 @@ def layout_strip(model: StripModel, style: StripStyle,
     identity_w = style.portrait
     if collapse < NO_NAME:
         plate_w = name_plate_width(style, measure_name(model.name))
+        if device_scale > 0:
+            plate_w = snap_up(plate_w, device_scale)
         plate_x = x + style.portrait - style.name_tuck
-        blocks.append(Block(NAME, QRectF(plate_x, (h - style.name_h) / 2.0,
+        blocks.append(Block(NAME, QRectF(plate_x, top(style.name_h),
                                          plate_w, style.name_h)))
         identity_w = style.portrait - style.name_tuck + plate_w
     advance(identity_w)
@@ -152,15 +163,16 @@ def layout_strip(model: StripModel, style: StripStyle,
 
 def fit_strip(model: StripModel, style: StripStyle,
               measure_name: Callable[[str], float],
-              client_width: float | None) -> StripLayout:
+              client_width: float | None,
+              device_scale: float = 0.0) -> StripLayout:
     """The widest layout that fits the game window's client width. With no
     width to fit (None) the strip is laid out in full."""
-    result = layout_strip(model, style, measure_name, FULL)
+    result = layout_strip(model, style, measure_name, FULL, device_scale)
     if client_width is None:
         return result
     limit = client_width - CLIENT_MARGIN
     for collapse in (NO_NAME, ACTIVE_SET_ONLY):
         if result.width <= limit:
             break
-        result = layout_strip(model, style, measure_name, collapse)
+        result = layout_strip(model, style, measure_name, collapse, device_scale)
     return result

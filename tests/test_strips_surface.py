@@ -233,7 +233,10 @@ def test_scale_makes_the_strip_true_size(make):
     surface.place(CLIENT)
     settle()
     assert surface.strip.block_rect(L.ENABLE).width() == pytest.approx(35.0)
-    assert surface.geometry().y() == round(50 + 10 * 1.25 - MARGIN * 1.25)
+    # The row's top edge is the scaled inset inside the client area, to the
+    # pixel the surface can be placed on.
+    row_top = surface.geometry().y() + surface.strip.row_offset().y()
+    assert abs(row_top - (50 + 10 * 1.25)) <= 0.5
     # 800 logical px of client is 640 design px: still room for the name.
     assert surface.strip.strip_layout().collapse == L.FULL
 
@@ -283,4 +286,4 @@ def test_stamp_names_the_strategy_and_look_once(qapp, capsys, monkeypatch):
     a.shutdown(), b.shutdown()
     out = capsys.readouterr().out
     assert out.count("[Strips] ") == 1
-    assert "[Strips] attach=test style=flat" in out
+    assert "[Strips] attach=test style=flat size=small" in out

@@ -5,10 +5,16 @@ behaves on a real desktop. Each state is the real StripWidget mounted in a
 parent that paints the handoff's striped stand-in for a game viewport, 10 px
 from the top, the way the spec sheet shows it.
 
-    python scripts/strip_render.py OUTDIR [--scale 2] [--fonts DIR]
+    python scripts/strip_render.py OUTDIR [--scale 2] [--size small] [--fonts DIR]
                                    [--compare SCREENSHOT_DIR]
 
+Besides one PNG per state it writes <style>-sizes.png: the strip at small,
+medium and large over a bright sky, grass and a dark scene, which is where
+the drop shadow and the pixel grid show.
+
 --scale     device pixel ratio of the renders (default 1, the screenshots' ratio)
+--size      strip size of the per-state renders: small (default, the size
+            the handoff's screenshots are at), medium or large
 --fonts     a folder of extra font files to load (the app does not ship Inter)
 --compare   the handoff's screenshots/ folder; adds <style>-compare.png with
             each design crop above our render of the same state
@@ -27,6 +33,8 @@ def _parse(argv):
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("outdir")
     ap.add_argument("--scale", type=float, default=1.0)
+    ap.add_argument("--size", default="small",
+                    choices=("small", "medium", "large"))
     ap.add_argument("--fonts", default=None)
     ap.add_argument("--compare", default=None)
     return ap.parse_args(argv)
@@ -40,9 +48,11 @@ from PySide6.QtGui import (QColor, QFontDatabase, QImage,          # noqa: E402
                            QPainter)
 from PySide6.QtWidgets import QApplication, QWidget                # noqa: E402
 
+from utils import settings_keys                                    # noqa: E402
 from utils.strips import tokens                                    # noqa: E402
 from utils.strips.model import StripModel                          # noqa: E402
-from utils.strips.strip_widget import MARGIN, StripWidget          # noqa: E402
+from utils.strips.strip_surface import ANCHOR_INSET                # noqa: E402
+from utils.strips.strip_widget import StripWidget                  # noqa: E402
 
 FLOSSBUD = StripModel(name="Flossbud", accent="#4a8fe7", species="rabbit")
 HECTOR = StripModel(name="Hector", accent="#e74a4a", species="dog")
@@ -71,15 +81,26 @@ STATES = [
 CROP_H = 96
 
 
-class Viewport(QWidget):
-    """The handoff's stand-in for a game viewport: diagonal stripes."""
+# Flat stand-ins for what a strip really sits on: Toontown's daytime sky and
+# grass are the bright cases, a building interior the dark one.
+BACKGROUNDS = (("sky", "#8fd3ff"), ("grass", "#5fbf3c"), ("dark", "#1b1d22"))
 
-    def __init__(self, width: int) -> None:
+
+class Viewport(QWidget):
+    """The handoff's stand-in for a game viewport: diagonal stripes, or one
+    flat colour."""
+
+    def __init__(self, width: int, height: int = CROP_H,
+                 colour: str | None = None) -> None:
         super().__init__()
-        self.setFixedSize(width, CROP_H)
+        self._colour = colour
+        self.setFixedSize(width, height)
 
     def paintEvent(self, _event) -> None:
         p = QPainter(self)
+        if self._colour is not None:
+            p.fillRect(self.rect(), QColor(self._colour))
+            return
         p.fillRect(self.rect(), QColor("#191b20"))
         p.setRenderHint(QPainter.Antialiasing, True)
         p.setPen(Qt.NoPen)
@@ -98,19 +119,26 @@ class Viewport(QWidget):
         p.drawRect(self.rect().adjusted(0, 0, -1, -1))
 
 
-def render_state(style: str, model: StripModel, width: int) -> QImage:
-    view = Viewport(width)
+def render_state(style: str, model: StripModel, width: int,
+                 size: str | None = None, colour: str | None = None) -> QImage:
+    """One strip on a viewport `width` px wide, placed the way the surface
+    places it. `width` is the game window's width in screen px."""
+    k = settings_keys.float_strip_size_factor(size or ARGS.size)
+    height = int(round(CROP_H * (k if colour is not None else max(1.0, k))))
+    view = Viewport(width, height, colour)
     strip = StripWidget(view)
     strip.set_style(style)
-    strip.set_client_width(width)
+    strip.set_scale(k)
+    strip.set_client_width(width / k)
     strip.set_model(model)
-    row = strip.row_size()
-    # Row centred, its top edge 10 px inside the viewport.
-    strip.move(int(round((width - row.width()) / 2 - MARGIN)), int(10 - MARGIN))
+    row, offset = strip.row_size(), strip.row_offset()
+    # Row centred, its top edge the anchor inset inside the viewport.
+    strip.move(int(round((width - row.width()) / 2 - offset.x())),
+               int(round(ANCHOR_INSET * k - offset.y())))
     view.show()
     QApplication.processEvents()
     dpr = ARGS.scale
-    image = QImage(int(round(width * dpr)), int(round(CROP_H * dpr)),
+    image = QImage(int(round(width * dpr)), int(round(height * dpr)),
                    QImage.Format_ARGB32_Premultiplied)
     image.setDevicePixelRatio(dpr)
     image.fill(Qt.transparent)
@@ -119,6 +147,39 @@ def render_state(style: str, model: StripModel, width: int) -> QImage:
     view.close()
     view.deleteLater()
     return image
+
+
+SIZE_STATES = (FLOSSBUD.with_(home=True, keysets=(1, 2, 3), active=2,
+                              click_sync=False),
+               HECTOR.with_(enabled=False, hidden_sets=True))
+SIZE_W = 780
+
+
+def render_sizes(style: str) -> QImage:
+    """Small, medium and large down the page, sky, grass and dark across;
+    in each cell a running toon above a disabled one."""
+    dpr, gap = ARGS.scale, 8
+    cells = []
+    for size in settings_keys.FLOAT_STRIP_SIZE_VALUES:
+        cells.append([[render_state(style, model, SIZE_W, size, colour)
+                       for model in SIZE_STATES]
+                      for _name, colour in BACKGROUNDS])
+    heights = [sum(img.height() for img in row[0]) for row in cells]
+    sheet = QImage(int((len(BACKGROUNDS) * (SIZE_W + gap) + gap) * dpr),
+                   int(sum(heights) + (len(cells) + 1) * gap * dpr),
+                   QImage.Format_ARGB32_Premultiplied)
+    sheet.fill(QColor("#101114"))
+    sp = QPainter(sheet)
+    y = int(gap * dpr)
+    for row, height in zip(cells, heights):
+        for col, images in enumerate(row):
+            x, cy = int((gap + col * (SIZE_W + gap)) * dpr), y
+            for image in images:
+                sp.drawImage(QPoint(x, cy), image)
+                cy += image.height()
+        y += height + int(gap * dpr)
+    sp.end()
+    return sheet
 
 
 def main() -> int:
@@ -148,6 +209,7 @@ def main() -> int:
             sp.drawImage(QPoint(int(x * dpr), int(y * dpr)), image)
         sp.end()
         sheet.save(os.path.join(ARGS.outdir, f"{style}-sheet.png"))
+        render_sizes(style).save(os.path.join(ARGS.outdir, f"{style}-sizes.png"))
 
         if ARGS.compare:
             design = QImage(os.path.join(ARGS.compare, f"{style}-03-states.png"))

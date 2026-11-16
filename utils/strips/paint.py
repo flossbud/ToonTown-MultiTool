@@ -93,7 +93,10 @@ def _toned_gradient(g: QLinearGradient, tone: Tone) -> QLinearGradient:
 def _border(p: QPainter, shape: Callable[[QRectF, float], QPainterPath],
             rect: QRectF, radius: float, width: float, colour: QColor,
             dashed: bool = False) -> None:
-    """A CSS border: `width` px, entirely inside `rect`."""
+    """A CSS border: `width` px, entirely inside `rect`. The width is a
+    whole number of device pixels, so on a scaled strip the inner edge is
+    as sharp as the outer one."""
+    width = tokens.snap(width, _device_scale(p))
     half = width / 2.0
     pen = QPen(colour, width)
     pen.setJoinStyle(Qt.MiterJoin)
@@ -150,18 +153,26 @@ def paint_glow(p: QPainter, rect: QRectF, radius: float, colour: QColor,
     cache, and the same pixels on every platform. The box itself is opaque
     and is painted afterwards, so nothing is drawn under it.
     """
+    _falloff(p, rect, radius, colour, blur, spread, 0.0)
+
+
+def _falloff(p: QPainter, rect: QRectF, radius: float, colour: QColor,
+             blur: float, spread: float, inside: float) -> None:
+    """The blurred edge of a rounded box, from 3 sigma outside it to
+    `inside` px within it."""
     alpha = colour.alphaF()
     if alpha <= 0.0 or blur <= 0.0:
         return
     sigma = blur / 2.0
     reach = 3.0 * sigma
     steps = int(math.ceil(reach / _GLOW_STEP))
+    inner = int(math.ceil(max(0.0, inside) / _GLOW_STEP))
     p.save()
     p.setRenderHint(QPainter.Antialiasing, True)
     p.setPen(Qt.NoPen)
     base = QColor(colour)
     covered = 0.0
-    for i in range(steps, 0, -1):
+    for i in range(steps, -inner, -1):
         d = i * _GLOW_STEP
         mid = d - _GLOW_STEP / 2.0
         target = alpha * 0.5 * math.erfc(mid / (sigma * math.sqrt(2.0)))
@@ -171,11 +182,114 @@ def paint_glow(p: QPainter, rect: QRectF, radius: float, colour: QColor,
         covered = target
         if layer < 0.002:
             continue
+        grow = d + spread
+        box = rect.adjusted(-grow, -grow, grow, grow)
+        if box.width() <= 0.0 or box.height() <= 0.0:
+            break
         base.setAlphaF(layer)
         p.setBrush(base)
-        grow = d + spread
-        p.drawPath(rounded(rect.adjusted(-grow, -grow, grow, grow), radius + grow))
+        p.drawPath(rounded(box, radius + grow))
     p.restore()
+
+
+# -- drop shadow --------------------------------------------------------------
+# So a block reads over any game background, bright sky included, each one
+# casts `box-shadow: 0 2px 6px rgba(0,0,0,.45)`. It lies under the Neon halo,
+# which is painted over it.
+
+SHADOW_DY = 2.0
+SHADOW_BLUR = 6.0
+SHADOW_ALPHA = 0.45
+# The thin separators cast less: `0 1px 2px`.
+HAIRLINE_SHADOW = (1.0, 2.0, 0.40)
+# A disabled toon's blocks keep their shadow, weaker.
+SHADOW_DIMMED = 0.55
+# How far past a block a shadow reaches (3 sigma, plus the drop): the room a
+# surface must leave around what it paints.
+SHADOW_REACH = SHADOW_DY + 1.5 * SHADOW_BLUR
+
+
+_shadow_tiles: dict[tuple, tuple] = {}
+
+
+def _shadow_tile(width: float, height: float, radius: float, square_left: bool,
+                 dy: float, blur: float, alpha: float, ds: float) -> tuple:
+    """(pixmap, pad): the shadow of a `width` x `height` box, drawn once at
+    device resolution with the box itself cut out; `pad` is the room around
+    the box in design px."""
+    key = (round(width * ds), round(height * ds), round(radius * ds, 2),
+           square_left, dy, blur, round(alpha, 3), round(ds, 4))
+    hit = _shadow_tiles.get(key)
+    if hit is not None:
+        return hit
+    pad = tokens.snap_up(1.5 * blur + abs(dy) + 1.0, ds)
+    image = QImage(max(1, int(math.ceil((width + 2 * pad) * ds))),
+                   max(1, int(math.ceil((height + 2 * pad) * ds))),
+                   QImage.Format_ARGB32_Premultiplied)
+    image.fill(0)
+    box = QRectF(pad, pad, width, height)
+    shape = right_rounded(box, radius) if square_left else rounded(box, radius)
+    outside = QPainterPath()
+    outside.addRect(QRectF(0.0, 0.0, width + 2 * pad, height + 2 * pad))
+    ip = QPainter(image)
+    ip.setRenderHint(QPainter.Antialiasing, True)
+    ip.scale(ds, ds)
+    ip.setClipPath(outside.subtracted(shape))
+    _falloff(ip, box.translated(0.0, dy), radius, tokens.rgba(0, 0, 0, alpha),
+             blur, 0.0, abs(dy) + 1.0)
+    ip.end()
+    pixmap = QPixmap.fromImage(image)
+    pixmap.setDevicePixelRatio(ds)
+    if len(_shadow_tiles) > 128:
+        _shadow_tiles.clear()
+    _shadow_tiles[key] = (pixmap, pad)
+    return pixmap, pad
+
+
+def paint_drop_shadow(p: QPainter, rect: QRectF, radius: float,
+                      strength: float = 1.0, dy: float = SHADOW_DY,
+                      blur: float = SHADOW_BLUR, alpha: float = SHADOW_ALPHA,
+                      square_left: bool = False) -> None:
+    """The soft dark shadow of the rounded box `rect`, dropped `dy` px
+    (`square_left` for the name plate's shape; a radius of half the width
+    makes a disc).
+
+    Like a CSS box-shadow it is never drawn under the box itself: the box's
+    own outline is cut out of it, so a translucent block (the dashed "+", a
+    dimmed Flat group) does not go muddy. Paint it before the block, and
+    before the block's halo.
+
+    The blur is built once per box size and scale and kept: a strip repaints
+    on every hover and through every cross-fade, and a dozen blurs a frame
+    would be most of the cost of painting it."""
+    alpha *= max(0.0, min(1.0, strength))
+    if alpha <= 0.0 or rect.width() <= 0.0 or rect.height() <= 0.0:
+        return
+    tile, pad = _shadow_tile(rect.width(), rect.height(), radius, square_left,
+                             dy, blur, alpha, _device_scale(p))
+    p.save()
+    p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    p.drawPixmap(QPointF(rect.x() - pad, rect.y() - pad), tile)
+    p.restore()
+
+
+def block_path(style: StripStyle, kind: str, rect: QRectF) -> QPainterPath:
+    """The outline a strip block is filled to."""
+    if kind in ("portrait", "home"):
+        path = QPainterPath()
+        path.addEllipse(rect)
+        return path
+    if kind == "name":
+        return right_rounded(rect, style.radius)
+    if kind == "sep":
+        return rounded(rect, 1.0)
+    return rounded(rect, style.radius)
+
+
+def block_radius(style: StripStyle, kind: str, rect: QRectF) -> float:
+    if kind in ("portrait", "home"):
+        return rect.width() / 2.0
+    return 1.0 if kind == "sep" else style.radius
 
 
 # -- text -------------------------------------------------------------------
@@ -311,6 +425,17 @@ class StripPainter:
     def separator(self, p, rect): ...
 
     # -- shared pieces --
+
+    def shadow(self, p: QPainter, kind: str, rect: QRectF,
+               strength: float = 1.0) -> None:
+        """The block's drop shadow: the same in both looks."""
+        s = self.style
+        if kind == "sep":
+            dy, blur, alpha = HAIRLINE_SHADOW
+            paint_drop_shadow(p, rect, 1.0, strength, dy, blur, alpha)
+        else:
+            paint_drop_shadow(p, rect, block_radius(s, kind, rect), strength,
+                              square_left=kind == "name")
 
     def _glyph(self, p: QPainter, rect: QRectF, kind: str, colour: QColor) -> None:
         s = self.style
@@ -489,7 +614,8 @@ class NeonPainter(StripPainter):
 
 
 class FlatPainter(StripPainter):
-    """Solid fills. No borders or glows anywhere."""
+    """Solid fills. No borders or glows anywhere; the drop shadow every
+    block casts is the one thing drawn outside a block."""
 
     style = tokens.FLAT_STYLE
 
@@ -577,23 +703,32 @@ class FlatPainter(StripPainter):
 
 
 def painter_for(style: StripStyle) -> StripPainter:
-    return NeonPainter() if style.is_neon else FlatPainter()
+    """The painter of a look. `style` may be that look's metrics snapped to
+    a device grid (tokens.snapped_style): the painter draws with what it is
+    given."""
+    painter = NeonPainter() if style.is_neon else FlatPainter()
+    painter.style = style
+    return painter
 
 
 def paint_number_block(p: QPainter, rect: QRectF, number: int, lit: bool,
                        look: str = tokens.NEON, glow: bool = True,
-                       hover: bool = False) -> None:
+                       hover: bool = False, shadow: bool = False) -> None:
     """One numbered keyset block on its own, for anything that shows keysets
     the way the strip does (no StripWidget needed).
 
     `rect` is the block (28 px square in Neon, 26 in Flat, in the painter's
     units). `lit` is the active state. Neon draws a halo around a lit block
     unless `glow` is False; leave about 12 px free around the block for it.
+    `shadow` adds the drop shadow a block casts on a strip, for a block
+    drawn over something other than a panel of its own.
     """
     painter = painter_for(tokens.style_for(look))
     p.save()
     p.setRenderHint(QPainter.Antialiasing, True)
     p.setRenderHint(QPainter.TextAntialiasing, True)
+    if shadow:
+        painter.shadow(p, "keyset", rect)
     if glow:
         painter.glow_tool(p, rect, tokens.set_color(number), lit)
     painter.keyset(p, rect, number, lit, identity, hover)

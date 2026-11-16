@@ -163,6 +163,7 @@ class PillMenu(QWidget):
                 rect = rect.translated(0.0, 1.0)
             radius = rect.height() / 2.0
             hot = i == self._hover and not item.disabled
+            paint.paint_drop_shadow(p, rect, radius)
             if neon:
                 paint.paint_glow(p, rect, radius, tr(c, 42), 7.0)
                 if hot:

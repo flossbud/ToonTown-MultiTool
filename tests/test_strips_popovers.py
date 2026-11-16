@@ -8,7 +8,7 @@ from PySide6.QtCore import QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtTest import QTest
 
-from utils.strips import tokens
+from utils.strips import paint, tokens
 from utils.strips.popovers.counters import CountersModel, CountersView
 from utils.strips.popovers.menu import MenuItem, PillMenu
 from utils.strips.popovers.placement import LEFT, place_popover
@@ -16,6 +16,12 @@ from utils.strips.popovers.pointer_watch import PointerWatch
 
 SCREEN = QRect(0, 0, 1920, 1080)
 MAGENTA = QColor(255, 0, 255)
+
+
+def shade_only(colour):
+    """Magenta with nothing over it but the black drop shadow."""
+    return (colour.green() == 0 and colour.red() == colour.blue()
+            and 255 * (1.0 - paint.SHADOW_ALPHA) - 2 <= colour.red() <= 255)
 
 
 def close(a, b, tolerance=4):
@@ -206,7 +212,9 @@ def test_neon_counters_are_a_pill_and_flat_counters_are_bare(qapp):
     pill = view.pill_rect()
     inside = image.pixelColor(int(pill.x() + 6), int(pill.center().y()))
     assert inside != MAGENTA and inside.green() < 110        # dark glass over magenta
-    assert image.pixelColor(2, int(pill.center().y())) == MAGENTA
+    assert shade_only(image.pixelColor(2, int(pill.center().y())))   # no fill out here
+    below = image.pixelColor(int(pill.center().x()), int(pill.bottom() + 3))
+    assert shade_only(below) and below != MAGENTA                    # the pill's shadow
     view.set_style("flat")
     image = render(view, "render_counters")
     lock = view.lock_rect()
@@ -305,8 +313,10 @@ def test_menu_paint_in_both_looks(qapp):
     flat = render(flat_menu, "render_menu")
     pill = flat_menu.pill_rect(0)
     spot = (int(pill.center().x()), int(pill.top() - 2))
-    assert neon.pixelColor(*spot) != MAGENTA
-    assert flat.pixelColor(*spot) == MAGENTA
+    assert not shade_only(neon.pixelColor(*spot))            # coloured halo
+    assert shade_only(flat.pixelColor(*spot))                # shadow only
+    under = (int(pill.center().x()), int(pill.bottom() + 3))
+    assert flat.pixelColor(*under) != MAGENTA and shade_only(flat.pixelColor(*under))
 
 
 def test_checked_item_is_wider_by_its_check(qapp):
@@ -396,7 +406,10 @@ def test_card_paint_in_both_looks(qapp):
     card = flat.card_rect()
     assert close(image.pixelColor(int(card.x() + 30), int(card.bottom() - 6)), "#161616")
     assert close(image.pixelColor(int(card.center().x()), int(card.bottom() - 1)), "#4A8FE7")
-    assert image.pixelColor(int(card.x() - 6), int(card.center().y())) == MAGENTA
+    beside = image.pixelColor(int(card.x() - 6), int(card.center().y()))
+    assert shade_only(beside)                                # no halo in Flat
+    under = image.pixelColor(int(card.x() + 30), int(card.bottom() + 4))
+    assert shade_only(under) and under != MAGENTA            # the card's drop shadow
     neon = KeysetEditor(MODEL, "list", "neon")
     image = render(neon, "render_editor")
     body = image.pixelColor(int(card.x() + 30), int(card.bottom() - 6))
@@ -540,7 +553,7 @@ def test_home_panel_paint_in_both_looks(qapp):
         icon = image.pixelColor(int(row.left() + 6 + 5), int(row.center().y() - 7))
         assert close(icon, "#E05252", 30), look          # the red power block
         halo = image.pixelColor(int(card.left() - 6), int(card.center().y()))
-        assert (halo != MAGENTA) == (look == "neon")
+        assert shade_only(halo) == (look == "flat")      # Neon's is coloured
         panel.set_view("launch")
         image = render(panel, "render_panel")
         button = panel.zone_rect("go", "2")
@@ -579,7 +592,7 @@ def test_flipped_cards_point_down_at_their_anchor(qapp):
         assert down.top() > up.top() and down.height() == pytest.approx(up.height())
         image = render(card, "render_panel" if isinstance(card, HomePanel) else "render_editor")
         # Nothing above the card any more; the caret's tip is below it.
-        assert image.pixelColor(int(down.center().x()), int(down.top() - 4)) == MAGENTA
+        assert shade_only(image.pixelColor(int(down.center().x()), int(down.top() - 4)))
         below = [image.pixelColor(x, int(down.bottom() + 3)) for x in range(card.width())]
         assert any(c != MAGENTA for c in below)
         # Its clickable parts moved with the card.

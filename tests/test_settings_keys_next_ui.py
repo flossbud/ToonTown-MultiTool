@@ -77,3 +77,26 @@ def test_normalize_float_strip_style(raw, want):
 ])
 def test_normalize_keyset_editor_layout(raw, want):
     assert sk.normalize_keyset_editor_layout(raw) == want
+
+
+# -- strip size ---------------------------------------------------------------
+
+def test_strip_size_key_values_and_default(tmp_path):
+    assert sk.FLOAT_STRIP_SIZE == "float_strip_size"
+    assert sk.FLOAT_STRIP_SIZE_VALUES == ("small", "medium", "large")
+    assert sk.FLOAT_STRIP_SIZE_DEFAULT == "medium"
+    assert sk.FLOAT_STRIP_SIZE_FACTORS == {"small": 1.0, "medium": 1.25, "large": 1.5}
+    # Everyone gets the larger strip without touching anything.
+    assert _manager(tmp_path, {}).get(sk.FLOAT_STRIP_SIZE) == "medium"
+    assert _manager(tmp_path, {"theme": "dark"}).get(sk.FLOAT_STRIP_SIZE) == "medium"
+    assert _manager(tmp_path, {"float_strip_size": "small"}).get(sk.FLOAT_STRIP_SIZE) == "small"
+
+
+@pytest.mark.parametrize("raw,want,factor", [
+    ("small", "small", 1.0), ("medium", "medium", 1.25), ("large", "large", 1.5),
+    ("Large", "medium", 1.25), (None, "medium", 1.25), (2, "medium", 1.25),
+    (["small"], "medium", 1.25),
+])
+def test_normalize_float_strip_size(raw, want, factor):
+    assert sk.normalize_float_strip_size(raw) == want
+    assert sk.float_strip_size_factor(raw) == factor

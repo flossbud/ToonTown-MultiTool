@@ -100,6 +100,15 @@ class StripPopovers(QObject):
                 self._place_counters(wid, entry)
         self.close_all()
 
+    def rescale(self) -> None:
+        """The strips changed size: the counters follow (anything else was
+        closed, and opens at the strip's scale the next time)."""
+        for wid, entry in self._entries.items():
+            surface = self._follower.surface(wid)
+            if entry.counters_view is not None and surface is not None:
+                entry.counters_view.set_scale(surface.strip.scale())
+                self._place_counters(wid, entry)
+
     # -- anchors ------------------------------------------------------------
 
     def anchor_rect(self, wid: str, kind: str, number: int = 0) -> QRect | None:

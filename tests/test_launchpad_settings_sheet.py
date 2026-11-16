@@ -90,7 +90,8 @@ def test_groups_hold_the_shipped_rows(qapp, quiet):
         assert t in app, t
     assert "Enable Logging" not in app
     assert _titles(s._cards["strips"]) == [
-        "Strip style", "Hide this window once toons are up", "Tray icon"]
+        "Strip style", "Strip size", "Hide this window once toons are up",
+        "Tray icon"]
     assert "TTR Companion App" in _titles(s._cards["ttr"])
     assert "Hide CC launch console" in _titles(s._cards["cc"])
 
@@ -159,6 +160,21 @@ def test_float_strip_rows_write_their_keys(qapp, quiet):
     s._tray_toggle.setChecked(False)
     assert sm.data[sk.HIDE_WINDOW_WHEN_TOONS_UP] is False
     assert sm.data[sk.TRAY_ICON] is False
+
+
+def test_strip_size_row_reads_and_writes_its_key(qapp, quiet):
+    sm = _Settings()
+    s = _sheet(sm)
+    assert s._strip_size.currentIndex() == 1                  # medium by default
+    s._strip_size.resize(s._strip_size.sizeHint())
+    rects = s._strip_size._seg_rects()
+    assert len(rects) == 3
+    QTest.mouseClick(s._strip_size, Qt.LeftButton, pos=rects[2].center().toPoint())
+    assert sm.data[sk.FLOAT_STRIP_SIZE] == "large"
+    QTest.mouseClick(s._strip_size, Qt.LeftButton, pos=rects[0].center().toPoint())
+    assert sm.data[sk.FLOAT_STRIP_SIZE] == "small"
+    assert _sheet(_Settings({sk.FLOAT_STRIP_SIZE: "large"}))._strip_size.currentIndex() == 2
+    assert _sheet(_Settings({sk.FLOAT_STRIP_SIZE: "huge"}))._strip_size.currentIndex() == 1
 
 
 def test_float_strip_rows_read_stored_values(qapp, quiet):

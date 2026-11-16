@@ -31,6 +31,7 @@ class SettingsManager:
             "saved_colors":                       [],
             "window_compositing_cache":           {},
             _sk.FLOAT_STRIP_STYLE:            _sk.FLOAT_STRIP_STYLE_DEFAULT,
+            _sk.FLOAT_STRIP_SIZE:             _sk.FLOAT_STRIP_SIZE_DEFAULT,
             _sk.HIDE_WINDOW_WHEN_TOONS_UP:    _sk.HIDE_WINDOW_WHEN_TOONS_UP_DEFAULT,
             _sk.TRAY_ICON:                    _sk.TRAY_ICON_DEFAULT,
             _sk.KEYSET_EDITOR_LAYOUT:         _sk.KEYSET_EDITOR_LAYOUT_DEFAULT,

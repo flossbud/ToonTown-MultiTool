@@ -9,10 +9,11 @@ import sys
 
 from PySide6.QtCore import QObject, QTimer
 
+from utils import settings_keys
 from utils.overlay.backend import OverlayBackend, get_overlay_backend
 from utils.strips import tokens
 from utils.strips.attach import AttachStrategy, pick_attach_strategy
-from utils.strips.strip_surface import StripSurface
+from utils.strips.strip_surface import StripSurface, strip_scale
 from utils.strips.tracker import StripTracker
 
 GATE_INTERVAL_MS = 100
@@ -44,12 +45,17 @@ class StripFollower(QObject):
                  backend: OverlayBackend | None = None,
                  geometry_fn=None, batch_fn=None, style: str = tokens.NEON,
                  scale: float | None = None,
+                 size: str = settings_keys.FLOAT_STRIP_SIZE_SMALL,
                  parent: QObject | None = None) -> None:
+        """`scale` replaces the true-size scale (the inverse of the app's UI
+        scale) for a caller that knows better; the strip size's factor
+        applies on top of either."""
         super().__init__(parent)
         self._strategy = strategy if strategy is not None else pick_attach_strategy()
         self._backend = backend if backend is not None else get_overlay_backend()
         self._style = tokens.style_for(style).name
-        self._scale = scale
+        self._base_scale = scale
+        self._size = settings_keys.normalize_float_strip_size(size)
         self._surfaces: dict[str, StripSurface] = {}
         if geometry_fn is None and batch_fn is None:
             if sys.platform == "darwin":
@@ -85,6 +91,7 @@ class StripFollower(QObject):
         if not _stamped:
             _stamped = True
             print(f"[Strips] attach={self._strategy.name} style={self._style}"
+                  f" size={self._size}"
                   + (" compositor=none (shaped windows)" if self._strategy.shaped() else ""),
                   flush=True)
         self._tracker.start()
@@ -145,7 +152,7 @@ class StripFollower(QObject):
         wid = str(window_id)
         surface = self._surfaces.get(wid)
         if surface is None:
-            surface = StripSurface(self._strategy, self._backend, self._scale)
+            surface = StripSurface(self._strategy, self._backend, self.scale())
             surface.set_style(self._style)
             surface.set_game_window(wid)
             self._surfaces[wid] = surface
@@ -163,6 +170,26 @@ class StripFollower(QObject):
         self._style = tokens.style_for(name).name
         for surface in self._surfaces.values():
             surface.set_style(self._style)
+
+    def size(self) -> str:
+        return self._size
+
+    def scale(self) -> float:
+        """The scale every strip is drawn at."""
+        factor = settings_keys.float_strip_size_factor(self._size)
+        if self._base_scale is None:
+            return strip_scale(size=self._size)
+        return float(self._base_scale) * factor
+
+    def set_size(self, name: str) -> None:
+        """Small, medium or large, applied to every strip where it stands."""
+        size = settings_keys.normalize_float_strip_size(name)
+        if size == self._size:
+            return
+        self._size = size
+        scale = self.scale()
+        for surface in self._surfaces.values():
+            surface.set_scale(scale)
 
     def own_window_ids(self) -> list[int]:
         ids = [int(s.winId()) for s in self._surfaces.values() if s.isVisible()]
