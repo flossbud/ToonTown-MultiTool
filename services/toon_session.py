@@ -459,6 +459,10 @@ class ToonSession(QObject):
             # starts from the normal interval.
             toon.rapid_fire = False
         self._publish()
+        # A save point, like the enabled toggle: under a profile a window
+        # that reappears (a refresh re-detects them all) takes the profile's
+        # keep-alive, and what the user switched off must not come back on.
+        self._autosave_active_profile()
 
     def set_click_sync(self, window_id: str, on: bool) -> None:
         toon = self._toons.get(window_id)

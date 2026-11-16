@@ -224,3 +224,47 @@ def test_a_different_toon_in_the_same_window_goes_back_to_the_profile_keyset(mak
     assert rig.session.toon("b").keyset_id == "t1"      # "Arrows"
     rig.ttr("b", "Linux")                               # logged out, other toon
     assert rig.session.toon("b").keyset_id == "t1"
+
+
+# ── Profiles: keep-alive never comes back on by itself ──────────────────────
+
+class StoredProfiles(FakeProfiles):
+    """A profile store that gives back what was saved, like the real one."""
+
+    def save_profile(self, index, enabled_toons, movement_modes,
+                     keep_alive=None, rapid_fire=None):
+        super().save_profile(index, enabled_toons, movement_modes,
+                             keep_alive=keep_alive, rapid_fire=rapid_fire)
+        self.profiles[index] = profile(enabled_toons, movement_modes,
+                                       keep_alive, rapid_fire)
+
+
+def test_keep_alive_switched_off_under_a_profile_stays_off_after_a_refresh(make):
+    profiles = StoredProfiles({0: profile([True, True], keep_alive=[True, True])})
+    rig = make(windows=["a", "b"], profiles=profiles, settings=KEEP_ALIVE_ON)
+    rig.session.load_profile(0)
+    assert rig.session.toon("a").keep_alive is True
+    rig.session.set_keep_alive("a", False)
+    assert profiles.profiles[0].keep_alive[:2] == [False, True]   # the profile says off
+    rig.session.refresh()                    # drops every window ...
+    assert rig.session.toons() == []
+    rig.wm.set_windows(["a", "b"])           # ... and the poll loop finds them again
+    assert rig.session.toon("a").keep_alive is False
+    assert rig.session.toon("b").keep_alive is True
+
+
+def test_the_keep_alive_hotkey_is_a_save_point_too(make):
+    profiles = StoredProfiles({0: profile([True, True], keep_alive=[True, False])})
+    rig = make(windows=["a", "b"], profiles=profiles, settings=KEEP_ALIVE_ON)
+    rig.session.load_profile(0)
+    rig.session.toggle_keep_alive_all()      # one is on: turn those off
+    assert profiles.profiles[0].keep_alive[:2] == [False, False]
+    rig.session.toggle_keep_alive_all()      # none on: turn all on
+    assert profiles.profiles[0].keep_alive[:2] == [True, True]
+
+
+def test_keep_alive_toggle_saves_nothing_without_a_profile(make):
+    profiles = StoredProfiles()
+    rig = make(windows=["a"], profiles=profiles, settings=KEEP_ALIVE_ON)
+    rig.session.set_keep_alive("a", True)
+    assert profiles.saved == []
