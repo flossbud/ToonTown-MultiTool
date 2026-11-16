@@ -112,6 +112,13 @@ class LaunchpadWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         print(STAMP)
+        # This window hides itself while toons are up, so the last visible
+        # top-level closing (a popover, a dialog, a strip whose game exited)
+        # must not end the app. Quitting is always explicit: the lifecycle's
+        # quit command, quit_app, or a close with nothing running.
+        app = QApplication.instance()
+        if app is not None:
+            app.setQuitOnLastWindowClosed(False)
 
         self._sleep_warning_shown = False
         self._shutdown_complete = False
