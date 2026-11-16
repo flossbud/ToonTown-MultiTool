@@ -662,21 +662,18 @@ class LaunchpadWindow(QMainWindow):
 
     # The launcher's router (LaunchTab.set_accounts_router).
 
-    def show_for(self, target: str, account_id: str | None = None) -> None:
-        """Bring the window in front of the user because something needs
-        them here: ``target`` says what ("accounts", "account",
-        "add_account", "fix_login", "launch_login"), ``account_id`` whose.
-        The one place the Accounts routes show the window from."""
-        del target, account_id
-        self.show_window()
+    def _show_for_accounts(self) -> None:
+        """Bring the window in front of the user for an Accounts route. The
+        route opens its own page; the lifecycle only shows the window."""
+        self.show_for(lifecycle.CURRENT)
 
     def open_list(self) -> None:
-        self.show_for("accounts")
+        self._show_for_accounts()
         self.accounts_sheet.show_list()
         self.open_sheet(SHEET_ACCOUNTS)
 
     def open_account(self, account_id: str) -> None:
-        self.show_for("account", account_id)
+        self._show_for_accounts()
         self.open_sheet(SHEET_ACCOUNTS)
         account = self.accounts_backend.account(account_id)
         if account is not None and account.login == "failed" and not account.running:
@@ -685,12 +682,12 @@ class LaunchpadWindow(QMainWindow):
             self.accounts_sheet.open_account(account_id)
 
     def open_add(self, game: str) -> None:
-        self.show_for("add_account")
+        self._show_for_accounts()
         self.open_sheet(SHEET_ACCOUNTS)
         self.accounts_sheet.open_add_form(game)
 
     def open_fix(self, account_id: str) -> None:
-        self.show_for("fix_login", account_id)
+        self._show_for_accounts()
         self.open_sheet(SHEET_ACCOUNTS)
         self.accounts_sheet.open_fix_login(account_id)
 
@@ -707,7 +704,7 @@ class LaunchpadWindow(QMainWindow):
     def _ask_next_login(self) -> None:
         while self._login_requests:
             account_id = self._login_requests[0]
-            self.show_for("launch_login", account_id)
+            self._show_for_accounts()
             self.open_sheet(SHEET_ACCOUNTS)
             if self.accounts_sheet.open_launch_login(account_id):
                 return
