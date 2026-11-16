@@ -58,7 +58,7 @@ Things to try in the playground, and what should happen:
 
 Commands on stdin (checks use these): `stop`, `start`, `features <ka 0|1>
 <cs 0|1>`, `style neon|flat`, `hover <wid> 0|1`, `menu <wid> <kind> <n>`,
-`edit <wid> <n>`, `home <wid>`, `close`, `quit`.
+`edit <wid> <n>`, `home <wid>`, `user-hidden 0|1`, `close`, `quit`.
 """
 from __future__ import annotations
 
@@ -219,6 +219,8 @@ def log_keymaps(keymaps) -> None:
 
     wrap("update_set_key", lambda game, index, action, key:
          f"bind: {game} keyset {index + 1}, {action} = {key}")
+    wrap("update_set_key_by_id", lambda game, set_id, action, key:
+         f"bind: {game} keyset {keymaps.index_of(game, set_id) + 1}, {action} = {key}")
     wrap("add_set", lambda game, *a, **k: f"new keyset asked for {game}")
     wrap("set_hidden", lambda game, set_id, hidden:
          f"keyset {keymaps.index_of(game, set_id) + 1} of {game} "
@@ -452,6 +454,8 @@ def main() -> int:
             session.stop()
         elif words[0] == "start":
             session.start()
+        elif words[0] == "user-hidden" and len(words) == 2:
+            controller.set_user_hidden(words[1] == "1")
         elif words[0] == "features" and len(words) == 3:
             session.set_features(keep_alive_available=words[1] == "1",
                                  click_sync_available=words[2] == "1")

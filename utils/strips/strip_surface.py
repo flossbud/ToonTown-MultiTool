@@ -77,6 +77,7 @@ class StripSurface(QWidget):
         self._prepared = False
         self._attached = False                 # tied to the game, this map
         self._concealed = True                 # the follower's wish
+        self._user_hidden = False
         self._covered = False                  # gate: nothing may show
         self._visible: QRegion | None = None   # gate: strip-local mask
         self._shown = False
@@ -137,6 +138,12 @@ class StripSurface(QWidget):
         input, stay mapped."""
         self._concealed = True
         self._present()
+
+    def set_user_hidden(self, hidden: bool) -> None:
+        """User suppression composes with movement, coverage and attachment."""
+        if self._user_hidden != bool(hidden):
+            self._user_hidden = bool(hidden)
+            self._present()
 
     def client_logical(self) -> QRect | None:
         if self._client is None:
@@ -313,6 +320,7 @@ class StripSurface(QWidget):
 
     def _present(self) -> None:
         shown = (self._attached and not self._concealed and not self._covered
+                 and not self._user_hidden
                  and self.isVisible())
         changed, self._shown = shown != self._shown, shown
         if changed:

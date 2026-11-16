@@ -59,6 +59,10 @@ class HomePanel(QWidget):
         self._view = MENU
         self._caret_x: float | None = None
         self._flipped = False
+        self._available_height: float | None = None
+        self._scroll_offset = 0.0
+        self._scroll_max = 0.0
+        self._list_view = QRectF()
         self._hover: tuple | None = None
         self._pressed: tuple | None = None
         self._zones: list[tuple[tuple, QRectF]] = []
@@ -111,6 +115,12 @@ class HomePanel(QWidget):
             self._flipped = bool(flipped)
             self._relayout()
 
+    def set_available_height(self, height: float | None) -> None:
+        """Maximum outer height in widget px, supplied by the anchor's screen."""
+        if height != self._available_height:
+            self._available_height = height
+            self._relayout()
+
     def rows(self) -> list[tuple[str, str, str, str]]:
         """(key, colour, label, hint) for the quick menu, top to bottom;
         ("", ...) is the divider."""
@@ -151,6 +161,7 @@ class HomePanel(QWidget):
         self._dividers: list[float] = []
         self._sections: list[tuple[str, float]] = []
         self._account_rows: list[tuple[object, QRectF]] = []
+        self._list_view = QRectF()
         if self._view == MENU:
             for key, _colour, _label, _hint in self.rows():
                 if not key:
@@ -164,6 +175,7 @@ class HomePanel(QWidget):
             zones.append((("back",), QRectF(x0, y + 2.0, 24.0, 24.0)))
             self._title_y = y + 2.0
             y += 28.0
+            list_top = y
             fm = QFontMetricsF(self._fonts()["button"])
             button_w = fm.horizontalAdvance("Launch") + 20.0
             for game in ("ttr", "cc"):
@@ -179,9 +191,26 @@ class HomePanel(QWidget):
                         zones.append((("go", account.account_id), QRectF(
                             row.right() - 6.0 - button_w, y + 1.0, button_w, 24.0)))
                     y += ACCOUNT_H
+            content_height = y - list_top
+            footer_h = QFontMetricsF(self._fonts()["footer"]).height() + 12.0
+            outer_tail = (CARET_RISE if self._flipped else MARGIN)
+            natural_height = y + 13.0 + footer_h + PAD + BORDER + outer_tail
+            viewport_height = content_height
+            if self._available_height is not None:
+                viewport_height = min(content_height, max(0.0,
+                    self._available_height / self._scale - (natural_height - content_height)))
+            self._scroll_max = max(0.0, content_height - viewport_height)
+            self._scroll_offset = min(self._scroll_max, max(0.0, self._scroll_offset))
+            offset = self._scroll_offset
+            self._sections = [(game, sy - offset) for game, sy in self._sections]
+            self._account_rows = [(account, rect.translated(0, -offset))
+                                  for account, rect in self._account_rows]
+            zones = [(zone, rect.translated(0, -offset) if zone[0] == "go" else rect)
+                     for zone, rect in zones]
+            self._list_view = QRectF(x0, list_top, inner, viewport_height)
+            y = list_top + viewport_height
             self._dividers.append(y + 8.0)
             y += 8.0 + 1.0 + 4.0
-            footer_h = QFontMetricsF(self._fonts()["footer"]).height() + 12.0
             zones.append((("full",), QRectF(x0, y, inner, footer_h)))
             y += footer_h
         y += PAD + BORDER
@@ -335,10 +364,6 @@ class HomePanel(QWidget):
                             Qt.AlignRight | Qt.AlignVCenter)
 
     def _paint_launch(self, p, fonts, white) -> None:
-        neon = self._style.is_neon
-        grey = QColor("#bbbbbb")
-        card = self._card
-        inner_l = card.left() + BORDER + PAD
         back = next(rect for zone, rect in self._zones if zone == ("back",))
         if self._hover == ("back",):
             p.fillPath(paint.rounded(back, 6.0), tokens.rgba(255, 255, 255, 0.09))
@@ -353,6 +378,29 @@ class HomePanel(QWidget):
         p.drawPath(chevron)
         paint._text(p, QRectF(back.right() + 4.0, back.top(), 200.0, back.height()),
                     "Launch accounts", fonts["title"], white, Qt.AlignLeft | Qt.AlignVCenter)
+        p.save()
+        p.setClipRect(self._list_view)
+        self._paint_accounts(p, fonts, white)
+        p.restore()
+        if self._scroll_max > 0 and self._list_view.height() > 0:
+            view = self._list_view
+            content_h = view.height() + self._scroll_max
+            thumb_h = max(18.0, view.height() * view.height() / content_h)
+            thumb_h = min(view.height(), thumb_h)
+            thumb_y = view.top() + (view.height() - thumb_h) * self._scroll_offset / self._scroll_max
+            track = QRectF(view.right() - 2.0, view.top(), 2.0, view.height())
+            p.fillPath(paint.rounded(track, 1.0), tr(BLUE, 20))
+            p.fillPath(paint.rounded(QRectF(track.x(), thumb_y, 2.0, thumb_h), 1.0),
+                       QColor(lt(BLUE, 60)))
+        full = next(rect for zone, rect in self._zones if zone == ("full",))
+        ink = QColor(lt(BLUE, 60) if self._hover != ("full",) else "#ffffff")
+        paint._text(p, full.adjusted(6.0, 0, -6.0, 0), "Open full Launcher ›",
+                    fonts["footer"], ink, Qt.AlignLeft | Qt.AlignVCenter)
+
+    def _paint_accounts(self, p, fonts, white) -> None:
+        neon = self._style.is_neon
+        grey = QColor("#bbbbbb")
+        inner_l = self._card.left() + BORDER + PAD
         for game, y in self._sections:
             colour = GAME_COLOURS[game]
             p.fillPath(paint.rounded(QRectF(inner_l + 6.0, y + 2.0, 8.0, 8.0), 2.0),
@@ -398,10 +446,6 @@ class HomePanel(QWidget):
                 account.label, Qt.ElideRight, label_room.width())
             paint._text(p, label_room, label, fonts["account"], white,
                         Qt.AlignLeft | Qt.AlignVCenter)
-        full = next(rect for zone, rect in self._zones if zone == ("full",))
-        ink = QColor(lt(BLUE, 60) if self._hover != ("full",) else "#ffffff")
-        paint._text(p, full.adjusted(6.0, 0, -6.0, 0), "Open full Launcher ›",
-                    fonts["footer"], ink, Qt.AlignLeft | Qt.AlignVCenter)
 
     # -- pointer ------------------------------------------------------------
 
@@ -409,6 +453,8 @@ class HomePanel(QWidget):
         k = self._scale
         x, y = pos.x() / k, pos.y() / k
         for zone, rect in self._zones:
+            if zone[0] == "go" and not self._list_view.contains(x, y):
+                continue
             if rect.contains(x, y):
                 return zone
         return None
@@ -419,6 +465,18 @@ class HomePanel(QWidget):
             self._hover = zone
             self.setCursor(Qt.PointingHandCursor if zone else Qt.ArrowCursor)
             self.update()
+
+    def wheelEvent(self, event) -> None:
+        pos = event.position() / self._scale
+        if self._view != LAUNCH or not self._list_view.contains(pos):
+            event.ignore()
+            return
+        delta = (event.pixelDelta().y() / self._scale if not event.pixelDelta().isNull()
+                 else event.angleDelta().y() / 120.0 * ACCOUNT_H * 3.0)
+        self._scroll_offset = min(self._scroll_max, max(0.0, self._scroll_offset - delta))
+        self._hover = self._pressed = None
+        self._relayout()
+        event.accept()
 
     def leaveEvent(self, event) -> None:
         self._hover = self._pressed = None

@@ -326,8 +326,18 @@ class StripPopovers(QObject):
         inset = 0
         if entry.align == LEFT:
             inset = int(round(getattr(content, "LEFT_INSET", 0) * surface.strip.scale()))
+        screen = self._screen_rect(rect)
+        bound_height = getattr(content, "set_available_height", None)
+        if callable(bound_height):
+            bound_height(None)
+            below = screen.bottom() + 1 - 8 - (rect.bottom() + 1 + entry.gap)
+            above = rect.top() - entry.gap - (screen.top() + 8)
+            room = below
+            if content.sizeHint().height() > below and above > below:
+                room = above
+            bound_height(max(1, room))
         spot = place_popover(rect.translated(-inset, 0), content.sizeHint(),
-                             self._screen_rect(rect), gap=entry.gap, align=entry.align)
+                             screen, gap=entry.gap, align=entry.align)
         if hasattr(content, "set_caret_x"):
             content.set_caret_x(spot.caret_x + inset)
         if hasattr(content, "set_flipped"):
