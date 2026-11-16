@@ -3,9 +3,10 @@
     python scripts/strip_standin.py game:100,120,800,600 other:300,200,500,400
     python scripts/strip_standin.py "game1:100,120,800,600:Stand-in window one"
 
-A third field is the window title (default strip-standin-<name>). Titles
-must not START with a game's name: the app finds Corporate Clash windows by
-title, and a stand-in must never be mistaken for a game.
+A third field is the window title (default strip-standin-<name>). A title
+must not CONTAIN "Toontown Rewritten" or "Corporate Clash": the app finds
+game windows by title (by substring on Windows), and a stand-in must never
+be mistaken for a game.
 
 Prints `STANDIN <name> <window id>` once each window is up, then
 `STANDIN-CLICK <name> <x> <y>` for every mouse press it receives,
