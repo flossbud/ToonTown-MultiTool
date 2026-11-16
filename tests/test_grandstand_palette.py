@@ -184,3 +184,79 @@ def test_every_function_accepts_both_themes():
     ):
         for is_dark in (True, False):
             assert fn(*args, is_dark) is not None
+
+
+# ── Appearance editor (sub-project B; handoff §4.2, §4.3, §4.6, §9) ─────────
+
+_APPEARANCE = (
+    (gp.portrait_fallback, ()), (gp.appearance_stage, ()),
+    (gp.appearance_group_ink, ()), (gp.appearance_chip, (False, False)),
+    (gp.appearance_chip, (True, False)), (gp.appearance_chip, (False, True)),
+    (gp.appearance_disabled, ()), (gp.color_well, ("rest",)),
+    (gp.color_well, ("hover",)), (gp.color_well, ("open",)),
+    (gp.gradient_bar_border, ()), (gp.well_popover, ()),
+    (gp.swap_button, (False,)), (gp.swap_button, (True,)),
+    (gp.look_swatch, (False,)), (gp.look_swatch, (True,)),
+    (gp.pose_tile, (False, False)), (gp.pose_tile, (True, False)),
+    (gp.pose_tile, (False, True)), (gp.pose_fade, ()), (gp.standin, ()),
+    (gp.subject_pill, (False,)), (gp.subject_pill, (True,)),
+    (gp.switcher_popover, ()), (gp.mini_link, (False, False)),
+    (gp.mini_link, (True, False)), (gp.mini_link, (False, True)),
+)
+
+
+def _colours(value):
+    if isinstance(value, QColor):
+        return [value]
+    if isinstance(value, dict):
+        return [v for v in value.values() if isinstance(v, QColor)]
+    return [v for v in value if isinstance(v, QColor)]
+
+
+def test_every_appearance_surface_has_a_dark_and_a_light_branch():
+    """Not merely "accepts both themes": the light theme must not be handed
+    the dark values, or the editor is a dark slab in a light app."""
+    for fn, args in _APPEARANCE:
+        dark, light = fn(*args, True), fn(*args, False)
+        assert _colours(dark) and _colours(light)
+        assert dark != light, fn.__name__
+
+
+def test_appearance_dark_tokens_are_the_handoffs():
+    stage = gp.appearance_stage(True)
+    assert stage["bg"] == QColor("#2e2e2e")              # --bg-card-inner
+    assert stage["border"] == QColor("#363636")          # --border-card
+    assert stage["fill"] == QColor("#0077ff")            # --blue
+    chip = gp.appearance_chip(True, False, True)
+    assert chip["bg"] == with_alpha("#3399ff", 0.16)
+    assert chip["border"] == QColor("#3399ff")           # --blue-border
+    assert chip["ink"] == QColor("#cfe6ff")
+    assert gp.appearance_chip(False, False, True)["ink"] == QColor("#888888")
+    assert gp.well_popover(True)["bg"] == QColor("#171a24")
+    assert gp.switcher_popover(True)["bg"] == QColor("#191b22")
+    assert gp.switcher_popover(True)["warn"] == QColor("#e8c14d")   # --v2-yellow-b
+    assert gp.switcher_popover(True)["row_current"] == with_alpha("#0077ff", 0.16)
+    assert gp.color_well("open", True)["border"] == QColor("#ffffff")
+    assert gp.color_well("rest", True)["border"] == with_alpha("#ffffff", 0.18)
+    assert gp.pose_tile(True, False, True)["glow"] == with_alpha("#3399ff", 0.28)
+    assert gp.mini_link(True, False, True) == QColor("#e8c14d")
+    assert gp.subject_pill(False, True)["bg"] == QColor("#2e2e2e")
+
+
+def test_light_inks_are_the_light_theme_tokens():
+    from utils.theme_manager import get_theme_colors
+    light = get_theme_colors(False)
+    assert gp.appearance_stage(False)["bg"].name() == light["bg_card_inner"]
+    assert gp.appearance_group_ink(False)["label"].name() == light["text_muted"]
+    assert gp.appearance_group_ink(False)["note"].name() == light["text_disabled"]
+    assert gp.subject_pill(False, False)["ink"].name() == light["text_primary"]
+    assert gp.switcher_popover(False)["bg"].name() == light["bg_card"]
+    assert gp.standin(False)["title"].name() == light["text_primary"]
+
+
+def test_the_selected_look_ring_is_visible_on_its_own_surface():
+    """A white ring on the light sheet would be no ring at all."""
+    for is_dark in (True, False):
+        d = gp.look_swatch(True, is_dark)
+        assert d["ring"] != d["gap"]
+        assert d["gap"] == gp.sheet_surface(is_dark)["bg"]
