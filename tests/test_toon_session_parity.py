@@ -6,9 +6,11 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import time
+
 import pytest
 
-from tests.toon_session_harness import FakeProfiles, Rig, profile
+from tests.toon_session_harness import KEEP_ALIVE_ON, FakeProfiles, Rig, profile
 
 
 @pytest.fixture
@@ -78,3 +80,64 @@ def test_autosave_without_a_readable_profile_writes_defaults_for_empty_slots(mak
     _index, enabled, modes, _ka, _rf = profiles.saved[-1]
     assert enabled == [False, False, False, False]
     assert len(modes) == 4
+
+
+# ── Keep-alive: the first cycle waits a full interval ───────────────────────
+
+@pytest.fixture
+def games(monkeypatch):
+    """Every window is a Toontown window, as far as keep-alive can tell."""
+    from utils.game_registry import GameRegistry
+    monkeypatch.setattr(GameRegistry.instance(), "get_game_for_window",
+                        lambda wid: "ttr", raising=False)
+
+
+def keep_alive_lines(rig):
+    return [line for line in rig.logs if line.startswith("[KeepAlive] ")
+            and "inhibitor" not in line]
+
+
+def test_a_toon_poll_does_not_bring_the_first_keep_alive_forward(make, games, qapp):
+    """Keep-alive set to 30 s must not press its key a few seconds after it
+    is switched on. The toon poll publishes every 5 s; publishing used to
+    wake the loop, and a loop that has not fired yet fires on any wake."""
+    rig = make(windows=["a"],
+               settings={**KEEP_ALIVE_ON, "keep_alive_delay": "30 sec"})
+    rig.session.set_keep_alive("a", True)
+    time.sleep(0.2)
+    rig.ttr("a", "Flossbud", beans=5)           # what each poll does
+    rig.ttr("a", "Flossbud", beans=6)
+    time.sleep(0.4)
+    assert rig.input.sent == []
+    assert keep_alive_lines(rig) == []
+
+
+def test_a_changed_interval_still_restarts_the_cycle_at_once(make, games, qapp):
+    """The tab woke the loop when the interval or the action changed, and a
+    loop that has not fired yet fires then. Kept as it was."""
+    rig = make(windows=["a"],
+               settings={**KEEP_ALIVE_ON, "keep_alive_delay": "30 sec"})
+    rig.session.set_keep_alive("a", True)
+    time.sleep(0.2)
+    rig.settings.set("keep_alive_delay", "10 sec")
+    deadline = time.monotonic() + 2.0
+    while not rig.input.sent and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+    assert [wid for wid, _key in rig.input.sent] == ["a"]
+
+
+def test_switching_rapid_fire_wakes_the_loop(make, games, qapp):
+    """A profile that turns rapid fire on for a toon already on keep-alive
+    must take effect now, not after the long interval the loop is sleeping."""
+    profiles = FakeProfiles({0: profile([True], keep_alive=[True], rapid_fire=[True])})
+    rig = make(windows=["a"], profiles=profiles,
+               settings={**KEEP_ALIVE_ON, "keep_alive_delay": "10 min"})
+    rig.session.set_keep_alive("a", True)
+    time.sleep(0.2)
+    rig.session.load_profile(0)
+    deadline = time.monotonic() + 3.0
+    while not rig.input.sent and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+    assert rig.input.sent, "rapid fire did not start within 3 s"

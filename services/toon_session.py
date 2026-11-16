@@ -322,6 +322,7 @@ class ToonSession(QObject):
         self._keep_alive_thread = None
         self._ka_cycle_start = 0.0
         self._ka_cycle_event = threading.Event()
+        self._ka_firing: tuple = ((), ())     # keep-alive and rapid-fire slots, last seen
         if sleep_inhibitor is None:
             from services.sleep_inhibitor import SleepInhibitor
             sleep_inhibitor = SleepInhibitor()
@@ -1187,12 +1188,18 @@ class ToonSession(QObject):
         wanted = (self._running and not self._shut_down
                   and any(self._slot_keep_alive)
                   and self.keep_alive_available())
+        firing = (tuple(self._slot_keep_alive), tuple(self._slot_rapid_fire))
+        changed, self._ka_firing = firing != self._ka_firing, firing
         if wanted and not self._keep_alive_running:
             self._start_keep_alive()
         elif not wanted and self._keep_alive_running:
             self._stop_keep_alive()
-        elif wanted:
-            self._ka_cycle_event.set()      # re-read who fires, and how often
+        elif wanted and changed:
+            # Who fires, or how often, changed: let the loop re-read it now
+            # rather than after the interval it is sleeping. Only then: this
+            # runs on every publish, the toon poll publishes every few
+            # seconds, and a loop that has not fired yet fires on any wake.
+            self._ka_cycle_event.set()
 
     def _reset_ka_cycle(self) -> None:
         self._ka_cycle_start = time.monotonic()
