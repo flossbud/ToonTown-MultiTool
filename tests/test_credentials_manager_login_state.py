@@ -172,3 +172,35 @@ def test_flag_survives_reorder_and_is_dropped_with_account(make_cm):
     cm.delete_account(0)
     assert not cm.is_login_failed(b)
     assert all(LOGIN_FAILED_KEY not in e for e in json.loads(make_cm.path.read_text()))
+
+
+def test_reason_stored_cleared_and_capped(make_cm):
+    from utils.credentials_manager import LOGIN_FAILED_REASON_KEY
+    cm = make_cm()
+    cm.add_account(label="A", username="a", password="pw")
+    aid = _ids(cm)[0]
+    assert cm.login_failed_reason(aid) is None
+    assert cm.set_login_failed(aid, True, "  Closed for maintenance.  ") is True
+    assert make_cm().login_failed_reason(aid) == "Closed for maintenance."
+    assert cm.set_login_failed(aid, True, "Closed for maintenance.") is False
+    assert cm.set_login_failed(aid, True, "Wrong password") is True
+    assert cm.login_failed_reason(aid) == "Wrong password"
+    cm.set_login_failed(aid, True, "x" * 1000)
+    assert len(cm.login_failed_reason(aid)) == 300
+    cm.set_login_failed(aid, True, None)
+    assert cm.login_failed_reason(aid) is None
+    assert cm.is_login_failed(aid)
+    cm.set_login_failed(aid, True, "again")
+    cm.set_login_failed(aid, False)
+    assert cm.login_failed_reason(aid) is None
+    assert all(LOGIN_FAILED_REASON_KEY not in e
+               for e in json.loads(make_cm.path.read_text()))
+
+
+def test_new_login_clears_reason(make_cm):
+    cm = make_cm()
+    cm.add_account(label="A", username="a", password="pw")
+    aid = _ids(cm)[0]
+    cm.set_login_failed(aid, True, "nope")
+    cm.update_account(0, password="new")
+    assert cm.login_failed_reason(aid) is None

@@ -134,7 +134,8 @@ def _tab_stub(cred_manager, worker, account_id="acct-1"):
         _show_failure_dialog=lambda *a, **kw: None,
     )
     tab._record_login_rejected = (
-        lambda aid, rejected: LaunchTab._record_login_rejected(tab, aid, rejected))
+        lambda aid, rejected, reason=None:
+            LaunchTab._record_login_rejected(tab, aid, rejected, reason))
     return LaunchTab, tab
 
 
@@ -145,7 +146,7 @@ def test_on_login_failed_records_only_rejections(qapp, rejected):
     LaunchTab, tab = _tab_stub(cm, worker)
     LaunchTab._on_login_failed(tab, "ttr", "acct-1", worker, "msg")
     if rejected:
-        cm.set_login_failed.assert_called_once_with("acct-1", True)
+        cm.set_login_failed.assert_called_once_with("acct-1", True, None)
     else:
         cm.set_login_failed.assert_not_called()
 
@@ -170,3 +171,37 @@ def test_record_tolerates_managers_without_the_api(qapp):
     from tabs.launch_tab import LaunchTab
     tab = SimpleNamespace(cred_manager=object())
     LaunchTab._record_login_rejected(tab, "acct-1", True)    # no raise
+
+
+def test_ttr_reason_is_the_banner(qapp, monkeypatch):
+    from services.ttr_login_service import TTRLoginWorker
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _resp(
+        {"success": "false", "banner": "Servers are closed."}))
+    w = TTRLoginWorker()
+    _run_and_wait_failure(w, lambda: w.login("user", "pw"))
+    assert w.rejection_reason == "Servers are closed."
+
+
+def test_ttr_no_banner_means_no_reason(qapp, monkeypatch):
+    from services.ttr_login_service import TTRLoginWorker
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _resp({"success": "false"}))
+    w = TTRLoginWorker()
+    _run_and_wait_failure(w, lambda: w.login("user", "pw"))
+    assert w.credentials_rejected is True and w.rejection_reason is None
+
+
+def test_cc_reason_is_the_message(qapp, monkeypatch):
+    from services.cc_login_service import CCLoginWorker
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _resp(
+        {"status": False, "bad_token": True, "message": "Token invalid"}, 401))
+    w = CCLoginWorker()
+    _run_and_wait_failure(w, lambda: w.login_with_token("tok"))
+    assert w.rejection_reason == "Token invalid"
+
+
+def test_tab_passes_the_server_reason_not_the_ui_message(qapp):
+    worker = SimpleNamespace(credentials_rejected=True, rejection_reason="Closed.")
+    cm = MagicMock()
+    LaunchTab, tab = _tab_stub(cm, worker)
+    LaunchTab._on_login_failed(tab, "ttr", "acct-1", worker, "UI text")
+    cm.set_login_failed.assert_called_once_with("acct-1", True, "Closed.")

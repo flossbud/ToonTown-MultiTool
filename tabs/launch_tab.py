@@ -2356,18 +2356,25 @@ class LaunchTab(QWidget):
         print(f"[Launch] _on_login_failed: game={game} account={account_id} msg={msg!r}")
         self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)} login failed: {msg}")
         if getattr(worker, "credentials_rejected", False) is True:
-            self._record_login_rejected(account_id, True)
+            reason = getattr(worker, "rejection_reason", None)
+            self._record_login_rejected(
+                account_id, True, reason if isinstance(reason, str) else None)
         self._update_status(game, account_id, LoginState.FAILED, msg)
         self._show_failure_dialog(game, account_id, msg)
 
-    def _record_login_rejected(self, account_id, rejected: bool) -> None:
-        """Persist (or clear) a rejected sign-in so it survives a restart.
-        Network, queue and launch failures never reach here as rejected."""
+    def _record_login_rejected(self, account_id, rejected: bool,
+                               reason: str | None = None) -> None:
+        """Persist (or clear) a rejected sign-in, with the server's message,
+        so it survives a restart. Network, queue and launch failures never
+        reach here as rejected."""
         setter = getattr(self.cred_manager, "set_login_failed", None)
         if setter is None:
             return
         try:
-            setter(account_id, rejected)
+            if rejected:
+                setter(account_id, True, reason)
+            else:
+                setter(account_id, False)
         except Exception as e:
             print(f"[Launch] could not record login state for {account_id[:8]}: "
                   f"{type(e).__name__}: {e}")

@@ -79,6 +79,15 @@ def find_engine_path() -> str | None:
     return None
 
 
+def _server_text(data: dict, *keys: str) -> str | None:
+    """The first non-blank string among `keys` in a server reply, else None."""
+    for k in keys:
+        v = data.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
 class LoginState:
     """Enumeration of login states."""
     IDLE = "idle"
@@ -108,6 +117,8 @@ class TTRLoginWorker(QObject):
     # username/password (not a network, queue, 2FA or decode failure). Set on
     # the worker thread before login_failed is emitted.
     credentials_rejected = False
+    # The server's own words for that refusal (its banner), or None.
+    rejection_reason = None
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -147,6 +158,7 @@ class TTRLoginWorker(QObject):
         self._set_state(LoginState.LOGGING_IN, "Authenticating…")
         self._stop_event.clear()
         self.credentials_rejected = False
+        self.rejection_reason = None
 
         def _do():
             try:
@@ -157,6 +169,7 @@ class TTRLoginWorker(QObject):
                 if data is None:
                     return
                 if data.get("success", "false") == "false":
+                    self.rejection_reason = _server_text(data, "banner")
                     self.credentials_rejected = True
                 self._handle_response(data)
             except requests.RequestException as e:

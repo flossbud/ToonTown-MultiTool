@@ -36,12 +36,15 @@ from utils.models import AccountCredential
 MAX_ACCOUNTS = 32
 
 # An account's login, as the launcher shows it. "failed" is persisted in
-# accounts.json (key LOGIN_FAILED_KEY, present only while true); "saved" and
-# "none" are read from the keyring.
+# accounts.json (key LOGIN_FAILED_KEY, present only while true, with the
+# server's own words under LOGIN_FAILED_REASON_KEY when it gave any); "saved"
+# and "none" are read from the keyring.
 LOGIN_SAVED = "saved"
 LOGIN_FAILED = "failed"
 LOGIN_NONE = "none"
 LOGIN_FAILED_KEY = "login_failed"
+LOGIN_FAILED_REASON_KEY = "login_failed_reason"
+_LOGIN_FAILED_REASON_MAX = 300
 
 # Per-item timeout for the one-time darwin legacy->vault migration reads/deletes.
 # Generous because each un-migrated item may show a one-time macOS Keychain ACL
@@ -1247,6 +1250,7 @@ class CredentialsManager:
             if password is not None or (
                     username is not None and username != a.get("username")):
                 a.pop(LOGIN_FAILED_KEY, None)
+                a.pop(LOGIN_FAILED_REASON_KEY, None)
 
             if label is not None:
                 a["label"] = label
@@ -1310,23 +1314,50 @@ class CredentialsManager:
         a = self._entry(account_id)
         return bool(a is not None and a.get(LOGIN_FAILED_KEY) is True)
 
-    def set_login_failed(self, account_id: str, failed: bool) -> bool:
+    def set_login_failed(self, account_id: str, failed: bool,
+                         reason: str | None = None) -> bool:
         """Record (True) or clear (False) a rejected sign-in. Persisted in
-        accounts.json; the key is removed rather than stored as false, so
-        files without failures look exactly as before. Returns True if the
-        stored state changed, False if it was already so or the id is
-        unknown. Does not fire on_change (the roster did not change)."""
+        accounts.json; the keys are removed rather than stored as false, so
+        files without failures look exactly as before.
+
+        `reason` is the server's own message (TTR's banner, CC's message),
+        kept with the flag and cleared with it. Blank or non-text reasons
+        are not stored; long ones are cut to a few hundred characters.
+
+        Returns True if anything stored changed, False if it was already so
+        or the id is unknown. Does not fire on_change (the roster did not
+        change)."""
         a = self._entry(account_id)
         if a is None:
             return False
-        if bool(failed) == (a.get(LOGIN_FAILED_KEY) is True):
-            return False
         if failed:
+            text = reason.strip() if isinstance(reason, str) else ""
+            text = text[:_LOGIN_FAILED_REASON_MAX]
+            if (a.get(LOGIN_FAILED_KEY) is True
+                    and a.get(LOGIN_FAILED_REASON_KEY, "") == text):
+                return False
             a[LOGIN_FAILED_KEY] = True
+            if text:
+                a[LOGIN_FAILED_REASON_KEY] = text
+            else:
+                a.pop(LOGIN_FAILED_REASON_KEY, None)
         else:
+            if (LOGIN_FAILED_KEY not in a
+                    and LOGIN_FAILED_REASON_KEY not in a):
+                return False
             a.pop(LOGIN_FAILED_KEY, None)
+            a.pop(LOGIN_FAILED_REASON_KEY, None)
         self._save()
         return True
+
+    def login_failed_reason(self, account_id: str) -> str | None:
+        """The server's words for the current rejected sign-in, or None
+        (not failed, or failed without a message). No keyring access."""
+        a = self._entry(account_id)
+        if a is None or a.get(LOGIN_FAILED_KEY) is not True:
+            return None
+        text = a.get(LOGIN_FAILED_REASON_KEY)
+        return text if isinstance(text, str) and text else None
 
     def login_status(self, account_id: str) -> str:
         """LOGIN_FAILED, LOGIN_SAVED or LOGIN_NONE for this account.
