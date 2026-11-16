@@ -113,6 +113,9 @@ def test_demo_matches_the_handoff(demo):
     assert {t.enabled for t in toons} == {True, False}
     assert {t.keep_alive for t in toons} == {True, False}
     assert {t.click_sync for t in toons} == {True, False}
+    # Click sync exists for Toontown Rewritten windows only.
+    assert [t.click_sync_supported for t in toons] == [True, True, False, True]
+    assert moe.click_sync is False
     assert {t.keyset_id for t in toons} == {"0", "1"}
     assert demo.is_running()
     assert demo.keep_alive_available() and demo.click_sync_available()
@@ -223,6 +226,21 @@ def test_click_sync_cannot_be_turned_on_while_unavailable(demo, spy):
     demo.set_click_sync("demo-2", True)
     assert demo.toon("demo-2").click_sync is False
     assert spy.events == []
+
+
+def test_click_sync_cannot_be_turned_on_where_unsupported(demo, spy):
+    assert demo.toon("demo-3").click_sync_supported is False
+    demo.set_click_sync("demo-3", True)
+    assert demo.toon("demo-3").click_sync is False
+    assert spy.events == []
+
+
+def test_click_sync_can_be_turned_off_where_unsupported(demo, spy):
+    demo.update_toon("demo-3", click_sync=True)      # however it got there
+    spy.events.clear()
+    demo.set_click_sync("demo-3", False)
+    assert demo.toon("demo-3").click_sync is False
+    assert spy.events == [("toon", "demo-3")]
 
 
 def test_feature_going_away_keeps_each_toons_choice(demo):

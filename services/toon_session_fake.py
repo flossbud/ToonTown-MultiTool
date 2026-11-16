@@ -75,24 +75,28 @@ class FakeToonSession(QObject):
                 window_id=str(ids[0]), slot=0, game=GAME_TTR, name="Flossbud",
                 species="rabbit", dna=None, accent="#4a8fe7",
                 enabled=True, keep_alive=True, click_sync=True,
+                click_sync_supported=True,
                 keyset_id=keyset_id_for_index(0), counters_locked=True,
                 beans=456, bank=12840, tokens=310, laff=137, max_laff=137),
             ToonState(
                 window_id=str(ids[1]), slot=1, game=GAME_TTR, name="Hector",
                 species="dog", dna=None, accent="#e74a4a",
                 enabled=True, keep_alive=True, click_sync=False,
+                click_sync_supported=True,
                 keyset_id=keyset_id_for_index(1), counters_locked=False,
                 beans=87, bank=9200, tokens=42, laff=98, max_laff=112),
             ToonState(
                 window_id=str(ids[2]), slot=2, game=GAME_CC, name="Moe",
                 species="cat", dna=None, accent="#e7894a",
-                enabled=True, keep_alive=False, click_sync=True,
+                enabled=True, keep_alive=False, click_sync=False,
+                click_sync_supported=False,
                 keyset_id=keyset_id_for_index(1), counters_locked=False,
                 beans=1204, bank=30000, tokens=None, laff=64, max_laff=120),
             ToonState(
                 window_id=str(ids[3]), slot=3, game=GAME_TTR, name="Linux",
                 species="duck", dna=None, accent="#56c856",
                 enabled=False, keep_alive=False, click_sync=False,
+                click_sync_supported=True,
                 keyset_id=keyset_id_for_index(0), counters_locked=False,
                 beans=250, bank=6979, tokens=0, laff=15, max_laff=15),
         ]
@@ -128,6 +132,9 @@ class FakeToonSession(QObject):
 
     def set_click_sync(self, window_id: str, on: bool) -> None:
         if on and not self._click_sync_available:
+            return
+        state = self._toons.get(window_id)
+        if on and state is not None and not state.click_sync_supported:
             return
         self._set_field(window_id, "click_sync", bool(on))
 

@@ -20,6 +20,9 @@ Signal contract:
 Every signal is emitted on the GUI thread. A setter that changes something
 emits ``toon_changed`` exactly once; a setter that changes nothing (same
 value, unknown window id, feature unavailable) emits nothing.
+
+Click sync is only offered where ``ToonState.click_sync_supported`` is true;
+``set_click_sync(window_id, True)`` is ignored for any other toon.
 """
 
 from __future__ import annotations
@@ -70,6 +73,7 @@ class ToonState:
     enabled: bool             # broadcast enable for this toon
     keep_alive: bool
     click_sync: bool
+    click_sync_supported: bool  # False where click sync cannot run (Corporate Clash today)
     keyset_id: str            # stable id of the active keyset
     counters_locked: bool
     beans: int | None
