@@ -237,6 +237,12 @@ class ClickSyncService(QObject):
         with self._lock:
             return dict(self._states)
 
+    def members(self) -> frozenset[int]:
+        """Slots currently in the group. Unlike slot_states() this keeps
+        reporting membership while the master switch is off."""
+        with self._lock:
+            return frozenset(self._members)
+
     def _delivery_ready(self):
         """(ready, reason). FAIL-CLOSED: a probe exception returns NOT-ready. Mouse
         delivery rides a private-ABI path, so an unverifiable state must NOT be treated

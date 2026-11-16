@@ -34,6 +34,7 @@ class FakeToonSession(QObject):
     toon_changed = Signal(str)
     running_changed = Signal(bool)
     features_changed = Signal()
+    keep_alive_inhibit_status = Signal(object)
 
     def __init__(self, toons=(), *, running: bool = False,
                  keep_alive_available: bool = True,
@@ -52,6 +53,7 @@ class FakeToonSession(QObject):
         self._key_event_queue: queue.Queue = queue.Queue()
         self._toon_capture_sink = None
         self._shut_down = False
+        self._active_profile = -1
 
         # Call records, for tests that only need to know an action was asked for.
         self.refresh_count = 0
@@ -119,6 +121,18 @@ class FakeToonSession(QObject):
     def click_sync_available(self) -> bool:
         return self._click_sync_available
 
+    @property
+    def active_profile(self) -> int:
+        return self._active_profile
+
+    def click_sync_state(self, window_id: str) -> str:
+        """"active" with two or more members, "armed" alone, else "off"."""
+        state = self._toons.get(window_id)
+        if state is None or not state.click_sync or not self._click_sync_available:
+            return "off"
+        members = sum(1 for t in self._toons.values() if t.click_sync)
+        return "active" if members >= 2 else "armed"
+
     # ── Per-toon setters ───────────────────────────────────────────────────
 
     def set_enabled(self, window_id: str, on: bool) -> None:
@@ -144,7 +158,17 @@ class FakeToonSession(QObject):
     def set_counters_locked(self, window_id: str, on: bool) -> None:
         self._set_field(window_id, "counters_locked", bool(on))
 
+    def toggle_keep_alive_all(self) -> None:
+        if not self._keep_alive_available:
+            return
+        on = [t.window_id for t in self.toons() if t.keep_alive]
+        for window_id in (on or [t.window_id for t in self.toons()]):
+            self.set_keep_alive(window_id, not on)
+
     # ── Session actions ────────────────────────────────────────────────────
+
+    def activate(self) -> None:
+        """Nothing to start: there are no services behind the fake."""
 
     def start(self) -> None:
         self._set_running(True)
@@ -152,12 +176,20 @@ class FakeToonSession(QObject):
     def stop(self) -> None:
         self._set_running(False)
 
+    def toggle_running(self) -> None:
+        self._set_running(not self._running)
+
+    def customization_changed(self, game: str | None = None,
+                              name: str | None = None) -> None:
+        """Accents are plain fields here; change one with ``update_toon``."""
+
     def refresh(self) -> None:
         self.refresh_count += 1
 
     def load_profile(self, index: int) -> None:
         """Apply the profile registered with ``set_profile``, if any."""
         self.loaded_profiles.append(index)
+        self._active_profile = index
         for slot, fields in self._profiles.get(index, {}).items():
             state = self._toon_at_slot(slot)
             if state is None:

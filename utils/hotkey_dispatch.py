@@ -7,8 +7,21 @@ from __future__ import annotations
 from utils.settings_keys import CLICK_SYNC_ENABLED, HOTKEY_LAUNCH_SLOTS
 
 
-def build_dispatch(*, mode_controller, launch_tab, multitoon_tab,
-                   settings_manager, load_profile):
+def build_dispatch(*, mode_controller, launch_tab, settings_manager,
+                   load_profile, multitoon_tab=None, session=None):
+    """Exactly one of ``multitoon_tab`` (the Multitoon tab) and ``session``
+    (a ToonSession) supplies the service, keep-alive and refresh targets."""
+    if (multitoon_tab is None) == (session is None):
+        raise ValueError("pass exactly one of multitoon_tab and session")
+    if session is not None:
+        toggle_service = session.toggle_running
+        toggle_keep_alive_all = session.toggle_keep_alive_all
+        refresh = session.refresh
+    else:
+        toggle_service = multitoon_tab.toggle_service
+        toggle_keep_alive_all = multitoon_tab.toggle_keep_alive_all
+        refresh = multitoon_tab._on_refresh_requested
+
     def _overlay(method, *args, **kwargs):
         if not getattr(mode_controller, "is_active", False):
             return
@@ -48,10 +61,10 @@ def build_dispatch(*, mode_controller, launch_tab, multitoon_tab,
         "overlay.toggle_cards": _toggle_cards,
         "overlay.scale_up": lambda: _overlay("set_scale_by_notches", 1),
         "overlay.scale_down": lambda: _overlay("set_scale_by_notches", -1),
-        "service.toggle": multitoon_tab.toggle_service,
-        "keepalive.toggle_all": multitoon_tab.toggle_keep_alive_all,
+        "service.toggle": toggle_service,
+        "keepalive.toggle_all": toggle_keep_alive_all,
         "clicksync.toggle": _flip_click_sync,
-        "app.refresh": multitoon_tab._on_refresh_requested,
+        "app.refresh": refresh,
     }
     for n in (1, 2, 3, 4):
         dispatch[f"launch.slot_{n}"] = (
