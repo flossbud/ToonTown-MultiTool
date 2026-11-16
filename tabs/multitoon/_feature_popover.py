@@ -22,7 +22,9 @@ from PySide6.QtWidgets import (
 )
 
 from utils.icon_factory import make_click_sync_icon, make_stopwatch_icon
-from utils.settings_keys import CLICK_SYNC_ENABLED
+from utils.settings_keys import (
+    CLICK_SYNC_ENABLED, KEEP_ALIVE_ENABLED, KEEP_ALIVE_CONSENT_ACKNOWLEDGED,
+)
 from utils.shared_widgets import Switch
 from utils.theme_manager import (
     KEEP_ALIVE_ACCENT, KEEP_ALIVE_ACCENT_BORDER, V2_ACCENTS,
@@ -137,7 +139,7 @@ class FeatureDiscoveryPopover(QWidget):
                 name="Keep-Alive",
                 desc="Taps a key on idle toons so they don't disconnect. "
                      "Adds a timer bar to each card.",
-                key="keep_alive_enabled",
+                key=KEEP_ALIVE_ENABLED,
             ),
         }
         for fkey in self._FEATURES:
@@ -247,7 +249,7 @@ class FeatureDiscoveryPopover(QWidget):
             # Turning OFF is always immediate.
             self._sm.set(meta["key"], False)
         elif fkey == "ka" and not self._sm.get(
-                "keep_alive_consent_acknowledged", False):
+                KEEP_ALIVE_CONSENT_ACKNOWLEDGED, False):
             self._tos_panel.show()
             self._reposition()
             return
@@ -261,8 +263,8 @@ class FeatureDiscoveryPopover(QWidget):
     def _on_tos_confirm(self) -> None:
         # Consent BEFORE the flag: a consumer reacting to keep_alive_enabled
         # must already see consent recorded.
-        self._sm.set("keep_alive_consent_acknowledged", True)
-        self._sm.set("keep_alive_enabled", True)
+        self._sm.set(KEEP_ALIVE_CONSENT_ACKNOWLEDGED, True)
+        self._sm.set(KEEP_ALIVE_ENABLED, True)
         self._tos_panel.hide()
         self._reposition()
         self.sync_from_settings()

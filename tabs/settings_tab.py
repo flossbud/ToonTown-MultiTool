@@ -42,6 +42,7 @@ from services.wine_runtimes import install_signature
 from utils.settings_keys import (
     CC_ENGINE_INSTALL_SIGNATURE, SETTINGS_ACTIVE_CATEGORY, STRICT_TTR_SEPARATION,
     CLICK_SYNC_ENABLED, GHOST_CURSORS_ENABLED, GHOST_CURSORS_CONTROL_CARDS,
+    KEEP_ALIVE_ENABLED, KEEP_ALIVE_CONSENT_ACKNOWLEDGED,
 )
 
 
@@ -924,7 +925,7 @@ class SettingsTab(QWidget):
         self._cards.append(card)
         self._keep_alive_panel = card
 
-        master_initial = bool(self.settings_manager.get("keep_alive_enabled", False))
+        master_initial = bool(self.settings_manager.get(KEEP_ALIVE_ENABLED, False))
         master_row = self._v2_row(
             "Enable Keep-Alive",
             helper=("Disabled by default. Both games' Terms of Service prohibit "
@@ -1337,18 +1338,18 @@ class SettingsTab(QWidget):
 
     def _on_keep_alive_master_toggle(self, checked: bool):
         if not checked:
-            self.settings_manager.set("keep_alive_enabled", False)
+            self.settings_manager.set(KEEP_ALIVE_ENABLED, False)
             self._refresh_keep_alive_enabled_state(False)
             return
-        if self.settings_manager.get("keep_alive_consent_acknowledged", False):
-            self.settings_manager.set("keep_alive_enabled", True)
+        if self.settings_manager.get(KEEP_ALIVE_CONSENT_ACKNOWLEDGED, False):
+            self.settings_manager.set(KEEP_ALIVE_ENABLED, True)
             self._refresh_keep_alive_enabled_state(True)
             return
         if self._show_keep_alive_warning_dialog():
             # Record consent so neither this dialog nor the multitoon
             # popover's inline confirm asks again on a later re-enable.
-            self.settings_manager.set("keep_alive_consent_acknowledged", True)
-            self.settings_manager.set("keep_alive_enabled", True)
+            self.settings_manager.set(KEEP_ALIVE_CONSENT_ACKNOWLEDGED, True)
+            self.settings_manager.set(KEEP_ALIVE_ENABLED, True)
             self._refresh_keep_alive_enabled_state(True)
         else:
             # Revert visual without re-firing toggled.

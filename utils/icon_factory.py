@@ -945,3 +945,141 @@ def make_swap_icon(size: int = 13, color: QColor | None = None) -> QIcon:
     return _v2_polyline_icon(size, color, [
         [(4, 8), (20, 8)], [(16, 4), (20, 8), (16, 12)],
         [(20, 16), (4, 16)], [(8, 12), (4, 16), (8, 20)]])
+
+
+# ── Next-UI glyphs (float strips + launchpad window) ────────────────────────
+# Each follows a path from the design handoffs, drawn on the same 24-unit
+# viewBox the SVGs use. `stroke` is the SVG stroke-width in viewBox units.
+
+def _glyph_pen(color, size: int, stroke: float = 2.0) -> QPen:
+    pen = QPen(color if color is not None else QColor("#ffffff"),
+               max(1.2, size * stroke / 24.0))
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    return pen
+
+
+def _glyph_poly(points, s: float) -> QPainterPath:
+    path = QPainterPath(QPointF(points[0][0] * s, points[0][1] * s))
+    for x, y in points[1:]:
+        path.lineTo(x * s, y * s)
+    path.closeSubpath()
+    return path
+
+
+_STAR_FILLED = [(12, 2), (15.1, 8.3), (22.1, 9.3), (17.1, 14.2), (18.3, 21.1),
+                (12, 17.8), (5.7, 21.1), (6.9, 14.2), (1.9, 9.3), (8.9, 8.3)]
+_STAR_OUTLINE = [(12, 2.8), (14.9, 8.7), (21.4, 9.6), (16.7, 14.2), (17.8, 20.6),
+                 (12, 17.6), (6.2, 20.6), (7.3, 14.2), (2.6, 9.6), (9.1, 8.7)]
+
+
+def make_star_icon(size: int = 16, color: QColor | None = None,
+                   filled: bool = False) -> QIcon:
+    """Five-point star: filled for the main toon, outline otherwise."""
+    pm, p = _v2_canvas(size)
+    s = size / 24.0
+    c = color if color is not None else QColor("#ffffff")
+    if filled:
+        p.setPen(Qt.NoPen)
+        p.setBrush(c)
+        p.drawPath(_glyph_poly(_STAR_FILLED, s))
+    else:
+        p.setPen(_glyph_pen(c, size))
+        p.setBrush(Qt.NoBrush)
+        p.drawPath(_glyph_poly(_STAR_OUTLINE, s))
+    p.end()
+    return QIcon(pm)
+
+
+def make_person_icon(size: int = 16, color: QColor | None = None) -> QIcon:
+    """Head and shoulders (Accounts)."""
+    pm, p = _v2_canvas(size)
+    s = size / 24.0
+    p.setPen(_glyph_pen(color, size))
+    p.setBrush(Qt.NoBrush)
+    p.drawEllipse(QPointF(12 * s, 8 * s), 4 * s, 4 * s)
+    shoulders = QPainterPath(QPointF(4 * s, 21 * s))
+    shoulders.arcTo(QRectF(4 * s, 13 * s, 16 * s, 16 * s), 180, -180)
+    p.drawPath(shoulders)
+    p.end()
+    return QIcon(pm)
+
+
+def make_dpad_icon(size: int = 16, color: QColor | None = None) -> QIcon:
+    """Plus-shaped d-pad outline (Keysets)."""
+    pm, p = _v2_canvas(size)
+    s = size / 24.0
+    p.setPen(_glyph_pen(color, size))
+    p.setBrush(Qt.NoBrush)
+    p.drawPath(_glyph_poly([(9, 3), (15, 3), (15, 9), (21, 9), (21, 15),
+                            (15, 15), (15, 21), (9, 21), (9, 15), (3, 15),
+                            (3, 9), (9, 9)], s))
+    p.end()
+    return QIcon(pm)
+
+
+def make_key_icon(size: int = 16, color: QColor | None = None) -> QIcon:
+    """A key: ring bow, diagonal shaft, one bit."""
+    pm, p = _v2_canvas(size)
+    s = size / 24.0
+    p.setPen(_glyph_pen(color, size))
+    p.setBrush(Qt.NoBrush)
+    p.drawEllipse(QPointF(7.5 * s, 15.5 * s), 4.5 * s, 4.5 * s)
+    p.drawLine(QPointF(11 * s, 12 * s), QPointF(20 * s, 3 * s))
+    p.drawLine(QPointF(16 * s, 7 * s), QPointF(19 * s, 10 * s))
+    p.end()
+    return QIcon(pm)
+
+
+def make_padlock_icon(size: int = 11, color: QColor | None = None,
+                      unlocked: bool = False) -> QIcon:
+    """Padlock: solid body, shackle closed or swung open (counter lock)."""
+    pm, p = _v2_canvas(size)
+    s = size / 24.0
+    c = color if color is not None else QColor("#ffffff")
+    p.setPen(Qt.NoPen)
+    p.setBrush(c)
+    p.drawRoundedRect(QRectF(4 * s, 11 * s, 16 * s, 10 * s), 2 * s, 2 * s)
+    p.setPen(_glyph_pen(c, size, 2.6))
+    p.setBrush(Qt.NoBrush)
+    shackle = QPainterPath(QPointF(8 * s, 11 * s))
+    shackle.lineTo(8 * s, 7 * s)
+    ring = QRectF(8 * s, 3 * s, 8 * s, 8 * s)
+    if unlocked:
+        # Ends at (15.5, 5) on the same circle, about 30 degrees above east.
+        shackle.arcTo(ring, 180, -150)
+    else:
+        shackle.arcTo(ring, 180, -180)
+        shackle.lineTo(16 * s, 11 * s)
+    p.drawPath(shackle)
+    p.end()
+    return QIcon(pm)
+
+
+def make_grip_icon(size: int = 16, color: QColor | None = None) -> QIcon:
+    """Six-dot drag grip (two columns of three)."""
+    pm, p = _v2_canvas(size)
+    s = size / 24.0
+    p.setPen(Qt.NoPen)
+    p.setBrush(color if color is not None else QColor("#ffffff"))
+    r = 1.6 * s
+    # Centre each dot on a pixel centre: at small sizes a dot that straddles
+    # a pixel corner never reaches full opacity and reads as a smudge.
+    for x in (9, 15):
+        for y in (6, 12, 18):
+            p.drawEllipse(QPointF(math.floor(x * s) + 0.5,
+                                  math.floor(y * s) + 0.5), r, r)
+    p.end()
+    return QIcon(pm)
+
+
+def make_window_icon(size: int = 16, color: QColor | None = None) -> QIcon:
+    """An app window: rounded frame with a title bar rule."""
+    pm, p = _v2_canvas(size)
+    s = size / 24.0
+    p.setPen(_glyph_pen(color, size))
+    p.setBrush(Qt.NoBrush)
+    p.drawRoundedRect(QRectF(3 * s, 5 * s, 18 * s, 14 * s), 2 * s, 2 * s)
+    p.drawLine(QPointF(3 * s, 10 * s), QPointF(21 * s, 10 * s))
+    p.end()
+    return QIcon(pm)

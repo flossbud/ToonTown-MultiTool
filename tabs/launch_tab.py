@@ -2216,6 +2216,7 @@ class LaunchTab(QWidget):
         slot = self._slots[game].get(account_id)
         if slot is None or slot.worker is not worker:
             return  # stale signal from a superseded/cancelled attempt
+        self._record_login_rejected(account_id, False)
         game_label = "TTR" if game == "ttr" else "CC"
         print(f"[Launch] _on_login_success: game={game} account={account_id} "
               f"gameserver='{gameserver}' token_len={len(token) if token else 0}")
@@ -2354,8 +2355,22 @@ class LaunchTab(QWidget):
         game_label = "TTR" if game == "ttr" else "CC"
         print(f"[Launch] _on_login_failed: game={game} account={account_id} msg={msg!r}")
         self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)} login failed: {msg}")
+        if getattr(worker, "credentials_rejected", False) is True:
+            self._record_login_rejected(account_id, True)
         self._update_status(game, account_id, LoginState.FAILED, msg)
         self._show_failure_dialog(game, account_id, msg)
+
+    def _record_login_rejected(self, account_id, rejected: bool) -> None:
+        """Persist (or clear) a rejected sign-in so it survives a restart.
+        Network, queue and launch failures never reach here as rejected."""
+        setter = getattr(self.cred_manager, "set_login_failed", None)
+        if setter is None:
+            return
+        try:
+            setter(account_id, rejected)
+        except Exception as e:
+            print(f"[Launch] could not record login state for {account_id[:8]}: "
+                  f"{type(e).__name__}: {e}")
 
     def _on_launcher_failed(self, game, account_id, launcher, msg):
         slot = self._slots[game].get(account_id)

@@ -1,6 +1,8 @@
 import os
 import json
 
+from utils import settings_keys as _sk
+
 
 class SettingsManager:
     def __init__(self):
@@ -28,6 +30,10 @@ class SettingsManager:
             "macos_permissions_onboarding_shown": False,
             "saved_colors":                       [],
             "window_compositing_cache":           {},
+            _sk.FLOAT_STRIP_STYLE:            _sk.FLOAT_STRIP_STYLE_DEFAULT,
+            _sk.HIDE_WINDOW_WHEN_TOONS_UP:    _sk.HIDE_WINDOW_WHEN_TOONS_UP_DEFAULT,
+            _sk.TRAY_ICON:                    _sk.TRAY_ICON_DEFAULT,
+            _sk.KEYSET_EDITOR_LAYOUT:         _sk.KEYSET_EDITOR_LAYOUT_DEFAULT,
         }
         self._callbacks = []
         self._load()
