@@ -236,14 +236,6 @@ class RosterCard(QFrame):
         self.fix_pill.setObjectName("card_fix_login")
         self.fix_pill.setCursor(Qt.PointingHandCursor)
         self.fix_pill.setFixedHeight(FIX_PILL_H)
-        fix = gp.fix_login()
-        self.fix_pill.setStyleSheet(
-            "QPushButton#card_fix_login {"
-            f" background: {fix['pill_bg']}; border: 1px solid {fix['pill_border']};"
-            f" border-radius: {FIX_PILL_H // 2}px; padding: 0 10px;"
-            f" color: {fix['pill_text']}; font-size: 10.5px; font-weight: 700; }}"
-            "QPushButton#card_fix_login:hover {"
-            f" background: {fix['pill_bg_hover']}; }}")
         self.fix_pill.adjustSize()
         self.fix_pill.hide()
         self.fix_pill.clicked.connect(lambda: self._emit(self.fix_login_clicked))
@@ -626,6 +618,15 @@ class RosterCard(QFrame):
         self.update()
 
     def _restyle(self) -> None:
+        fix = gp.fix_login(self._is_dark)
+        self.fix_pill.setStyleSheet(
+            "QPushButton#card_fix_login {"
+            f" background: {fix['pill_bg']}; border: 1px solid {fix['pill_border']};"
+            f" border-radius: {FIX_PILL_H // 2}px; padding: 0 10px;"
+            f" color: {fix['pill_text']}; font-size: 10.5px; font-weight: 700; }}"
+            "QPushButton#card_fix_login:hover {"
+            f" background: {fix['pill_bg_hover']}; }}")
+        self.fix_pill.adjustSize()
         ink = gp.card_ink(self._selected, self._is_dark)
         self.name.setStyleSheet(
             f"color: {ink['name'].name()}; font-size: 13px; font-weight: 700;"
@@ -701,7 +702,7 @@ class RosterCard(QFrame):
             self._paint_placeholder(p, box, e)
 
         p.setBrush(Qt.NoBrush)
-        p.setPen(gp.fix_login()["card_border"] if self.shows_fix_login()
+        p.setPen(gp.fix_login(self._is_dark)["card_border"] if self.shows_fix_login()
                  else d["border"])
         p.drawRoundedRect(r, CARD_RADIUS, CARD_RADIUS)
         p.end()
