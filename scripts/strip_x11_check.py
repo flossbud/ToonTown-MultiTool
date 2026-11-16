@@ -19,6 +19,7 @@ Needs python-xlib. --shots DIR saves a screenshot per step with `import`
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -27,8 +28,57 @@ import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MARGIN = 14          # utils.strips.strip_widget.MARGIN
-INSET = 10           # utils.strips.strip_surface.ANCHOR_INSET
+sys.path.insert(0, os.path.dirname(HERE))
+from utils import settings_keys
+from utils.strips import layout as L, tokens
+from utils.strips.model import StripModel
+from utils.strips.strip_widget import MARGIN
+from utils.strips.strip_surface import ANCHOR_INSET, strip_scale
+from utils.strips.popovers.home import HomePanel, CARET_RISE
+
+
+class StripMetrics:
+    """Expected native geometry from the real model and snapped layout.
+
+    Font measurement and effective scale are reported by the GUI process;
+    the check computes layout and compares it to independently measured X
+    geometry. It never assumes that halo bounds are the painted row.
+    """
+
+    def __init__(self, demo, wid, client_width):
+        reports = [json.loads(ln[len("STRIP model "):])
+                   for ln in demo.find("STRIP model ")]
+        record = next(r for r in reversed(reports) if r["wid"] == str(wid))
+        self.model = StripModel(**record["model"])
+        self.scale, self.dpr = record["scale"], record["dpr"]
+        self.device_scale = self.scale * self.dpr
+        self.style = tokens.snapped_style(tokens.style_for(record["style"]), self.device_scale)
+        self.name_width = record["name_width"]
+        self.client_width = client_width
+        self.margin = tokens.snap(MARGIN, self.device_scale) * self.device_scale
+        self.layout = self.for_model(self.model)
+
+    def for_model(self, model):
+        return L.fit_strip(model, self.style, lambda _text: self.name_width,
+                           self.client_width / self.device_scale, self.device_scale)
+
+    def width(self, **changes):
+        layout = self.for_model(self.model.with_(**changes))
+        return round(layout.width * self.device_scale + 2 * self.margin)
+
+    def row_bounds(self, surface):
+        return (surface[0] + self.margin, surface[1] + self.margin,
+                self.layout.width * self.device_scale, self.layout.height * self.device_scale)
+
+    def centred(self, game, surface):
+        left, _top, width, _height = self.row_bounds(surface)
+        # An odd row width has a half-pixel centre: keep its edges on pixels
+        # and choose the nearest representable centre, never the halo's centre.
+        return abs(left + width / 2 - (game[0] + game[2] / 2)) <= self.dpr / 2 + 1e-6
+
+    def inset(self, game, surface):
+        return abs(surface[1] + self.margin - game[1]
+                   - ANCHOR_INSET * self.device_scale) <= self.dpr / 2 + 1e-6
 
 
 class Proc:
@@ -246,6 +296,8 @@ def main() -> int:
                     help="display for --xvfb (default: the first free one from :97)")
     ap.add_argument("--python", default=sys.executable)
     ap.add_argument("--style", default="neon")
+    ap.add_argument("--size", choices=settings_keys.FLOAT_STRIP_SIZE_VALUES,
+                    default=settings_keys.FLOAT_STRIP_SIZE_DEFAULT)
     ap.add_argument("--shots", default=None)
     ap.add_argument("--no-pointer", action="store_true",
                     help="skip the steps that inject pointer clicks")
@@ -315,7 +367,7 @@ def run(args, env, procs) -> int:
     time.sleep(0.5)
 
     demo = Proc([args.python, os.path.join(HERE, "strip_demo.py"),
-                 "--wid", str(game), "--style", args.style], env)
+                 "--wid", str(game), "--style", args.style, "--size", args.size], env)
     procs.append(demo)
     stamp = wait_for(lambda: demo.find("[Strips] "), 15)
     chk.ok("stamp printed", bool(stamp), stamp[0] if stamp else "no stamp")
@@ -336,12 +388,14 @@ def run(args, env, procs) -> int:
             chk.ok(f"{label}: windows can be measured", False,
                    f"game {g} strip {s} {getattr(x, 'last_error', '')}")
             return
-        centre_g = g[0] + g[2] / 2.0
-        centre_s = s[0] + s[2] / 2.0
+        metrics = StripMetrics(demo, game, g[2])
         chk.ok(f"{label}: row centred on the client area",
-               abs(centre_g - centre_s) <= 1.0, f"game {g} strip {s}")
+               metrics.centred(g, s), f"game {g} strip {s} row {metrics.row_bounds(s)} "
+               "(nearest pixel; odd row widths allow a 0.5 px centre offset)")
         chk.ok(f"{label}: row top 10 px inside the client area",
-               abs((s[1] + MARGIN) - (g[1] + INSET)) <= 1, f"strip y {s[1]} client y {g[1]}")
+               metrics.inset(g, s),
+               f"row y {s[1] + metrics.margin:g} client y {g[1]} "
+               f"inset {ANCHOR_INSET * metrics.device_scale:g}")
 
     def directly_above(label: str) -> None:
         st = wait_for(lambda: (lambda o: game in o and strip in o
@@ -352,6 +406,11 @@ def run(args, env, procs) -> int:
     # 1. placement, tie, stacking
     chk.ok("strip placed and shown", bool(wait_for(lambda: demo.find("STRIP place") and shown(), 8)),
            f"viewable {x.viewable(strip)} opacity {x.opacity(strip):.2f}")
+    metrics = StripMetrics(demo, game, x.rect(game)[2])
+    expected_scale = strip_scale(env, args.size)
+    chk.ok("wide window uses the requested strip size",
+           abs(metrics.scale - expected_scale) < 1e-6,
+           f"size {args.size} scale {metrics.scale:g} expected {expected_scale:g}")
     placed_ok("at rest")
     chk.ok("WM_TRANSIENT_FOR points at the game window",
            x.prop(strip, "WM_TRANSIENT_FOR") == [game], str(x.prop(strip, "WM_TRANSIENT_FOR")))
@@ -497,9 +556,14 @@ def run(args, env, procs) -> int:
     back = wait_for(lambda: demo.find("STRIP place", mark) and shown(), 3)
     time.sleep(0.2)
     s, g = x.rect(strip), x.rect(game)
+    metrics = StripMetrics(demo, game, g[2])
     chk.ok("narrow window: strip re-placed", bool(back))
     chk.ok("narrow window: strip collapsed to fit",
-           s[2] < before and s[2] - 2 * MARGIN <= g[2] - 24, f"strip {s} game {g}")
+           metrics.layout.collapse > L.FULL and s[2] < before
+           and metrics.layout.width * metrics.device_scale
+           <= g[2] - L.CLIENT_MARGIN * metrics.device_scale + 1e-6,
+           f"strip {s} game {g} row {metrics.layout.width * metrics.device_scale:g} "
+           f"margin {L.CLIENT_MARGIN * metrics.device_scale:g} scale {metrics.scale:g}")
     placed_ok("narrow window")
     chk.shot("narrow")
     mark = len(demo.lines)
@@ -598,10 +662,11 @@ def popover_phase(args, x, chk, demo, standin, game, other, strip, gx, gy) -> No
     s, c = x.rect(strip), x.rect(counters)
     left = b[("portrait", 0)][0]
     right = b[("name", 0)][0] + b[("name", 0)][2]
+    dpr = b[("portrait", 0)][4]
     chk.ok("counters are centred under portrait and name",
-           abs((c[0] + c[2] / 2.0) - (s[0] + (left + right) / 2.0)) <= 1.5,
+           abs((c[0] + c[2] / 2.0) - (s[0] + (left + right) * dpr / 2.0)) <= 1.5 * dpr,
            f"counters {c} strip {s} identity {left}..{right}")
-    row_bottom = s[1] + b[("portrait", 0)][1] + b[("portrait", 0)][3]
+    row_bottom = s[1] + (b[("portrait", 0)][1] + b[("portrait", 0)][3]) * dpr
     chk.ok("counters start at the row's bottom edge (no gap to cross)",
            abs(c[1] - row_bottom) <= 1, f"counters y {c[1]} row bottom {row_bottom}")
 
@@ -679,11 +744,12 @@ def popover_phase(args, x, chk, demo, standin, game, other, strip, gx, gy) -> No
             m = x.rect(int(got[-1].split()[4]))
             px, py, pw, ph, pdpr = pills["hide"]
             before = x.rect(strip)[2]
+            metrics = StripMetrics(demo, game, x.rect(game)[2])
+            expected = metrics.width(keysets=tuple(n for n in metrics.model.keysets if n != 2))
             x.click(m[0] + (px + pw / 2) * pdpr, m[1] + (py + ph / 2) * pdpr)
-            # One 28 px block and its 6 px gap fewer.
-            shrunk = wait_for(lambda: x.rect(strip)[2] == before - 34 * dpr, 3)
+            shrunk = wait_for(lambda: x.rect(strip)[2] == expected, 3)
             chk.ok("Hide keyset removes that button from the strip", bool(shrunk),
-                   f"strip width {x.rect(strip)[2]} was {before}")
+                   f"strip width {x.rect(strip)[2]} was {before} expected {expected}")
             chk.ok("clicking a menu item left focus on the game", x.active() == game,
                    hex(x.active()))
 
@@ -818,10 +884,12 @@ def home_steps(args, x, chk, demo, standin, game, strip, wid, shown,
     view, (cx, cy, cw, ch) = card(mark)
     s, p = x.rect(strip), x.rect(panel)
     hx, hy, hw, hh, dpr = blocks_now()[("home", 0)]
+    metrics = StripMetrics(demo, game, x.rect(game)[2])
+    gap = (HomePanel.ANCHOR_GAP + CARET_RISE) * metrics.device_scale
     chk.ok("quick menu's card is left-aligned with the home block, 10 px below it",
            view == "menu" and abs((p[0] + cx * dpr) - (s[0] + hx * dpr)) <= 1.5
-           and abs((p[1] + cy * dpr) - (s[1] + (hy + hh) * dpr) - 10 * dpr) <= 1.5,
-           f"panel {p} card {(cx, cy)} strip {s} home {(hx, hy, hw, hh)}")
+           and abs((p[1] + cy * dpr) - (s[1] + (hy + hh) * dpr) - gap) <= 1.5,
+           f"panel {p} card {(cx, cy)} strip {s} home {(hx, hy, hw, hh)} expected gap {gap:g}")
     chk.shot("home-menu")
     if args.no_pointer:
         print("SKIP  home panel clicks (--no-pointer)")
@@ -881,7 +949,8 @@ def four_windows(args, env, procs, x, chk, gx, gy) -> None:
         ids.append(int(got[0].split()[2]))
     time.sleep(0.5)
 
-    argv = [args.python, os.path.join(HERE, "strip_demo.py"), "--style", args.style]
+    argv = [args.python, os.path.join(HERE, "strip_demo.py"), "--style", args.style,
+            "--size", args.size]
     for wid in ids:
         argv += ["--wid", str(wid)]
     demo = Proc(argv, env)
@@ -901,9 +970,11 @@ def four_windows(args, env, procs, x, chk, gx, gy) -> None:
     time.sleep(0.3)
     for i, wid in enumerate(ids):
         g, s = x.rect(wid), x.rect(strips[wid])
+        metrics = StripMetrics(demo, wid, g[2])
         chk.ok(f"toon {i + 1}: strip centred on its own window",
-               abs((g[0] + g[2] / 2.0) - (s[0] + s[2] / 2.0)) <= 1.0
-               and abs((s[1] + MARGIN) - (g[1] + INSET)) <= 1, f"game {g} strip {s}")
+               metrics.centred(g, s) and metrics.inset(g, s),
+               f"game {g} strip {s} row {metrics.row_bounds(s)} "
+               "(nearest pixel; odd row widths allow a 0.5 px centre offset)")
         chk.ok(f"toon {i + 1}: strip tied to its own window",
                x.prop(strips[wid], "WM_TRANSIENT_FOR") == [wid])
     # Openbox answers a restack-next-to-a-sibling request with a plain raise,
@@ -934,7 +1005,8 @@ def four_windows(args, env, procs, x, chk, gx, gy) -> None:
            ("click_sync", 0) not in blocks_of(ids[2])
            and ("click_sync", 0) in blocks_of(ids[1]))
     chk.ok("the narrow fourth window collapsed its name plate",
-           ("name", 0) not in blocks_of(ids[3]) and ("name", 0) in blocks_of(ids[0]))
+           ("name", 0) not in blocks_of(ids[3])
+           and StripMetrics(demo, ids[3], x.rect(ids[3])[2]).layout.collapse >= L.NO_NAME)
     chk.shot("four-strips")
 
     # Raising one game window must not lift the other strips.
@@ -952,6 +1024,9 @@ def four_windows(args, env, procs, x, chk, gx, gy) -> None:
 
     # Toon 1's window closes: its strip goes, the home block moves on.
     width_before = x.rect(strips[ids[1]])[2]
+    metrics = StripMetrics(demo, ids[1], x.rect(ids[1])[2])
+    expected_home = metrics.width(home=True)
+    expected_no_ka = metrics.width(home=True, keep_alive=None)
     mark = len(demo.lines)
     games[0].stop()
     moved = wait_for(lambda: demo.find("STRIP home", mark), 6)
@@ -959,11 +1034,11 @@ def four_windows(args, env, procs, x, chk, gx, gy) -> None:
            bool(moved) and moved[-1].endswith(str(ids[1])), str(moved))
     gone = wait_for(lambda: not x.viewable(strips[ids[0]]), 4)
     chk.ok("toon 1 closed: its strip is gone", bool(gone))
-    grown = wait_for(lambda: (x.rect(strips[ids[1]]) or (0, 0, 0))[2] == width_before + 37, 4)
+    grown = wait_for(lambda: (x.rect(strips[ids[1]]) or (0, 0, 0))[2] == expected_home, 4)
     g, s = x.rect(ids[1]), x.rect(strips[ids[1]])
-    chk.ok("the next strip grew by the home block and stayed centred",
-           bool(grown) and abs((g[0] + g[2] / 2.0) - (s[0] + s[2] / 2.0)) <= 1.0,
-           f"width {s[2]} was {width_before}, game {g} strip {s}")
+    chk.ok("the next strip relaid out for the home block and stayed centred",
+           bool(grown) and StripMetrics(demo, ids[1], g[2]).centred(g, s),
+           f"width {s[2]} was {width_before} expected {expected_home}, game {g} strip {s}")
     chk.ok("the other strips are still shown",
            all(shown(strips[w]) for w in ids[1:]))
     chk.shot("home-moved")
@@ -972,9 +1047,9 @@ def four_windows(args, env, procs, x, chk, gx, gy) -> None:
     mark = len(demo.lines)
     demo.send("features 0 1")
     wait_for(lambda: demo.find("STRIP did features", mark), 3)
-    narrower = wait_for(lambda: x.rect(strips[ids[1]])[2] == width_before + 37 - 34, 4)
+    narrower = wait_for(lambda: x.rect(strips[ids[1]])[2] == expected_no_ka, 4)
     chk.ok("Keep-Alive off app-wide: the block is gone from the strip", bool(narrower),
-           f"width {x.rect(strips[ids[1]])[2]}")
+           f"width {x.rect(strips[ids[1]])[2]} expected {expected_no_ka}")
     demo.send("features 1 1")
     demo.send("stop")
     wait_for(lambda: demo.find("STRIP did stop", mark), 3)

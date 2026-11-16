@@ -20,6 +20,7 @@ from utils.overlay.region import controls_region
 from utils.strips.attach import AttachStrategy, pick_attach_strategy
 from utils.strips.model import StripModel
 from utils.strips.strip_widget import StripWidget
+from utils.strips import layout as L
 
 # The row's top edge sits this far inside the top of the client area.
 ANCHOR_INSET = 10.0
@@ -41,7 +42,10 @@ def strip_scale(environ=os.environ, size: str | None = None) -> float:
 
 def strip_origin(client: QRect, row: QSize, row_offset, scale: float) -> QPoint:
     """Top-left of the surface so the ROW is centred on the client area with
-    its top edge ANCHOR_INSET inside it. All Qt logical px."""
+    its top edge ANCHOR_INSET inside it. All Qt logical px. Keep the row's
+    edges on pixels: an odd row width may leave its centre half a pixel
+    from the client's centre. Halo/surface bounds do not decide placement.
+    """
     x = client.x() + (client.width() - row.width()) / 2.0 - row_offset.x()
     y = client.y() + ANCHOR_INSET * scale - row_offset.y()
     return QPoint(int(round(x)), int(round(y)))
@@ -52,6 +56,7 @@ class StripSurface(QWidget):
     # and it has moved or changed size.
     presentation_changed = Signal(bool)
     geometry_applied = Signal()
+    scale_changing = Signal()     # dismiss popovers/capture before a preset step
 
     # Read by the macOS backend when it picks a window level: anything that
     # is not the cluster's type gets the floating panel level.
@@ -75,6 +80,9 @@ class StripSurface(QWidget):
         self.strip = StripWidget(self)
         self.strip.move(0, 0)
         self.strip.set_scale(strip_scale() if scale is None else scale)
+        self._size_policy: tuple[str, float] | None = None
+        self._effective_size: str | None = None
+        self._sizing = False
 
         self._game_wid: str | None = None
         self._client: tuple | None = None      # native client rect, if placed
@@ -103,8 +111,37 @@ class StripSurface(QWidget):
     def set_scale(self, scale: float) -> None:
         """A new strip size: same place on the game window, larger or
         smaller around the row's centre."""
+        self._size_policy = None
+        self._effective_size = None
         self.strip.set_scale(scale)
         self._fit()
+
+    def set_size_policy(self, maximum: str, base_scale: float) -> None:
+        """Configured size is a maximum; a narrow client may use a lower preset."""
+        maximum = settings_keys.normalize_float_strip_size(maximum)
+        policy = (maximum, float(base_scale))
+        if policy == self._size_policy:
+            return
+        self._size_policy = policy
+        if self._effective_size is None:
+            self._effective_size = maximum
+        if self._client is None:
+            self._set_effective_scale(maximum, base_scale * settings_keys.float_strip_size_factor(maximum))
+        self._fit()
+
+    def _set_effective_scale(self, name: str, scale: float) -> None:
+        if abs(self.strip.scale() - scale) < 1e-6:
+            self._effective_size = name
+            return
+        previous = self._effective_size
+        self._sizing = True
+        try:
+            self.scale_changing.emit()
+            self.strip.set_scale(scale)
+            self._effective_size = name
+        finally:
+            self._sizing = False
+        print(f"[Strips] window={self._game_wid} size {previous} -> {name}", flush=True)
 
     def _fit(self) -> None:
         """The strip changed size: keep it centred where it was placed."""
@@ -161,9 +198,17 @@ class StripSurface(QWidget):
         return self._strategy.rect_to_logical(self._client)
 
     def _apply_geometry(self) -> None:
+        if self._sizing:
+            return
         client = self.client_logical()
         if client is None:
             return
+        if self._size_policy is not None:
+            maximum, base = self._size_policy
+            name = L.fitted_size(self.strip.model(), self.strip.style_name(), maximum,
+                                 self._effective_size, client.width(), base,
+                                 self.devicePixelRatioF() or 1.0)
+            self._set_effective_scale(name, base * settings_keys.float_strip_size_factor(name))
         k = self.strip.scale()
         # Client width in strip design px decides the narrow collapse.
         self.strip.set_client_width(client.width() / k)
