@@ -53,12 +53,42 @@ def test_keep_alive_is_unavailable_by_default(make):
 
 
 def test_keep_alive_needs_both_the_flag_and_consent(make):
-    rig = make(settings={"keep_alive_enabled": True})
+    rig = make()
+    rig.settings.set("keep_alive_enabled", True)
     assert rig.session.keep_alive_available() is False      # no consent recorded
     rig.settings.set("keep_alive_consent_acknowledged", True)
     assert rig.session.keep_alive_available() is True
     rig.settings.set("keep_alive_enabled", False)
     assert rig.session.keep_alive_available() is False
+
+
+def test_keep_alive_that_was_already_on_keeps_working(make):
+    """Accepting the terms dialog was not written down before v0.8.0-alpha.2,
+    so an existing config has the switch on and no consent key. That user
+    accepted; the update must not switch their keep-alive off."""
+    rig = make(settings={"keep_alive_enabled": True})
+    assert rig.settings.data["keep_alive_consent_acknowledged"] is True
+    assert rig.settings.data["keep_alive_consent_source"] == (
+        "enabled_before_consent_was_recorded")
+    assert rig.session.keep_alive_available() is True
+    rig.wm.set_windows(["a"])
+    rig.session.set_keep_alive("a", True)
+    assert rig.session.toon("a").keep_alive is True
+
+
+def test_consent_is_not_invented_for_a_config_with_keep_alive_off(make):
+    rig = make(settings={"keep_alive_enabled": False})
+    assert "keep_alive_consent_acknowledged" not in rig.settings.data
+    assert "keep_alive_consent_source" not in rig.settings.data
+    rig = make()
+    assert "keep_alive_consent_acknowledged" not in rig.settings.data
+
+
+def test_recorded_consent_is_left_as_it_is(make):
+    rig = make(settings={"keep_alive_enabled": True,
+                         "keep_alive_consent_acknowledged": True,
+                         "keep_alive_consent_source": "installer"})
+    assert rig.settings.data["keep_alive_consent_source"] == "installer"
 
 
 def test_set_keep_alive_is_ignored_while_unavailable(make):

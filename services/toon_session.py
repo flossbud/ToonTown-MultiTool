@@ -39,13 +39,17 @@ from services.chat_handling import compute_effective_chat_enabled
 from services.click_sync_wiring import click_sync_supports_game
 from services.keep_alive import (
     KEEP_ALIVE_ACTION_LABELS,
-    KEEP_ALIVE_CONSENT_KEY,
-    KEEP_ALIVE_MASTER_KEY,
     dispatch_keep_alive_cycle,
     keep_alive_delay_seconds,
+    keep_alive_permitted,
+    record_consent_given_before_it_was_recorded,
 )
 from utils import cc_api
-from utils.settings_keys import CLICK_SYNC_ENABLED
+from utils.settings_keys import (
+    CLICK_SYNC_ENABLED,
+    KEEP_ALIVE_CONSENT_ACKNOWLEDGED,
+    KEEP_ALIVE_ENABLED,
+)
 from utils.ttr_api import (
     clear_stale_names,
     get_toon_names_by_slot,
@@ -268,6 +272,11 @@ class ToonSession(QObject):
             prefs = ToonPrefs()
         self._prefs = prefs
 
+        # A config from before consent was written down has keep-alive on
+        # with no consent on record; that user accepted the terms then.
+        if record_consent_given_before_it_was_recorded(settings_manager):
+            print("[ToonSession] keep-alive was already on: consent recorded")
+
         self._toons: dict[str, _Toon] = {}
         self._order: list[str] = []
         self._running = True         # broadcast is on from the start
@@ -404,12 +413,7 @@ class ToonSession(QObject):
 
     def keep_alive_available(self) -> bool:
         """App-wide keep-alive flag AND ToS consent."""
-        settings = self._settings
-        return bool(
-            settings
-            and settings.get(KEEP_ALIVE_MASTER_KEY, False)
-            and settings.get(KEEP_ALIVE_CONSENT_KEY, False)
-        )
+        return keep_alive_permitted(self._settings)
 
     def click_sync_available(self) -> bool:
         return bool(
@@ -922,7 +926,7 @@ class ToonSession(QObject):
             return
         if key == CLICK_SYNC_ENABLED:
             self._apply_click_sync_master()
-        if key in (KEEP_ALIVE_MASTER_KEY, KEEP_ALIVE_CONSENT_KEY, CLICK_SYNC_ENABLED):
+        if key in (KEEP_ALIVE_ENABLED, KEEP_ALIVE_CONSENT_ACKNOWLEDGED, CLICK_SYNC_ENABLED):
             keep_alive = self.keep_alive_available()
             click_sync = self.click_sync_available()
             changed = (keep_alive != self._keep_alive_was_available

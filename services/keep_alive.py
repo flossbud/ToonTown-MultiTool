@@ -8,9 +8,11 @@ from __future__ import annotations
 
 from utils import logical_actions
 from utils.game_registry import GameRegistry
+from utils.settings_keys import KEEP_ALIVE_CONSENT_ACKNOWLEDGED, KEEP_ALIVE_ENABLED
 
-KEEP_ALIVE_MASTER_KEY = "keep_alive_enabled"
-KEEP_ALIVE_CONSENT_KEY = "keep_alive_consent_acknowledged"
+# Who recorded consent; the installer writes "installer" here.
+KEEP_ALIVE_CONSENT_SOURCE = "keep_alive_consent_source"
+CONSENT_SOURCE_ENABLED_BEFORE_RECORD = "enabled_before_consent_was_recorded"
 
 # Label stored in the "keep_alive_delay" setting -> seconds between cycles.
 KEEP_ALIVE_DELAYS = {
@@ -20,6 +22,37 @@ KEEP_ALIVE_DELAYS = {
 KEEP_ALIVE_DELAY_FALLBACK = 60
 
 KEEP_ALIVE_ACTION_LABELS = {"jump": "Jump", "book": "Book", "up": "Move Forward"}
+
+
+def keep_alive_permitted(settings_manager) -> bool:
+    """Keep-alive may run: the user switched it on AND accepted the terms."""
+    return bool(
+        settings_manager
+        and settings_manager.get(KEEP_ALIVE_ENABLED, False)
+        and settings_manager.get(KEEP_ALIVE_CONSENT_ACKNOWLEDGED, False)
+    )
+
+
+def record_consent_given_before_it_was_recorded(settings_manager) -> bool:
+    """Write the consent key for a config that has keep-alive on without it.
+
+    The switch has only ever turned on through the terms dialog (or the
+    installer's checkbox), but until v0.8.0-alpha.2 accepting the dialog was
+    not written down: only the installer recorded consent. So "on, with no
+    consent on record" is what every earlier config that uses keep-alive
+    looks like, and it means the user accepted. Returns True when it wrote.
+    """
+    if not settings_manager:
+        return False
+    if not settings_manager.get(KEEP_ALIVE_ENABLED, False):
+        return False
+    if settings_manager.get(KEEP_ALIVE_CONSENT_ACKNOWLEDGED, False):
+        return False
+    settings_manager.set(KEEP_ALIVE_CONSENT_ACKNOWLEDGED, True)
+    if not settings_manager.get(KEEP_ALIVE_CONSENT_SOURCE):
+        settings_manager.set(KEEP_ALIVE_CONSENT_SOURCE,
+                             CONSENT_SOURCE_ENABLED_BEFORE_RECORD)
+    return True
 
 
 def keep_alive_delay_seconds(settings_manager) -> float:
