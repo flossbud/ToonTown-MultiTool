@@ -128,6 +128,7 @@ class KeysetEditor(QWidget):
         self._scale = float(scale) if scale and scale > 0 else 1.0
         self._colour = tokens.set_color(model.number)
         self._caret_x: float | None = None
+        self._flipped = False
         self._listening = ""              # action waiting for a key, if any
         self._selected = model.actions[0][0] if model.actions else ""
         self._hover: tuple | None = None
@@ -174,6 +175,12 @@ class KeysetEditor(QWidget):
     def set_caret_x(self, widget_x: float) -> None:
         self._caret_x = widget_x / self._scale
         self.update()
+
+    def set_flipped(self, flipped: bool) -> None:
+        """Opened above its anchor: the upward caret is left out."""
+        if bool(flipped) != self._flipped:
+            self._flipped = bool(flipped)
+            self.update()
 
     # -- capture: the one time the card takes the keyboard --------------------
 
@@ -380,14 +387,15 @@ class KeysetEditor(QWidget):
                            QPointF(cx - half, card.top() + BORDER)])
         p.fillPath(paint.rounded(card, radius), fill)
         paint._border(p, paint.rounded, card, radius, BORDER, QColor(c))
-        p.setPen(Qt.NoPen)
-        p.setBrush(caret_fill)
-        p.drawPolygon(caret)
-        pen = QPen(QColor(c), BORDER)
-        pen.setJoinStyle(Qt.MiterJoin)
-        p.setPen(pen)
-        p.drawLine(QPointF(cx - half, card.top() + BORDER * 0.5), tip)
-        p.drawLine(tip, QPointF(cx + half, card.top() + BORDER * 0.5))
+        if not self._flipped:
+            p.setPen(Qt.NoPen)
+            p.setBrush(caret_fill)
+            p.drawPolygon(caret)
+            pen = QPen(QColor(c), BORDER)
+            pen.setJoinStyle(Qt.MiterJoin)
+            p.setPen(pen)
+            p.drawLine(QPointF(cx - half, card.top() + BORDER * 0.5), tip)
+            p.drawLine(tip, QPointF(cx + half, card.top() + BORDER * 0.5))
 
         # Header.
         mid = self._header_mid

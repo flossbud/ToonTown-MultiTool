@@ -46,6 +46,7 @@ class PillMenu(QWidget):
         self._style = tokens.style_for(style_name)
         self._scale = float(scale) if scale and scale > 0 else 1.0
         self._caret_x: float | None = None     # design px from the left edge
+        self._flipped = False
         self._hover = -1
         self._pressed = -1
         self._pills: list[QRectF] = []
@@ -92,6 +93,13 @@ class PillMenu(QWidget):
         self._caret_x = widget_x / self._scale
         self.update()
 
+    def set_flipped(self, flipped: bool) -> None:
+        """Opened above its anchor (no room below): the caret, which only
+        points up, is left out."""
+        if bool(flipped) != self._flipped:
+            self._flipped = bool(flipped)
+            self.update()
+
     def pill_rect(self, index: int) -> QRectF:
         r, k = self._pills[index], self._scale
         return QRectF(r.x() * k, r.y() * k, r.width() * k, r.height() * k)
@@ -111,11 +119,12 @@ class PillMenu(QWidget):
         p.setRenderHint(QPainter.TextAntialiasing, True)
         p.scale(self._scale, self._scale)
         cx = self._caret_x if self._caret_x is not None else self._design.width() / 2.0
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(c))
-        p.drawPolygon(QPolygonF([QPointF(cx, 0.0),
-                                 QPointF(cx + CARET_W / 2.0, CARET_H),
-                                 QPointF(cx - CARET_W / 2.0, CARET_H)]))
+        if not self._flipped:
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(c))
+            p.drawPolygon(QPolygonF([QPointF(cx, 0.0),
+                                     QPointF(cx + CARET_W / 2.0, CARET_H),
+                                     QPointF(cx - CARET_W / 2.0, CARET_H)]))
         font = self._font()
         for i, (item, rect) in enumerate(zip(self._items, self._pills)):
             p.save()
