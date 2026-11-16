@@ -120,11 +120,21 @@ class LaunchpadTray(QObject):
         self._count = max(0, int(n))
         self._refresh_rows()
 
+    def shutdown(self) -> None:
+        """Take the icon off the tray for good (app shutdown)."""
+        self._shut_down = True
+        self.tray.hide()
+        self.tray.setContextMenu(None)
+
     def sync_visibility(self) -> None:
+        if getattr(self, "_shut_down", False):
+            self.tray.hide()
+            return
         if self.reachable():
             self.tray.show()
         else:
             self.tray.hide()
+
 
     # ── internals ───────────────────────────────────────────────────────
     def _refresh_rows(self) -> None:

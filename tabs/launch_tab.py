@@ -405,6 +405,10 @@ class LaunchTab(QWidget):
     # The roster of some game was re-rendered: an account was added, removed
     # or renamed, or an account's launch state or shown toon changed.
     accounts_changed = Signal()
+    # Some account's launch state changed, or an account was reserved for /
+    # released from a staggered party launch. GUI thread. Read the states
+    # with launch_overview() and staged_launches().
+    launch_states_changed = Signal()
 
     LOADING_WINDOW_TIMEOUT_MS = 30000
 
@@ -1276,6 +1280,11 @@ class LaunchTab(QWidget):
         self.grandstand.set_main_toon_names(game, names)
         self.accounts_changed.emit()
 
+    def staged_launches(self) -> set:
+        """Account ids reserved by a staggered party launch and still waiting
+        for their turn (their own state stays idle until they start)."""
+        return {aid for _game, aid in self._party_pending}
+
     def launch_overview(self) -> list[dict]:
         """Every saved account in the launcher's order (Toontown Rewritten,
         then Corporate Clash) with its launch state, for a surface outside
@@ -1999,6 +2008,7 @@ class LaunchTab(QWidget):
         # it twice while it is waiting for its turn.
         delayed = targets[1:]
         self._party_pending.update((game, aid) for aid in delayed)
+        self.launch_states_changed.emit()
         try:
             self._launch_party_account(game, targets[0])
         except Exception:
@@ -2029,6 +2039,7 @@ class LaunchTab(QWidget):
         for account_id in account_ids:
             self._party_pending.discard((game, account_id))
             self._party_gate_ok.discard((game, account_id))
+        self.launch_states_changed.emit()
 
     def _launch_party_account(self, game: str, account_id: str) -> None:
         """Enter the normal launch path with this batch's gate authorization.
@@ -2053,6 +2064,7 @@ class LaunchTab(QWidget):
 
     def _party_step(self, game: str, account_id: str, last: bool) -> None:
         self._party_pending.discard((game, account_id))
+        self.launch_states_changed.emit()
         try:
             if self._shutting_down or self._grandstand_launch_is_blocked():
                 return
@@ -2649,6 +2661,7 @@ class LaunchTab(QWidget):
         if gs is not None:
             gs.set_account_state(game, account_id, str(state), message, raw or "")
         self._refresh_activity(game)
+        self.launch_states_changed.emit()
 
     def update_dot_state(self, index: int, state_str: str):
         """Called from multitoon tab - index is the global TTR slot position.
@@ -2699,6 +2712,7 @@ class LaunchTab(QWidget):
         tile = self._visible_tiles[game].get(account_id)
         if tile is not None:
             tile.set_state(LoginState.QUEUED, msg)
+        self.launch_states_changed.emit()
 
     # ── Theme ──────────────────────────────────────────────────────────────
 
