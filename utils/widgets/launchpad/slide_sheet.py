@@ -17,6 +17,14 @@ closes. One sheet at a time: open() while open swaps the content in place.
 Signals mark state changes, not animation ends: `opened` fires when a sheet
 opens (not on a swap), `closed` when close() starts, `content_changed` on
 every open or swap.
+
+Frame: in a frameless window the parent is a rounded card with a 1 px
+outline. `inset` keeps the host inside that outline (left, right, bottom and
+under the header) and `bottom_radius` rounds the host's two bottom corners
+to the card's inner radius, so neither the scrim nor the panel squares off
+the window's corners. The window calls set_frame() whenever its corner state
+changes: set_frame(STROKE_INSET, RADIUS_NORMAL - STROKE_INSET) for the
+rounded card, set_frame(0, 0) when maximized or on a native title bar.
 """
 from __future__ import annotations
 
@@ -26,7 +34,7 @@ from PySide6.QtCore import (
     QEasingCurve, QEvent, QPointF, QPropertyAnimation, QRect, QRectF, QSize, Qt,
     QVariantAnimation, Signal,
 )
-from PySide6.QtGui import QColor, QLinearGradient, QPainter
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QRegion
 from PySide6.QtWidgets import (
     QHBoxLayout, QScrollArea, QToolButton, QVBoxLayout, QWidget, QFrame,
 )
@@ -240,9 +248,12 @@ class SlideSheetHost(QWidget):
     content_changed = Signal(object)     # the content widget, or None
 
     def __init__(self, parent: QWidget, top: int = HEADER_H,
-                 is_dark: bool | None = None):
+                 is_dark: bool | None = None, inset: int = 0,
+                 bottom_radius: int = 0):
         super().__init__(parent)
         self._top = int(top)
+        self._inset = max(0, int(inset))
+        self._bottom_radius = max(0, int(bottom_radius))
         self._is_dark = is_dark_palette() if is_dark is None else bool(is_dark)
         self._content: QWidget | None = None
         self._identity = "#0077ff"
@@ -310,6 +321,13 @@ class SlideSheetHost(QWidget):
         self.closed.emit()
         return True
 
+    def set_frame(self, inset: int, bottom_radius: int) -> None:
+        """Keep inside the parent card's outline (`inset` px) and round the
+        two bottom corners (`bottom_radius` px); 0, 0 for a square window."""
+        self._inset = max(0, int(inset))
+        self._bottom_radius = max(0, int(bottom_radius))
+        self._sync_geometry()
+
     def apply_theme(self, is_dark: bool) -> None:
         self._is_dark = bool(is_dark)
         pal = sheet_palette(self._is_dark)
@@ -345,10 +363,33 @@ class SlideSheetHost(QWidget):
 
     def _content_rect(self) -> QRect:
         p = self.parentWidget()
-        return QRect(0, self._top, p.width(), max(0, p.height() - self._top))
+        i = self._inset
+        top = self._top + i
+        return QRect(i, top, max(0, p.width() - 2 * i), max(0, p.height() - top - i))
+
+    def _corner_region(self) -> QRegion | None:
+        """The host's shape with its two bottom corners rounded, or None for
+        a plain rectangle."""
+        w, h, r = self.width(), self.height(), self._bottom_radius
+        if r <= 0 or w <= 0 or h <= 0:
+            return None
+        r = min(r, w // 2, h)
+        region = QRegion(0, 0, w, h)
+        for x0 in (0, w - r):
+            region = region.subtracted(QRegion(x0, h - r, r, r))
+        left = QRegion(0, h - 2 * r, 2 * r, 2 * r, QRegion.Ellipse)
+        right = QRegion(w - 2 * r, h - 2 * r, 2 * r, 2 * r, QRegion.Ellipse)
+        region = region.united(left.intersected(QRegion(0, h - r, r, r)))
+        region = region.united(right.intersected(QRegion(w - r, h - r, r, r)))
+        return region
 
     def _sync_geometry(self) -> None:
         self.setGeometry(self._content_rect())
+        region = self._corner_region()
+        if region is None:
+            self.clearMask()
+        else:
+            self.setMask(region)
         self.scrim.setGeometry(0, 0, self.width(), self.height())
         self.panel.resize(min(SHEET_W, self.width()), self.height())
         if self._slide is None or self._slide.state() != QVariantAnimation.Running:
