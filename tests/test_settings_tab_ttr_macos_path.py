@@ -7,6 +7,8 @@ directly (rather than a global sys.platform patch, which would perturb tab
 construction), and creates the real nested file so os.path.isfile passes."""
 import os
 
+from utils.widgets import settings_rows
+
 import pytest
 from PySide6.QtWidgets import QApplication, QFileDialog
 
@@ -37,8 +39,8 @@ def _quiet_autodetect(monkeypatch, settings_tab):
     # tests observe only the action under test.
     monkeypatch.setattr(
         "services.cc_login_service.discover_cc_installs", lambda: [])
-    monkeypatch.setattr(settings_tab, "find_cc_engine_path", lambda: None)
-    monkeypatch.setattr(settings_tab, "find_engine_path", lambda: None)
+    monkeypatch.setattr(settings_rows, "find_cc_engine_path", lambda: None)
+    monkeypatch.setattr(settings_rows, "find_engine_path", lambda: None)
 
 
 def test_browse_validates_macos_data_dir_with_nested_bundle(qapp, tmp_path, monkeypatch):
@@ -49,7 +51,7 @@ def test_browse_validates_macos_data_dir_with_nested_bundle(qapp, tmp_path, monk
     nested.mkdir(parents=True)
     (nested / "TTREngine").write_text("#!/bin/sh\n")
     monkeypatch.setattr(
-        settings_tab, "engine_binary_path",
+        settings_rows, "engine_binary_path",
         lambda d: os.path.join(
             d, "Toontown Rewritten.app", "Contents", "MacOS", "TTREngine"),
     )
@@ -69,7 +71,7 @@ def test_browse_rejects_macos_dir_without_bundle(qapp, tmp_path, monkeypatch):
     data_dir = tmp_path / "Empty"
     data_dir.mkdir()
     monkeypatch.setattr(
-        settings_tab, "engine_binary_path",
+        settings_rows, "engine_binary_path",
         lambda d: os.path.join(
             d, "Toontown Rewritten.app", "Contents", "MacOS", "TTREngine"),
     )
@@ -87,7 +89,7 @@ def test_auto_detect_stores_ttr_data_dir(qapp, tmp_path, monkeypatch):
     from tabs import settings_tab
     _quiet_autodetect(monkeypatch, settings_tab)
     data_dir = str(tmp_path / "Toontown Rewritten")
-    monkeypatch.setattr(settings_tab, "find_engine_path", lambda: data_dir)
+    monkeypatch.setattr(settings_rows, "find_engine_path", lambda: data_dir)
     settings = _SettingsStub()
     tab = settings_tab.SettingsTab(settings_manager=settings)
     tab._game_path_auto_detect("ttr")
