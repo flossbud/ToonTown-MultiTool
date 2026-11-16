@@ -141,10 +141,7 @@ class StripSurface(QWidget):
     def client_logical(self) -> QRect | None:
         if self._client is None:
             return None
-        x, y, w, h = self._client
-        left, top = self._strategy.to_logical(x, y)
-        right, bottom = self._strategy.to_logical(x + w, y + h)
-        return QRect(left, top, right - left, bottom - top)
+        return self._strategy.rect_to_logical(self._client)
 
     def _apply_geometry(self) -> None:
         client = self.client_logical()
