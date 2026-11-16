@@ -810,8 +810,14 @@ class SettingsRowsMixin:
 
         lay.insertWidget(insert_at, card)
 
-    def _build_hotkeys_card(self, page):
+    def _hotkey_actions(self):
+        """The hotkey actions this surface lists and checks for conflicts:
+        every registry action on the Settings page."""
         from utils.hotkey_actions import ACTIONS
+        return ACTIONS
+
+    def _build_hotkeys_card(self, page):
+        ACTIONS = self._hotkey_actions()
         from utils.icon_factory import make_nav_keyboard
         from utils.widgets.pill_controls import ChordPill
 
@@ -936,8 +942,8 @@ class SettingsRowsMixin:
         """Persist a capture-row change. Binding an in-use chord (stored OR
         registry default) prompts steal-or-cancel; stealing clears the other
         action's binding explicitly (None) so the default cannot re-arm it."""
-        from utils.hotkey_actions import ACTIONS, action_by_id
         from utils.hotkey_capture import display_chord
+        ACTIONS = self._hotkey_actions()
         from utils.hotkey_chords import format_chord, parse_chord
         from utils.settings_keys import HOTKEY_BINDINGS
         raw = self.settings_manager.get(HOTKEY_BINDINGS, {}) or {}
@@ -963,7 +969,7 @@ class SettingsRowsMixin:
                 answer = QMessageBox.question(
                     self._dialog_parent(), "Hotkey in use",
                     f"'{display_chord(chord_text)}' is already bound to "
-                    f"{action_by_id(holder).label}. Move it here?")
+                    f"{next(a.label for a in ACTIONS if a.id == holder)}. Move it here?")
                 if answer != QMessageBox.Yes:
                     self._hotkey_rows[action_id].set_chord(
                         self._hotkey_stored_chord(action_id))

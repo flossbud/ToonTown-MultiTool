@@ -76,14 +76,6 @@ def _quit_app() -> None:
         app.quit()
 
 
-class _NoFloatMode:
-    """What the hotkey dispatch sees where the classic window has its Float
-    UI controller: there is no cluster here to tuck or scale."""
-
-    is_active = False
-    is_radial_open = False
-
-
 class _SheetPlaceholder(QWidget):
     """Stands in for a sheet whose content has not been mounted yet."""
 
@@ -361,8 +353,9 @@ class LaunchpadWindow(QMainWindow):
     def _wire_hotkeys(self) -> None:
         from utils.hotkey_dispatch import build_dispatch
         from utils.hotkey_wiring import HotkeyWiring
+        from utils.widgets.launchpad import hotkeys
         self._hotkey_dispatch = build_dispatch(
-            mode_controller=_NoFloatMode(),
+            mode_controller=hotkeys.StripsHotkeyMode(lambda: getattr(self, "strips", None)),
             launch_tab=self.launch_tab,
             session=self.session,
             settings_manager=self.settings_manager,
@@ -375,6 +368,7 @@ class LaunchpadWindow(QMainWindow):
             key_event_queue=self.session.key_event_queue,
             on_action=self._on_hotkey_action,
             parent=self,
+            exclude_actions=hotkeys.HIDDEN,
         )
 
     def _on_hotkey_action(self, action_id: str) -> None:

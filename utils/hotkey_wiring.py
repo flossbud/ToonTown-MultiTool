@@ -23,17 +23,45 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from utils.settings_keys import HOTKEY_BINDINGS
 
 
+class _WithoutActions:
+    """A settings view in which some hotkey actions read as cleared, so
+    every place that resolves bindings from settings (the provider, the
+    in-process hook, the grabber's lookup) leaves their chords ungrabbed."""
+
+    def __init__(self, settings_manager, excluded):
+        self._settings = settings_manager
+        self._excluded = frozenset(excluded)
+
+    def get(self, key, default=None):
+        value = self._settings.get(key, default)
+        if key == HOTKEY_BINDINGS:
+            value = dict(value) if isinstance(value, dict) else {}
+            value.update({action_id: None for action_id in self._excluded})
+        return value
+
+    def on_change(self, callback) -> None:
+        self._settings.on_change(callback)
+
+    def __getattr__(self, name):
+        return getattr(self._settings, name)
+
+
 class HotkeyWiring(QObject):
     # Provider registration failures, after the provider applied bindings:
     # whatever its failures() returns. For a hotkeys settings page.
     status_changed = Signal(object)
 
     def __init__(self, *, window_manager, settings_manager, input_service,
-                 key_event_queue, on_action, parent: QObject | None = None):
+                 key_event_queue, on_action, parent: QObject | None = None,
+                 exclude_actions=()):
+        """`exclude_actions`: hotkey action ids this window does not offer;
+        their bindings are never grabbed."""
         super().__init__(parent)
         from services.hotkey_manager import HotkeyManager
         from utils.hotkey_actions import ACTIONS, effective_bindings, make_hotkey_hook
 
+        if exclude_actions:
+            settings_manager = _WithoutActions(settings_manager, exclude_actions)
         self._settings = settings_manager
         self._window_manager = window_manager
         self._input_service = input_service
