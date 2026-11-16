@@ -165,6 +165,7 @@ class GrandstandView(QWidget):
 
     # Sub-project B: the appearance editor's intents, on the same terms.
     appearance_save_requested = Signal(str, object)   # game, AppearanceDraft
+    appearance_closed = Signal(str, str, str, bool)   # game, account id, toon, saved
     subject_toon_chosen = Signal(str, str, str)       # game, account_id, toon
 
     def __init__(self, party, log=None, parent: QWidget | None = None) -> None:
@@ -190,6 +191,7 @@ class GrandstandView(QWidget):
         self._sheet_toons: list = []
         self._sheet_primary: str | None = None
         self._surface = SURFACE_ACCOUNT
+        self._saving_appearance = None
         self._browser_account: str | None = None
         self._browser_game: str | None = None
         self._browser_return_to = "settings"
@@ -689,6 +691,8 @@ class GrandstandView(QWidget):
 
     def close_sheet(self) -> None:
         """Leave focus mode. The draft is dropped; nothing is written."""
+        game, look = self._sheet_game, self.appearance_sheet.draft()
+        saved = look is not None and look is self._saving_appearance
         if self.browser_open():
             self.shelf_stack.setCurrentIndex(SLOT_SHELF)
         self._browser_account = None
@@ -700,6 +704,9 @@ class GrandstandView(QWidget):
         self._sheet_game = None
         self._sheet_toons = []
         self._sheet_primary = None
+        if game is not None and look is not None:
+            # Cleared first: the receiver may immediately open another page.
+            self.appearance_closed.emit(game, look.account_id, look.toon_name or "", saved)
 
     def _go_to_page(self, index: int) -> None:
         """Focus-mode collapse (handoff §5): the outgoing page's snapshot
@@ -787,10 +794,14 @@ class GrandstandView(QWidget):
                             if account is not None else None)
         look_snapshot = (look.copy()
                          if look is not None and look.has_toon else None)
-        if look_snapshot is not None:
-            self.appearance_save_requested.emit(game, look_snapshot)
-        if account_snapshot is not None:
-            self.account_save_requested.emit(game, account_snapshot)
+        self._saving_appearance = look if look_snapshot is not None else None
+        try:
+            if look_snapshot is not None:
+                self.appearance_save_requested.emit(game, look_snapshot)
+            if account_snapshot is not None:
+                self.account_save_requested.emit(game, account_snapshot)
+        finally:
+            self._saving_appearance = None
         if look_snapshot is None and account_snapshot is None:
             # An account with no toon has no look to store: nothing for the
             # owner to write, so Save is Back.

@@ -660,7 +660,7 @@ class LaunchpadWindow(QMainWindow):
         # were launched; the first is the one being asked for.
         self._login_requests: list[str] = []
         self._return_to_account: str | None = None
-        self.launch_tab.launcher_sheet_closed.connect(self._on_launcher_sheet_closed)
+        self.launch_tab.grandstand.appearance_closed.connect(self._on_launcher_sheet_closed)
         self.launch_tab.set_accounts_router(self)
 
     # The launcher's router (LaunchTab.set_accounts_router).
@@ -735,9 +735,10 @@ class LaunchpadWindow(QMainWindow):
         if not self.launch_tab.open_appearance_for_toon(game, toon_name, account_id):
             self._return_to_account = None
 
-    def _on_launcher_sheet_closed(self) -> None:
-        account_id, self._return_to_account = self._return_to_account, None
-        if account_id is not None and self.accounts_backend.account(account_id) is not None:
+    def _on_launcher_sheet_closed(self, game: str, account_id: str,
+                                  toon: str, saved: bool) -> None:
+        pending, self._return_to_account = self._return_to_account, None
+        if pending == account_id and self.accounts_backend.account(account_id) is not None:
             self.open_sheet(SHEET_ACCOUNTS)
             self.accounts_sheet.open_account(account_id)
 

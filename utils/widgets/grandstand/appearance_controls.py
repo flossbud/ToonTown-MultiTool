@@ -34,6 +34,7 @@ from utils.toon_renders import ToonRenders
 from utils.toon_silhouette import paint_race_silhouette
 from utils.widgets.grandstand import palette as gp
 from utils.widgets.grandstand.appearance_draft import POSE_LABELS, look_entry
+from utils.widgets.grandstand.draft import TOON_SLOTS
 from utils.widgets.grandstand.look_paint import (
     ART_INSET, HEAD_SCALE, HEAD_SHIFT, paint_look_disc,
 )
@@ -1410,7 +1411,7 @@ SWITCHER_EMPTY = ("No toons discovered yet. Launch this account once and play "
 # re-targets the editor, and says so.
 SWITCHER_NOTE_RETARGET = ("Pick a toon to edit its look. The primary toon is "
                           "set with the star in Accounts.")
-SWITCHER_SLOTS = 6
+SWITCHER_SLOTS = TOON_SLOTS
 
 
 def switcher_heading(count: int, account_name: str, of_slots: bool = False) -> str:
