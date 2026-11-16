@@ -300,6 +300,34 @@ def test_click_sync_state_reads_like_the_service(demo):
     assert demo.click_sync_state("demo-1") == "off"
 
 
+def test_click_sync_state_changes_are_announced(demo):
+    seen = []
+    demo.click_sync_state_changed.connect(lambda: seen.append(1))
+    demo.set_click_sync("demo-2", True)            # armed -> active for both
+    assert len(seen) == 1
+    demo.set_enabled("demo-2", False)              # nothing to do with click sync
+    assert len(seen) == 1
+    demo.set_features(click_sync_available=False)
+    assert len(seen) == 2
+    demo.set_features(keep_alive_available=False)
+    assert len(seen) == 2
+
+
+def test_a_click_sync_error_puts_members_in_the_error_state(demo):
+    seen = []
+    demo.click_sync_state_changed.connect(lambda: seen.append(1))
+    assert demo.click_sync_error() is None
+    demo.set_click_sync_error("capture died")
+    demo.set_click_sync_error("capture died")
+    assert len(seen) == 1
+    assert demo.click_sync_error() == "capture died"
+    assert demo.click_sync_state("demo-1") == "error"
+    assert demo.click_sync_state("demo-2") == "off"        # not a member
+    demo.set_click_sync_error(None)
+    assert demo.click_sync_state("demo-1") == "armed"
+    assert len(seen) == 2
+
+
 def test_active_profile_follows_load(demo):
     assert demo.active_profile == -1
     demo.load_profile(3)

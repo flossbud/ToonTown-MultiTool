@@ -460,6 +460,36 @@ def test_window_and_geometry_changes_recompute_the_group(synced):
     assert ("recompute",) in synced.click_sync.calls
 
 
-def test_a_service_error_is_kept_for_the_front_end(synced):
+def test_a_service_error_is_announced_and_cleared_by_the_next_snapshot(synced):
+    seen = []
+    synced.session.click_sync_state_changed.connect(lambda: seen.append(1))
+    assert synced.session.click_sync_error() is None
     synced.click_sync.service_error.emit("capture died")
-    assert synced.session._click_sync_error == "capture died"
+    assert synced.session.click_sync_error() == "capture died"
+    assert len(seen) == 1
+    synced.session.set_click_sync("a", True)       # a fresh snapshot from the service
+    assert synced.session.click_sync_error() is None
+    assert len(seen) >= 2
+
+
+def test_click_sync_state_changes_are_announced(synced):
+    seen = []
+    synced.session.click_sync_state_changed.connect(
+        lambda: seen.append(synced.session.click_sync_state("a")))
+    synced.session.set_click_sync("a", True)
+    assert seen[-1] == "armed"
+    synced.session.set_click_sync("b", True)
+    assert seen[-1] == "active"
+    synced.session.stop()
+    assert seen[-1] == "off"
+    synced.session.start()
+    assert seen[-1] == "active"
+
+
+def test_a_toon_moving_slot_re_announces_click_sync_state(synced):
+    synced.session.set_click_sync("b", True)
+    seen = []
+    synced.session.click_sync_state_changed.connect(lambda: seen.append(1))
+    synced.wm.set_windows(["b", "c"], games={"c": "cc"})
+    assert seen
+    assert synced.session.click_sync_state("b") == "armed"

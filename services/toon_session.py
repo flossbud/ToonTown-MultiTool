@@ -228,6 +228,8 @@ class ToonSession(QObject):
     features_changed = Signal()       # app-wide availability flags changed
     # InhibitStatus of the sleep inhibitor each time keep-alive (re)acquires it.
     keep_alive_inhibit_status = Signal(object)
+    # click_sync_state() of some toon, or click_sync_error(), changed.
+    click_sync_state_changed = Signal()
 
     # Worker threads and plain callbacks hand their results to the GUI thread
     # through these.
@@ -713,6 +715,9 @@ class ToonSession(QObject):
                     changed.append(wid)
         if structure_changed:
             self.toons_changed.emit()
+            if self.click_sync_service is not None:
+                # States are kept by slot; a toon in a new slot reads a new one.
+                self.click_sync_state_changed.emit()
         for wid in changed:
             self.toon_changed.emit(wid)
 
@@ -967,8 +972,10 @@ class ToonSession(QObject):
 
     @Slot(object)
     def _on_click_sync_states(self, states) -> None:
+        # A fresh snapshot supersedes the last service error.
         self._click_sync_states = dict(states)
         self._click_sync_error = None
+        self.click_sync_state_changed.emit()
         if not self._records_are_current():
             # The window list moved under us; the pending window update
             # re-derives membership from the toons.
@@ -985,12 +992,23 @@ class ToonSession(QObject):
 
     @Slot(str)
     def _on_click_sync_error(self, message: str) -> None:
+        # The service puts its members into the error state first, then says
+        # why: a capture failure needs different user action than a window
+        # mismatch.
         self._click_sync_error = message
         print(f"[ToonSession] click sync error: {message}")
+        self.click_sync_state_changed.emit()
+
+    def click_sync_error(self) -> str | None:
+        """Why click sync stopped, when the service itself failed (its capture
+        died or could not start). None for the ordinary error state, where a
+        member's window is missing or the windows' proportions differ."""
+        return self._click_sync_error
 
     def click_sync_state(self, window_id: str) -> str:
         """``"off" | "armed" | "active" | "error"`` for that toon: member but
-        waiting for a second toon, mirroring, or paused on a problem."""
+        waiting for a second toon, mirroring, or paused on a problem.
+        ``click_sync_state_changed`` says when to ask again."""
         toon = self._toons.get(window_id)
         if toon is None:
             return "off"
