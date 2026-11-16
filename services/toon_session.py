@@ -322,6 +322,7 @@ class ToonSession(QObject):
         self._keep_alive_thread = None
         self._ka_cycle_start = 0.0
         self._ka_cycle_event = threading.Event()
+        self._ka_firing: tuple = ((), ())     # keep-alive and rapid-fire slots, last seen
         if sleep_inhibitor is None:
             from services.sleep_inhibitor import SleepInhibitor
             sleep_inhibitor = SleepInhibitor()
@@ -1144,17 +1145,39 @@ class ToonSession(QObject):
     # ── Profiles ───────────────────────────────────────────────────────────
 
     def _autosave_active_profile(self) -> None:
-        """Persist the live state to the active profile, if one is."""
+        """Persist the live state to the active profile, if one is.
+
+        Only the slots that have a toon are written. A slot with no window
+        keeps what the profile already holds for it: a four-toon profile
+        loaded with two toons running must come back intact when the other
+        two are started.
+        """
         manager = self._profile_manager
         if self._active_profile < 0 or not manager:
             return
-        enabled = [False] * MAX_TOONS
+        try:
+            stored = manager.get_profile(self._active_profile)
+        except Exception:  # noqa: BLE001
+            stored = None
+
+        def kept(field: str, default):
+            values = list(getattr(stored, field, None) or [])[:MAX_TOONS]
+            return values + [default] * (MAX_TOONS - len(values))
+
+        enabled = kept("enabled_toons", False)
+        modes = kept("movement_modes", self._keysets.name(
+            GAME_TTR, self._keysets.lowest_visible(GAME_TTR)))
+        keep_alive = kept("keep_alive", False)
+        rapid_fire = kept("rapid_fire", False)
         for wid in self._order:
-            enabled[self._toons[wid].slot] = self._toons[wid].enabled
+            slot = self._toons[wid].slot
+            enabled[slot] = self._toons[wid].enabled
+            modes[slot] = self._slot_modes[slot]
+            keep_alive[slot] = self._slot_keep_alive[slot]
+            rapid_fire[slot] = self._slot_rapid_fire[slot]
         manager.save_profile(
-            self._active_profile, enabled, list(self._slot_modes),
-            keep_alive=list(self._slot_keep_alive),
-            rapid_fire=list(self._slot_rapid_fire),
+            self._active_profile, enabled, modes,
+            keep_alive=keep_alive, rapid_fire=rapid_fire,
         )
 
     # ── Keep-alive engine ──────────────────────────────────────────────────
@@ -1165,12 +1188,18 @@ class ToonSession(QObject):
         wanted = (self._running and not self._shut_down
                   and any(self._slot_keep_alive)
                   and self.keep_alive_available())
+        firing = (tuple(self._slot_keep_alive), tuple(self._slot_rapid_fire))
+        changed, self._ka_firing = firing != self._ka_firing, firing
         if wanted and not self._keep_alive_running:
             self._start_keep_alive()
         elif not wanted and self._keep_alive_running:
             self._stop_keep_alive()
-        elif wanted:
-            self._ka_cycle_event.set()      # re-read who fires, and how often
+        elif wanted and changed:
+            # Who fires, or how often, changed: let the loop re-read it now
+            # rather than after the interval it is sleeping. Only then: this
+            # runs on every publish, the toon poll publishes every few
+            # seconds, and a loop that has not fired yet fires on any wake.
+            self._ka_cycle_event.set()
 
     def _reset_ka_cycle(self) -> None:
         self._ka_cycle_start = time.monotonic()
