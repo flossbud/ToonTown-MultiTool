@@ -84,6 +84,16 @@ _IN_FLIGHT_STATES = frozenset({"logging_in", "launching", "loading", "queued",
 LINUX_KEYRING_HELP_URL = "https://wiki.archlinux.org/title/Secret_Service"
 
 
+def _raise_active_modal() -> None:
+    """Raise and activate the modal dialog that is up, if any: run from the
+    event loop a launch dialog's exec() starts, once its window exists."""
+    from PySide6.QtWidgets import QApplication
+    modal = QApplication.activeModalWidget()
+    if modal is not None:
+        modal.raise_()
+        modal.activateWindow()
+
+
 @dataclass
 class AccountSlot:
     """Per-account runtime state, keyed by stable account id."""
@@ -446,6 +456,7 @@ class LaunchTab(QWidget):
         # Predicate set by the app shell so failure dialogs can sit above the
         # transparent-mode overlay. Defaults to "not in overlay mode".
         self._overlay_active = lambda: False
+        self._dialog_surface = None
 
         from services.wine_console_hider import WineConsoleHider
         self._wine_console_hider = WineConsoleHider(
@@ -677,6 +688,27 @@ class LaunchTab(QWidget):
         """Install a ``() -> bool`` predicate reporting whether the transparent
         overlay is active (so failure dialogs raise above it)."""
         self._overlay_active = fn
+
+    def set_dialog_surface_provider(self, fn) -> None:
+        """Install ``(game, account_id) -> None``, called before a launch
+        dialog (login failed, CC update failed, 2FA) so the host can bring its
+        window up first: a dialog parented to a hidden window is not seen."""
+        self._dialog_surface = fn
+
+    def _prepare_launch_dialog(self, game, account_id) -> None:
+        """The one place launch dialogs (login failed, CC update failed, 2FA)
+        are readied: the host brings its window up before the dialog is
+        parented to it, and whatever modal is up once the dialog's own loop
+        shows it is raised and activated (raise_ before exec() is a no-op:
+        the native window does not exist yet). Callers keep the stay-on-top
+        flag for when the overlay-active provider says something would
+        cover the dialog."""
+        if self._dialog_surface is not None:
+            try:
+                self._dialog_surface(game, account_id)
+            except Exception as e:  # noqa: BLE001
+                print(f"[Launch] dialog surface failed: {type(e).__name__}: {e}")
+        QTimer.singleShot(0, _raise_active_modal)
 
     def account_games(self) -> list[str]:
         """Games that have at least one saved account, in the app's canonical
@@ -2604,6 +2636,7 @@ class LaunchTab(QWidget):
         if slot is None or (launcher is not None and slot.launcher is not launcher):
             return
         self._update_status("cc", account_id, LoginState.FAILED, msg)
+        self._prepare_launch_dialog("cc", account_id)   # window up before parenting
         box = QMessageBox(self.window())
         box.setIcon(QMessageBox.Warning)
         box.setWindowTitle("Corporate Clash update failed")
@@ -2613,6 +2646,8 @@ class LaunchTab(QWidget):
         )
         open_btn = box.addButton("Open official launcher", QMessageBox.AcceptRole)
         box.addButton("Cancel", QMessageBox.RejectRole)
+        if self._overlay_active():
+            box.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         box.exec()
         if box.clickedButton() is not open_btn:
             return
@@ -2675,6 +2710,7 @@ class LaunchTab(QWidget):
         """
         from PySide6.QtWidgets import QMessageBox
         game_label = "Toontown Rewritten" if game == "ttr" else "Corporate Clash"
+        self._prepare_launch_dialog(game, account_id)   # window up before parenting
         box = QMessageBox(self.window())
         box.setIcon(QMessageBox.Warning)
         box.setWindowTitle(f"{game_label} login failed")
@@ -2682,11 +2718,9 @@ class LaunchTab(QWidget):
         box.setInformativeText(msg)
         box.setStandardButtons(QMessageBox.Ok)
         # In transparent mode the always-on-top overlay would cover a normal
-        # dialog; the stay-on-top flag keeps the popup above it, and the modal
-        # exec() below activates+focuses it. (raise_/activateWindow before exec()
-        # are no-ops since the native window isn't shown yet.)
+        # dialog; the stay-on-top flag keeps the popup above it, and
+        # _prepare_launch_dialog raises + activates it once exec() shows it.
         if self._overlay_active():
-            from PySide6.QtCore import Qt
             box.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         box.exec()
 
@@ -2812,6 +2846,7 @@ class LaunchTab(QWidget):
         self.log(f"[Launch] {game_label} account {self._position_of(game, account_id)} requires 2FA.")
         slot = self._slots[game].get(account_id)
         asker = slot.worker if slot is not None else None
+        self._prepare_launch_dialog(game, account_id)
         token, ok = QInputDialog.getText(
             self, "Two-Factor Authentication",
             f"{banner}\n\nEnter your authenticator code:",
