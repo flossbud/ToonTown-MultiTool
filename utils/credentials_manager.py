@@ -35,6 +35,14 @@ from utils.models import AccountCredential
 # ceiling of 16 (MAX_PER_GAME); with two games that is up to 32 accounts total.
 MAX_ACCOUNTS = 32
 
+# An account's login, as the launcher shows it. "failed" is persisted in
+# accounts.json (key LOGIN_FAILED_KEY, present only while true); "saved" and
+# "none" are read from the keyring.
+LOGIN_SAVED = "saved"
+LOGIN_FAILED = "failed"
+LOGIN_NONE = "none"
+LOGIN_FAILED_KEY = "login_failed"
+
 # Per-item timeout for the one-time darwin legacy->vault migration reads/deletes.
 # Generous because each un-migrated item may show a one-time macOS Keychain ACL
 # prompt at this calm post-gate moment (decoupled from any game login).
@@ -848,6 +856,8 @@ class CredentialsManager:
         if not token:
             self.clear_launcher_token(account_id)
             return
+        # A fresh token means CC just accepted this account's credentials.
+        self.set_login_failed(account_id, False)
         if self._macos_vault is not None:
             try:
                 self._macos_vault.set_token(account_id, token)
@@ -1232,6 +1242,12 @@ class CredentialsManager:
                      or (password is not None and password != ""))
             )
 
+            # Saving a new login (a password, including clearing it, or a
+            # different username) supersedes a rejected sign-in.
+            if password is not None or (
+                    username is not None and username != a.get("username")):
+                a.pop(LOGIN_FAILED_KEY, None)
+
             if label is not None:
                 a["label"] = label
             if username is not None:
@@ -1277,6 +1293,58 @@ class CredentialsManager:
         self._save()
         self._emit_change()
         return (account_id or "", token)
+
+    # ── Login state ────────────────────────────────────────────────────────
+
+    def _entry(self, account_id: str) -> dict | None:
+        if not account_id:
+            return None
+        for a in self._accounts:
+            if a.get("id") == account_id:
+                return a
+        return None
+
+    def is_login_failed(self, account_id: str) -> bool:
+        """True while the last sign-in for this account was rejected.
+        In-memory read; no keyring access."""
+        a = self._entry(account_id)
+        return bool(a is not None and a.get(LOGIN_FAILED_KEY) is True)
+
+    def set_login_failed(self, account_id: str, failed: bool) -> bool:
+        """Record (True) or clear (False) a rejected sign-in. Persisted in
+        accounts.json; the key is removed rather than stored as false, so
+        files without failures look exactly as before. Returns True if the
+        stored state changed, False if it was already so or the id is
+        unknown. Does not fire on_change (the roster did not change)."""
+        a = self._entry(account_id)
+        if a is None:
+            return False
+        if bool(failed) == (a.get(LOGIN_FAILED_KEY) is True):
+            return False
+        if failed:
+            a[LOGIN_FAILED_KEY] = True
+        else:
+            a.pop(LOGIN_FAILED_KEY, None)
+        self._save()
+        return True
+
+    def login_status(self, account_id: str) -> str:
+        """LOGIN_FAILED, LOGIN_SAVED or LOGIN_NONE for this account.
+
+        "failed" comes from the persisted flag and needs no keyring. Telling
+        "saved" from "none" reads the keyring (a CC launcher token or a
+        password), so this can block for the keyring's timeout: keep it off
+        per-frame paths. While the keyring probe is pending a saved login
+        can read as "none". Unknown ids are "none".
+        """
+        a = self._entry(account_id)
+        if a is None:
+            return LOGIN_NONE
+        if a.get(LOGIN_FAILED_KEY) is True:
+            return LOGIN_FAILED
+        if a.get("game", "ttr") == "cc" and self.get_launcher_token(account_id):
+            return LOGIN_SAVED
+        return LOGIN_SAVED if self._get_password(account_id) else LOGIN_NONE
 
     def reorder_game(self, game: str, ordered_ids: list[str]) -> bool:
         """Reorder one game's accounts to match `ordered_ids`.

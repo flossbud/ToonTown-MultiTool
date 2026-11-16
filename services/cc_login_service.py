@@ -164,6 +164,11 @@ class CCLoginWorker(QObject):
     login_success = Signal(str, str)       # (gameserver, game_token)
     login_failed = Signal(str)             # (error_message)
 
+    # True when the latest login_failed is CC refusing this account's
+    # credentials: /register said no, or /login reported bad_token. Set on
+    # the worker thread before login_failed is emitted.
+    credentials_rejected = False
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._state = LoginState.IDLE
@@ -216,6 +221,7 @@ class CCLoginWorker(QObject):
         print(f"[CC] register_and_login: entry user_len={len(username)} pwd_len={len(password)} label='{label}'")
         self._set_state(LoginState.LOGGING_IN, "Registering with CC…")
         self._stop_event.clear()
+        self.credentials_rejected = False
         friendly = _friendly_name(label)
         print(f"[CC] register_and_login: friendly='{friendly}' url={CC_REGISTER_URL}")
 
@@ -241,6 +247,8 @@ class CCLoginWorker(QObject):
                     return
                 print(f"[CC] /register: parsed status={data.get('status')} "
                       f"has_token={bool(data.get('token'))} message={data.get('message')!r}")
+                if data.get("status") is not True:
+                    self.credentials_rejected = True
                 token = self._handle_register_response(data)
                 if token is None:
                     print("[CC] /register: handler returned no token; aborting chain")
@@ -332,6 +340,7 @@ class CCLoginWorker(QObject):
         print(f"[CC] login_with_token: entry token={_mask(launcher_token)} url={CC_LOGIN_URL}")
         self._set_state(LoginState.LOGGING_IN, "Authenticating…")
         self._stop_event.clear()
+        self.credentials_rejected = False
 
         def _do():
             try:
@@ -388,6 +397,7 @@ class CCLoginWorker(QObject):
 
         if data.get("bad_token") is True:
             print("[CC] _handle_login_response: bad_token=True; token revoked or invalid")
+            self.credentials_rejected = True
             msg = ("Your CC launcher token is no longer valid. "
                    "Click Edit on this account to re-enter your password.")
             self._set_state(LoginState.FAILED, msg)

@@ -104,6 +104,11 @@ class TTRLoginWorker(QObject):
     login_success = Signal(str, str)       # (gameserver, cookie)
     login_failed = Signal(str)             # (error_message)
 
+    # True when the latest login_failed is the server refusing the
+    # username/password (not a network, queue, 2FA or decode failure). Set on
+    # the worker thread before login_failed is emitted.
+    credentials_rejected = False
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._state = LoginState.IDLE
@@ -141,6 +146,7 @@ class TTRLoginWorker(QObject):
         """Start login. Call from main thread."""
         self._set_state(LoginState.LOGGING_IN, "Authenticating…")
         self._stop_event.clear()
+        self.credentials_rejected = False
 
         def _do():
             try:
@@ -150,6 +156,8 @@ class TTRLoginWorker(QObject):
                 data = self._decode_json_response(resp, "Invalid response from login server.")
                 if data is None:
                     return
+                if data.get("success", "false") == "false":
+                    self.credentials_rejected = True
                 self._handle_response(data)
             except requests.RequestException as e:
                 print(f"[TTRLoginWorker] Network error: {type(e).__name__}: {e}")
