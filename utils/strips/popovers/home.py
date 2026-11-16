@@ -211,6 +211,23 @@ class HomePanel(QWidget):
     def card_rect(self) -> QRectF:
         return self._to_widget(self._card)
 
+    def shape_region(self):
+        """The card and its caret, for a window shape."""
+        from PySide6.QtGui import QRegion
+        radius = 10.0 if self._style.is_neon else 5.0
+        region = paint.path_region(paint.rounded(self._card, radius), self._scale)
+        k = self._scale
+        cx = self._caret_x if self._caret_x is not None else self._card.left() + 13.0
+        half = CARET * 0.7071
+        cx = max(self._card.left() + radius + 4.0, min(cx, self._card.right() - radius - 4.0))
+        edge = self._card.bottom() if self._flipped else self._card.top()
+        tip = edge + half if self._flipped else edge - half
+        caret = QPainterPath()
+        caret.addPolygon(QPolygonF([QPointF(cx, tip), QPointF(cx + half, edge),
+                                    QPointF(cx - half, edge)]))
+        caret.closeSubpath()
+        return region.united(paint.path_region(caret, k))
+
     def input_rects(self) -> list[QRect]:
         return [self.card_rect().toAlignedRect()]
 

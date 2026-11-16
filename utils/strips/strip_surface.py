@@ -185,6 +185,8 @@ class StripSurface(QWidget):
         # is in place, so it can never flash over a window covering the
         # game, and a late first paint never shows as black bands.
         self.setWindowOpacity(0.0)
+        if self._strategy.shaped():
+            self._apply_shape(False)      # opacity does nothing here
         self.show()
 
     def paintEvent(self, _event) -> None:
@@ -287,6 +289,25 @@ class StripSurface(QWidget):
             region = region.intersected(mask)
         return region
 
+    def _apply_shape(self, shown: bool) -> None:
+        """No compositor: the window is cut to the blocks, or to nothing."""
+        try:
+            self._strategy.set_shape(
+                self, self.strip.shape_region() if shown else QRegion())
+            self._shape_set = True
+        except Exception:
+            pass
+
+    def refresh_presentation(self) -> None:
+        """A compositing manager came or went."""
+        if not self._strategy.shaped() and getattr(self, "_shape_set", False):
+            self._shape_set = False
+            try:
+                self._strategy.set_shape(self, None)
+            except Exception:
+                pass
+        self._present()
+
     def _present(self) -> None:
         shown = (self._attached and not self._concealed and not self._covered
                  and self.isVisible())
@@ -300,4 +321,6 @@ class StripSurface(QWidget):
                 self, self.input_region() if shown else QRegion())
         except Exception:
             pass
+        if self._strategy.shaped():
+            self._apply_shape(shown)
         self.setWindowOpacity(1.0 if shown else 0.0)

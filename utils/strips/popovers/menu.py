@@ -106,6 +106,28 @@ class PillMenu(QWidget):
         r, k = self._pills[index], self._scale
         return QRectF(r.x() * k, r.y() * k, r.width() * k, r.height() * k)
 
+    def shape_region(self):
+        """Pills and caret, for a window shape."""
+        from PySide6.QtGui import QRegion
+        region = QRegion()
+        for rect in self._pills:
+            region = region.united(paint.path_region(
+                paint.rounded(rect, rect.height() / 2.0), self._scale))
+        cx = self._caret_x if self._caret_x is not None else self._design.width() / 2.0
+        caret = QPainterPath()
+        if self._flipped:
+            tip = float(self._design.height())
+            caret.addPolygon(QPolygonF([QPointF(cx, tip),
+                                        QPointF(cx + CARET_W / 2.0, tip - CARET_H),
+                                        QPointF(cx - CARET_W / 2.0, tip - CARET_H)]))
+        else:
+            caret.addPolygon(QPolygonF([QPointF(cx, 0.0),
+                                        QPointF(cx + CARET_W / 2.0, CARET_H),
+                                        QPointF(cx - CARET_W / 2.0, CARET_H)]))
+        caret.closeSubpath()
+        region = region.united(paint.path_region(caret, self._scale))
+        return region
+
     def input_rects(self) -> list[QRect]:
         return [self.pill_rect(i).toAlignedRect() for i in range(len(self._pills))]
 

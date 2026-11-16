@@ -16,6 +16,8 @@ from utils.strips.strip_surface import StripSurface
 from utils.strips.tracker import StripTracker
 
 GATE_INTERVAL_MS = 100
+# How often to ask whether a compositing manager came or went.
+COMPOSITOR_CHECK_MS = 2000
 
 _stamped = False
 
@@ -63,6 +65,7 @@ class StripFollower(QObject):
         # occlude a strip, and they are swept by the same timer.
         self._extra_own = []       # callables returning window ids
         self._extra_sweeps = []    # callables taking (strategy, own ids)
+        self._extra_refresh = []   # callables: the presentation mode changed
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -81,17 +84,45 @@ class StripFollower(QObject):
         self._running = True
         if not _stamped:
             _stamped = True
-            print(f"[Strips] attach={self._strategy.name} style={self._style}",
+            print(f"[Strips] attach={self._strategy.name} style={self._style}"
+                  + (" compositor=none (shaped windows)" if self._strategy.shaped() else ""),
                   flush=True)
         self._tracker.start()
+        self._desktop = QTimer(self)
+        self._desktop.setInterval(COMPOSITOR_CHECK_MS)
+        self._desktop.timeout.connect(self.check_desktop)
+        self._desktop.start()
         if self._strategy.gated:
             self._gate = QTimer(self)
             self._gate.setInterval(GATE_INTERVAL_MS)
             self._gate.timeout.connect(self._sweep)
             self._gate.start()
 
+    def check_desktop(self) -> None:
+        """Did translucency become available or go away? If so, every surface
+        switches between translucent and shaped."""
+        try:
+            changed = self._strategy.refresh()
+        except Exception:
+            changed = False
+        if not changed:
+            return
+        print(f"[Strips] compositing manager "
+              f"{'gone: shaped windows' if self._strategy.shaped() else 'found: translucent windows'}",
+              flush=True)
+        for surface in self._surfaces.values():
+            surface.refresh_presentation()
+        for fn in self._extra_refresh:
+            try:
+                fn()
+            except Exception:
+                pass
+
     def stop(self) -> None:
         self._running = False
+        desktop = getattr(self, "_desktop", None)
+        if desktop is not None:
+            desktop.stop()
         self._tracker.stop()
         if self._gate is not None:
             self._gate.stop()
@@ -142,10 +173,12 @@ class StripFollower(QObject):
                 pass
         return ids
 
-    def add_companion(self, own_ids_fn, sweep_fn) -> None:
+    def add_companion(self, own_ids_fn, sweep_fn, refresh_fn=None) -> None:
         """Register surfaces that hang off the strips (see _extra_own)."""
         self._extra_own.append(own_ids_fn)
         self._extra_sweeps.append(sweep_fn)
+        if refresh_fn is not None:
+            self._extra_refresh.append(refresh_fn)
 
     # -- tracker ------------------------------------------------------------
 
