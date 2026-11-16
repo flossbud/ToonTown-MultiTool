@@ -168,6 +168,57 @@ def _gate_region(strip_rect: QRect, game_wid: str, snapshot, own_window_ids,
     return _region_from_inputs(strip_rect, inputs)
 
 
+WS_EX_TRANSPARENT = 0x00000020
+_DWMWA_EXTENDED_FRAME_BOUNDS = 9
+
+
+def _win32_ex_style(hwnd: int) -> int:
+    """The window's extended style bits; 0 when it cannot be read."""
+    try:
+        import win32con
+        import win32gui
+        return int(win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE))
+    except Exception:
+        return 0
+
+
+def _win32_frame_bounds(hwnd: int):
+    """(left, top, right, bottom) of what the window visibly covers, physical
+    px, or None. GetWindowRect includes the invisible resize border Windows
+    10 and 11 put around a window (about 7 px a side); this does not."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        rect = wintypes.RECT()
+        result = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            wintypes.HWND(hwnd), _DWMWA_EXTENDED_FRAME_BOUNDS,
+            ctypes.byref(rect), ctypes.sizeof(rect))
+        if result != 0:
+            return None
+        return (rect.left, rect.top, rect.right, rect.bottom)
+    except Exception:
+        return None
+
+
+def win32_occluders(snapshot, game_hwnd: int, own_window_ids):
+    """The z-order snapshot reduced to what can really cover the game's
+    strip: everything above the game except our own surfaces and windows
+    that let the pointer through (other software's click-through overlays,
+    our ghost gloves), each with its visible frame instead of its window
+    rectangle. The game's entry is kept, last, with its visible frame too.
+    None when the game is not in the snapshot."""
+    own = _own_ids(own_window_ids)
+    out = []
+    for hwnd, rect, pid in snapshot:
+        if hwnd == game_hwnd:
+            out.append((hwnd, _win32_frame_bounds(hwnd) or rect, pid))
+            return out
+        if hwnd in own or _win32_ex_style(hwnd) & WS_EX_TRANSPARENT:
+            continue
+        out.append((hwnd, _win32_frame_bounds(hwnd) or rect, pid))
+    return None
+
+
 class Win32TopmostAttach(AttachStrategy):
     """Topmost WS_EX_NOACTIVATE tool window plus the occlusion gate. Windows
     has no "stay directly above that window" for a window of another
@@ -186,8 +237,17 @@ class Win32TopmostAttach(AttachStrategy):
 
     def visible_region(self, strip_rect, game_wid, own_window_ids, clip=True):
         from utils.ghost_cursors import _win32_zorder_snapshot
-        return _gate_region(strip_rect, game_wid, _win32_zorder_snapshot(),
-                            own_window_ids, self.to_logical, clip)
+        snapshot = _win32_zorder_snapshot()
+        if snapshot is None:
+            return None                         # no information: show it all
+        try:
+            game = int(game_wid)
+        except (TypeError, ValueError):
+            return None
+        occluders = win32_occluders(snapshot, game, own_window_ids)
+        if occluders is None:
+            return QRegion()                    # minimized or gone: show nothing
+        return _gate_region(strip_rect, game_wid, occluders, (), self.to_logical, clip)
 
 
 # NSWindowCollectionBehaviorFullScreenAuxiliary: lets the panel share a
