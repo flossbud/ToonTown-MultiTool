@@ -357,3 +357,122 @@ def test_window_hotkeys_toggle_the_strips_and_never_grab_scaling(window, monkeyp
     if window.hotkeys is not None:
         eff = effective_bindings(window.hotkeys._settings)
         assert "overlay.scale_up" not in eff and eff["overlay.toggle_cards"] == "ctrl+alt+h"
+
+
+# ── Launch dialogs over a hidden window (A) ────────────────────────────────
+
+def _hide_behind_toons(win, monkeypatch):
+    _toons(win, monkeypatch, 1)
+    win.close()
+    assert not win.isVisible()
+
+
+@pytest.fixture
+def raised(monkeypatch):
+    import tabs.launch_tab as lt
+    calls = []
+    monkeypatch.setattr(lt, "_raise_active_modal", lambda: calls.append(1))
+    return calls
+
+
+def _capture_box(monkeypatch, win, seen):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QMessageBox
+
+    def fake_exec(box):
+        seen.append({
+            "visible": win.isVisible(),
+            "parent": box.parent(),
+            "on_top": bool(box.windowFlags() & Qt.WindowStaysOnTopHint),
+        })
+        return QMessageBox.Ok
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+
+
+def test_login_failed_box_brings_the_window_up(lw, monkeypatch, qapp, raised):
+    win, L = lw
+    _hide_behind_toons(win, monkeypatch)
+    seen = []
+    _capture_box(monkeypatch, win, seen)
+    win.launch_tab._show_failure_dialog("ttr", "a", "Wrong password")
+    qapp.processEvents()
+    assert seen and seen[0]["visible"] is True
+    assert seen[0]["parent"] is win
+    assert seen[0]["on_top"] is True           # offscreen: never the active window
+    assert win.lifecycle.window == "visible"
+    assert raised == [1]
+
+
+def test_cc_update_failed_box_brings_the_window_up(lw, monkeypatch, qapp, raised):
+    from tabs.launch_tab import AccountSlot
+    win, L = lw
+    win.launch_tab._slots["cc"]["c1"] = AccountSlot(account_id="c1")
+    _hide_behind_toons(win, monkeypatch)
+    seen = []
+    _capture_box(monkeypatch, win, seen)
+    win.launch_tab._offer_cc_launcher_fallback("c1", "patch failed")
+    qapp.processEvents()
+    assert seen and seen[0]["visible"] is True and seen[0]["parent"] is win
+    assert seen[0]["on_top"] is True
+    assert raised == [1]
+
+
+def test_2fa_prompt_brings_the_window_up(lw, monkeypatch, qapp, raised):
+    from unittest.mock import MagicMock
+    import tabs.launch_tab as lt
+    from tabs.launch_tab import AccountSlot
+    win, L = lw
+    worker = MagicMock(name="asker")
+    win.launch_tab._slots["ttr"]["t1"] = AccountSlot(account_id="t1", worker=worker)
+    _hide_behind_toons(win, monkeypatch)
+    seen = []
+
+    def get_text(parent, *a, **k):
+        seen.append({"visible": win.isVisible(), "parent_window": parent.window()})
+        return "", False
+    monkeypatch.setattr(lt.QInputDialog, "getText", staticmethod(get_text))
+    win.launch_tab._prompt_2fa("ttr", "t1", "Enter your code")
+    qapp.processEvents()
+    assert seen and seen[0]["visible"] is True
+    assert seen[0]["parent_window"] is win
+    assert raised == [1]
+    worker.cancel.assert_called_once_with()
+
+
+def test_dialogs_go_through_the_lifecycle_and_keep_the_open_sheet(lw, monkeypatch, qapp, raised):
+    win, L = lw
+    win.open_sheet(SHEET_KEYSETS)
+    _hide_behind_toons(win, monkeypatch)
+    _capture_box(monkeypatch, win, [])
+    win.launch_tab._show_failure_dialog("ttr", "a", "x")
+    assert win.lifecycle.window == "visible"
+    assert win.open_sheet_name() == SHEET_KEYSETS
+
+
+def test_raise_active_modal_raises_whatever_modal_is_up(monkeypatch):
+    import tabs.launch_tab as lt
+    from PySide6.QtWidgets import QApplication
+    calls = []
+
+    class _Modal:
+        def raise_(self): calls.append("raise")
+        def activateWindow(self): calls.append("activate")
+    monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: _Modal()))
+    lt._raise_active_modal()
+    assert calls == ["raise", "activate"]
+    monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: None))
+    lt._raise_active_modal()                    # nothing up: no error
+
+
+def test_account_target_opens_fix_login_for_a_failed_login(lw, monkeypatch):
+    from types import SimpleNamespace
+    win, L = lw
+    calls = []
+    monkeypatch.setattr(win.accounts_backend, "account",
+                        lambda aid: SimpleNamespace(login="failed", running=False))
+    monkeypatch.setattr(win.accounts_sheet, "open_fix_login", lambda aid: calls.append(("fix", aid)))
+    monkeypatch.setattr(win.accounts_sheet, "open_account", lambda aid, *a, **k: calls.append(("acct", aid)))
+    _hide_behind_toons(win, monkeypatch)
+    win.show_for("account", "a1")
+    assert win.isVisible()
+    assert calls == [("fix", "a1")]

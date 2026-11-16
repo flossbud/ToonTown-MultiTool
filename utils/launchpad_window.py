@@ -500,6 +500,13 @@ class LaunchpadWindow(QMainWindow):
         self._launch_states = self._read_launch_states()
         self._refresh_tray_count()
         self.launch_tab.launch_states_changed.connect(self._on_launch_states_changed)
+        # Launch dialogs (login failed, CC update failed, 2FA) come up over
+        # this window: it is brought up first through the lifecycle, and the
+        # dialog stays on top while the window is not the active one (a game
+        # has focus, or the window was hidden).
+        self.launch_tab.set_overlay_active_provider(lambda: not self.isActiveWindow())
+        self.launch_tab.set_dialog_surface_provider(
+            lambda _game, _account_id: self.show_for(lifecycle.CURRENT))
         self.launcher_port.changed.connect(self._refresh_tray_count)
         self.session.toons_changed.connect(self._on_live_toons_changed)
 
@@ -533,10 +540,9 @@ class LaunchpadWindow(QMainWindow):
                 elif cmd.target == lifecycle.SETTINGS:
                     self.open_sheet(SHEET_SETTINGS)
                 elif cmd.target == lifecycle.ACCOUNT:
-                    self.open_sheet(SHEET_ACCOUNTS)
-                    sheet = self._sheets.get(SHEET_ACCOUNTS)
-                    if sheet is not None and hasattr(sheet, "open_account"):
-                        sheet.open_account(cmd.account_id)
+                    # The Accounts route's own page choice: a failed login
+                    # that is not running opens on Fix login.
+                    self._open_account_page(cmd.account_id)
                 if reason:
                     print(f"[NextUI] window shown: {reason}")
             elif cmd.kind == lifecycle.HIDE:
@@ -670,6 +676,11 @@ class LaunchpadWindow(QMainWindow):
 
     def open_account(self, account_id: str) -> None:
         self._show_for_accounts()
+        self._open_account_page(account_id)
+
+    def _open_account_page(self, account_id: str) -> None:
+        """Accounts sheet on one account (Fix login when its last sign-in
+        failed and it is not running). The window is already up."""
         self.open_sheet(SHEET_ACCOUNTS)
         account = self.accounts_backend.account(account_id)
         if account is not None and account.login == "failed" and not account.running:
