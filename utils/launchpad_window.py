@@ -112,6 +112,13 @@ class LaunchpadWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         print(STAMP)
+        # This window hides itself while toons are up, so the last visible
+        # top-level closing (a popover, a dialog, a strip whose game exited)
+        # must not end the app. Quitting is always explicit: the lifecycle's
+        # quit command, quit_app, or a close with nothing running.
+        app = QApplication.instance()
+        if app is not None:
+            app.setQuitOnLastWindowClosed(False)
 
         self._sleep_warning_shown = False
         self._shutdown_complete = False
@@ -442,15 +449,15 @@ class LaunchpadWindow(QMainWindow):
     def _on_strip_open_window(self, target: str) -> None:
         """The home block's Settings / Open MultiTool / Open full Launcher."""
         if target == "settings":
-            self.request_window(lifecycle.SETTINGS)
+            self.show_for(lifecycle.SETTINGS)
         elif target == "launcher":
-            self.request_window(lifecycle.LAUNCHER)
+            self.show_for(lifecycle.LAUNCHER)
         else:                                   # "main": as it was left
-            self.request_window(lifecycle.CURRENT)
+            self.show_for(lifecycle.CURRENT)
 
     def _on_strip_appearance(self, game: str, toon_name: str) -> None:
         """A strip's "Change color": this window, on that toon's look."""
-        self.request_window(lifecycle.LAUNCHER)
+        self.show_for(lifecycle.LAUNCHER)
         if not self.launch_tab.open_appearance_for_toon(game, toon_name):
             self.log(f"[NextUI] no saved account has {toon_name}: "
                      "its look opens once it has been seen on an account")
@@ -474,13 +481,13 @@ class LaunchpadWindow(QMainWindow):
         from utils.widgets.launchpad.tray import LaunchpadTray
         self.tray = LaunchpadTray(self.settings_manager, parent=self)
         self.tray.launch_accounts_requested.connect(
-            lambda: self.request_window(lifecycle.LAUNCHER))
+            lambda: self.show_for(lifecycle.LAUNCHER))
         self.tray.settings_requested.connect(
-            lambda: self.request_window(lifecycle.SETTINGS))
+            lambda: self.show_for(lifecycle.SETTINGS))
         # Open MultiTool brings the window back as it was left: hiding does
         # not close a sheet, so whatever was open is still open.
         self.tray.open_requested.connect(
-            lambda: self.request_window(lifecycle.CURRENT))
+            lambda: self.show_for(lifecycle.CURRENT))
         self.tray.stop_all_requested.connect(self.session.stop)
         self.tray.start_all_requested.connect(self.session.start)
         self.tray.quit_requested.connect(self.quit_app)
@@ -500,10 +507,13 @@ class LaunchpadWindow(QMainWindow):
         self.launcher_port.changed.connect(self._refresh_tray_count)
         self.session.toons_changed.connect(self._on_live_toons_changed)
 
-    def request_window(self, target: str = lifecycle.LAUNCHER,
-                       account_id: str | None = None) -> None:
-        """Show this window on `target` (the launcher, a sheet or an
-        account): the home block's and the tray's way in."""
+    def show_for(self, target: str = lifecycle.LAUNCHER,
+                 account_id: str | None = None) -> None:
+        """Show this window on `target`: "launcher", "accounts", "keysets",
+        "settings", "current" (as it was left) or "account" with an
+        account id. The one way anything asks for the window (home block,
+        tray, Fix login, ...), so the lifecycle stays the single authority
+        on its visibility."""
         self._run_lifecycle(self.lifecycle.requested(target, account_id))
 
     def _sync_tray_reachability(self) -> None:

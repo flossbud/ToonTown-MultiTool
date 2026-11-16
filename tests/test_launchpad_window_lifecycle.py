@@ -263,3 +263,81 @@ def test_strip_requests_go_through_the_lifecycle(lw, monkeypatch):
 def test_the_tray_goes_in_shutdown(window):
     window.shutdown()
     assert not window.tray.is_shown()
+
+
+@pytest.mark.parametrize("target,sheet", [
+    ("settings", SHEET_SETTINGS), ("keysets", SHEET_KEYSETS), ("launcher", None),
+])
+def test_show_for_opens_the_window_on_its_target(lw, monkeypatch, target, sheet):
+    win, L = lw
+    _toons(win, monkeypatch, 1)
+    win.close()
+    win.show_for(target)
+    assert win.isVisible() and win.lifecycle.window == "visible"
+    assert win.open_sheet_name() == sheet
+
+
+def test_show_for_an_account_opens_it_in_accounts(lw, monkeypatch):
+    from utils.widgets.launchpad.header import SHEET_ACCOUNTS
+    win, L = lw
+    opened = []
+    sheet = win._sheet_content(SHEET_ACCOUNTS)
+    monkeypatch.setattr(sheet, "open_account", lambda aid, *a, **k: opened.append(aid) or True,
+                        raising=False)
+    win.close()
+    win.show_for("account", "acct-7")
+    assert win.isVisible() and win.open_sheet_name() == SHEET_ACCOUNTS
+    assert opened == ["acct-7"]
+
+
+def test_the_window_turns_off_quit_on_last_window(isolated, qapp):
+    from PySide6.QtWidgets import QApplication
+    from tests.test_launchpad_window import _dispose
+    from utils.launchpad_window import LaunchpadWindow
+    QApplication.setQuitOnLastWindowClosed(True)
+    win = LaunchpadWindow()
+    try:
+        assert QApplication.quitOnLastWindowClosed() is False
+    finally:
+        _dispose(win, qapp)
+
+
+_SURVIVAL_SCRIPT = r"""
+import os, sys
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QWidget
+app = QApplication([])
+import utils.update_checker as uc
+uc.UpdateChecker.check_async = lambda self, *, manual: True
+from utils.launchpad_window import LaunchpadWindow
+win = LaunchpadWindow()
+win.show(); app.processEvents()
+win.hide()                                  # behind the strips
+transient = QWidget(); transient.show()     # a dialog / popover, the only visible one
+def survived():
+    print("SURVIVED", flush=True)
+    win.shutdown()
+    app.exit(0)
+QTimer.singleShot(200, transient.close)
+QTimer.singleShot(1500, survived)
+rc = app.exec()
+win.shutdown()
+print("EXEC RETURNED", rc, flush=True)
+"""
+
+
+def test_a_transient_window_closing_while_hidden_does_not_quit(tmp_path):
+    """Qt's quit-on-last-window only acts inside a running app.exec(), which
+    the test process never runs, so this runs a real event loop in a child:
+    the window hidden, the only visible top-level (a dialog, a popover)
+    closes, and the app must still be running a second later."""
+    import subprocess
+    import sys
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "TTMT_NO_VENV_REEXEC": "1",
+           "TTMT_SELF_CHECK": "1", "TTMT_GRANDSTAND": "1",
+           "TTMT_CONFIG_DIR": str(tmp_path / "cfg"), "HOME": str(tmp_path),
+           "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring"}
+    out = subprocess.run([sys.executable, "-c", _SURVIVAL_SCRIPT], cwd=repo, env=env,
+                         capture_output=True, text=True, timeout=120)
+    assert "SURVIVED" in out.stdout, out.stdout[-2000:] + out.stderr[-2000:]
