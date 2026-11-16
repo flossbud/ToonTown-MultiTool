@@ -19,7 +19,7 @@ def wheel(card, point, delta):
 
 @pytest.mark.parametrize('style', ['neon', 'flat'])
 @pytest.mark.parametrize('near_bottom', [False, True])
-@pytest.mark.parametrize('scale', [1.0, 1.25])
+@pytest.mark.parametrize('scale', [1.0, 1.25, 1.5, 1.875])
 def test_all_32_accounts_reachable_with_fixed_footer_on_720px_screen(rig, style, near_bottom, scale):
     _, controller, _ = rig()
     controller.set_style(style)
