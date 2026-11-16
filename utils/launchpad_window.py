@@ -65,6 +65,13 @@ def next_ui_enabled(environ=None) -> bool:
     return environ.get(NEXT_UI_ENV, "").strip() == "1"
 
 
+def _quit_app() -> None:
+    """Closing the main window ends the app."""
+    app = QApplication.instance()
+    if app is not None:
+        app.quit()
+
+
 class _NoFloatMode:
     """What the hotkey dispatch sees where the classic window has its Float
     UI controller: there is no cluster here to tuck or scale."""
@@ -151,6 +158,14 @@ class LaunchpadWindow(QMainWindow):
             profile_manager=self.profile_manager,
             logger=self.logger,
         )
+
+        # The launchpad hosts the Grandstand launcher only; the previous
+        # launcher's pages have no place in this window.
+        from utils.widgets.grandstand import view as grandstand_view
+        if not grandstand_view.grandstand_enabled():
+            print(f"[NextUI] {grandstand_view._FLAG}=0 is ignored: the launchpad "
+                  "window hosts the Grandstand launcher only")
+            os.environ[grandstand_view._FLAG] = "1"
 
         from tabs.launch_tab import LaunchTab
         self.launch_tab = LaunchTab(
@@ -381,11 +396,28 @@ class LaunchpadWindow(QMainWindow):
         if was_open:
             self.open_sheet(name)
 
+    def _launcher_game(self) -> str:
+        """The game the launcher is showing."""
+        view = getattr(self.launch_tab, "grandstand", None)
+        try:
+            game = view.active_game() if view is not None else None
+        except Exception:  # noqa: BLE001
+            game = None
+        return game if game in ("ttr", "cc") else "ttr"
+
+    def _build_sheet(self, name: str) -> QWidget:
+        if name == SHEET_KEYSETS:
+            from utils.widgets.launchpad.keysets_sheet import KeysetsSheet
+            return KeysetsSheet(self.keymap_manager, self.settings_manager,
+                                game=self._launcher_game(), is_dark=self._is_dark())
+        placeholder = _SheetPlaceholder(SHEET_TITLES[name][0])
+        placeholder.apply_theme(self._is_dark())
+        return placeholder
+
     def _sheet_content(self, name: str) -> QWidget:
         content = self._sheets.get(name)
         if content is None:
-            content = _SheetPlaceholder(SHEET_TITLES[name][0])
-            content.apply_theme(self._is_dark())
+            content = self._build_sheet(name)
             self._sheets[name] = content
             self._sheet_names[id(content)] = name
         return content
@@ -401,8 +433,17 @@ class LaunchpadWindow(QMainWindow):
         if name is None:
             self.sheet_host.close()
             return
+        content = self._sheet_content(name)
+        if name == SHEET_KEYSETS and self.open_sheet_name() != name \
+                and hasattr(content, "set_game"):
+            # Opens on the game the launcher is showing.
+            content.set_game(self._launcher_game())
         title, sub = SHEET_TITLES[name]
-        self.sheet_host.open(self._sheet_content(name), SHEET_IDENTITY[name], title, sub)
+        self.sheet_host.open(
+            content,
+            getattr(content, "IDENTITY", SHEET_IDENTITY[name]),
+            getattr(content, "TITLE", title),
+            getattr(content, "SUB", sub))
 
     def _on_sheet_button(self, name: str) -> None:
         self.open_sheet(next_open_sheet(self.open_sheet_name(), name))
@@ -679,7 +720,7 @@ class LaunchpadWindow(QMainWindow):
         try:
             self.shutdown()
         finally:
-            QApplication.quit()
+            _quit_app()
 
     # ── Keep-alive ─────────────────────────────────────────────────────────
 
@@ -769,6 +810,9 @@ class LaunchpadWindow(QMainWindow):
                 print(f"[shutdown]    {label}.{method}() returned")
             except Exception as e:  # noqa: BLE001
                 print(f"[CloseEvent] {label} shutdown error: {e}")
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)     # installed app-wide for hover hints
         print(f"[shutdown] complete pid={os.getpid()}")
 
     def closeEvent(self, event) -> None:
@@ -776,7 +820,5 @@ class LaunchpadWindow(QMainWindow):
         self.shutdown()
         super().closeEvent(event)
         if event.isAccepted():
-            app = QApplication.instance()
-            if app is not None:
-                app.quit()
+            _quit_app()
         print(f"[closeEvent] exiting pid={os.getpid()}")
