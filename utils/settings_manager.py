@@ -75,6 +75,11 @@ class SettingsManager:
             except Exception:
                 pass
 
+    def clear_callbacks(self) -> None:
+        """Drop every on_change callback: for an owner shutting down, whose
+        bound methods would otherwise keep it alive through this manager."""
+        self._callbacks.clear()
+
     def on_change(self, callback):
         """Register callback(key, value) to be called when any setting changes."""
         self._callbacks.append(callback)

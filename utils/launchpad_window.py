@@ -632,8 +632,9 @@ class LaunchpadWindow(QMainWindow):
         # chat_handling_mode_changed has no listener: the session reads the
         # mode from settings on every keystroke, and there are no chat
         # buttons here to show or hide.
-        rows.set_hotkey_accounts_provider(
-            lambda: self.launch_tab.cred_manager.get_accounts_basic())
+        # The manager's own method, not a closure over this window: the sheet
+        # can outlive the window (Qt holds it) and must not keep it alive.
+        rows.set_hotkey_accounts_provider(self.launch_tab.cred_manager.get_accounts_basic)
         if self.hotkeys is not None:
             self.hotkeys.status_changed.connect(self._on_hotkey_status)
         if hasattr(rows, "set_update_checker"):
@@ -1245,7 +1246,64 @@ class LaunchpadWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             app.removeEventFilter(self)     # installed app-wide for hover hints
+        self._release_references()
         print(f"[shutdown] complete pid={os.getpid()}")
+
+    def _release_references(self) -> None:
+        """Let this window be collected once it is gone. Parts that can
+        outlive it (Qt keeps some alive through connections to long-lived
+        senders, and utils.motion keeps the settings manager in a module
+        global) hold change callbacks and back-references into the window,
+        so without this the whole window graph (about 30 MB) outlives it.
+        Only matters where one process builds more than one window; checked
+        by scripts/launchpad_lifetime_probe.py."""
+        sm = getattr(self, "settings_manager", None)
+        if sm is not None:
+            clear = getattr(sm, "clear_callbacks", None)
+            if clear is not None:
+                clear()
+            import utils.motion as motion
+            if getattr(motion, "_settings", None) is sm:
+                motion.set_settings_manager(None)
+        self._disconnect_tree()
+
+    def _disconnect_tree(self) -> None:
+        """Disconnect every signal of this window, its child objects and the
+        session. Parts connect lambdas that capture themselves to signals of
+        objects they own (StripController to session.running_changed, ...);
+        Qt holds those lambdas where Python's collector cannot see them, so
+        such cycles are never freed while connected. Once the window is shut
+        down nothing should receive these signals. `destroyed` is left alone:
+        PySide relies on it."""
+        import warnings
+        from PySide6.QtCore import QMetaMethod, QObject
+        objects = [self, getattr(self, "session", None)]
+        objects += self.findChildren(QObject)
+        seen = set()
+        for obj in objects:
+            if obj is None or id(obj) in seen:
+                continue
+            seen.add(id(obj))
+            try:
+                meta = obj.metaObject()
+            except RuntimeError:
+                continue                       # already deleted
+            names = set()
+            for i in range(meta.methodCount()):
+                method = meta.method(i)
+                if method.methodType() == QMetaMethod.Signal:
+                    names.add(bytes(method.name()).decode())
+            names.discard("destroyed")
+            for name in names:
+                signal = getattr(obj, name, None)
+                if signal is None or not hasattr(signal, "disconnect"):
+                    continue
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    try:
+                        signal.disconnect()
+                    except (RuntimeError, TypeError):
+                        pass
 
     def closeEvent(self, event) -> None:
         print(f"[closeEvent] entered pid={os.getpid()}")
