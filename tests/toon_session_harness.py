@@ -171,29 +171,21 @@ class FakeCustomizations:
         return dict(self.entries.get((game, name), {}))
 
 
-class FakeKeymaps:
-    """Sets as plain dicts, with the change callbacks KeymapManager has."""
-
-    def __init__(self, ttr=None, cc=None):
-        self.sets = {
-            "ttr": ttr if ttr is not None else [
-                {"name": "Default"}, {"name": "Arrows"}, {"name": "Third"}],
-            "cc": cc if cc is not None else [{"name": "Default"}, {"name": "Clash 2"}],
-        }
-        self._listeners = []
-
-    def get_sets(self, game):
-        return [dict(s) for s in self.sets.get(game, [])]
-
-    def get_key_for_action(self, game, set_index, action):
-        return {"jump": "space", "book": "Alt_L", "forward": "Up"}.get(action)
-
-    def on_change(self, callback):
-        self._listeners.append(callback)
-
-    def changed(self):
-        for cb in list(self._listeners):
-            cb()
+def make_keymaps():
+    """A real KeymapManager (in the config dir the test points
+    ``TTMT_CONFIG_DIR`` at) with readable ids: Toontown sets ``t0`` Default,
+    ``t1`` Arrows, ``t2`` Third; Corporate Clash sets ``c0`` Default, ``c1``
+    Clash 2."""
+    from utils.keymap_manager import KeymapManager
+    keymaps = KeymapManager()
+    keymaps.add_set("ttr", name="Arrows")
+    keymaps.add_set("ttr", name="Third")
+    keymaps.add_set("cc", name="Clash 2")
+    with keymaps._lock:
+        for game, prefix in (("ttr", "t"), ("cc", "c")):
+            for index, entry in enumerate(keymaps._sets[game]):
+                entry["id"] = f"{prefix}{index}"
+    return keymaps
 
 
 class FakeProfiles:
@@ -247,7 +239,7 @@ class Rig:
         if windows:
             self.wm.ttr_window_ids = list(windows)
             self.wm.window_games = {w: (games or {}).get(w, "ttr") for w in windows}
-        self.keymaps = keymaps if keymaps is not None else FakeKeymaps()
+        self.keymaps = keymaps if keymaps is not None else make_keymaps()
         self.profiles = profiles if profiles is not None else FakeProfiles()
         self.customizations = FakeCustomizations()
         self.prefs_path = str(tmp_path / "toon_session.json")

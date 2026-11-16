@@ -59,3 +59,6 @@ def test_manual_refresh_returns_early_when_coalesced(monkeypatch):
                         lambda: (_ for _ in ()).throw(AssertionError("heavy path ran")))
     tab.manual_refresh()
     assert any("coalesced" in m for m in logs)
+
+
+# The same cooldown on ToonSession: tests/test_toon_session.py ("Refresh").

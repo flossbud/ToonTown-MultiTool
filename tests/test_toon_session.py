@@ -10,13 +10,14 @@ import pytest
 
 from services.toon_session import ToonSession, ToonState
 from tests.toon_session_harness import (
-    KEEP_ALIVE_ON, FakeKeymaps, FakeProfiles, Rig, profile,
+    KEEP_ALIVE_ON, FakeProfiles, Rig, profile,
 )
 from utils.settings_keys import CLICK_SYNC_ENABLED
 
 
 @pytest.fixture
-def make(qapp, tmp_path):
+def make(qapp, tmp_path, monkeypatch):
+    monkeypatch.setenv("TTMT_CONFIG_DIR", str(tmp_path / "config"))
     rigs = []
 
     def _make(**kwargs):
@@ -110,7 +111,7 @@ def test_a_new_window_becomes_a_toon(make):
     assert rig.session.toons() == [ToonState(
         window_id="a", slot=0, game="ttr", name=None, species=None, dna=None,
         accent="#4a8fe7", enabled=True, keep_alive=False, click_sync=False,
-        click_sync_supported=True, keyset_id="0", counters_locked=False,
+        click_sync_supported=True, keyset_id="t0", counters_locked=False,
         beans=None, bank=None, tokens=None, laff=None, max_laff=None)]
 
 
@@ -159,7 +160,7 @@ def test_state_follows_the_window_not_the_slot(make):
     rig.wm.set_windows(["a", "b", "c"])
     rig.session.set_enabled("a", False)
     rig.session.set_keep_alive("b", True)
-    rig.session.set_keyset("c", "2")
+    rig.session.set_keyset("c", "t2")
     rig.ttr("c", "Linux", beans=250)
     rig.spy.events.clear()
 
@@ -171,7 +172,7 @@ def test_state_follows_the_window_not_the_slot(make):
     assert (by_id["a"].slot, by_id["a"].enabled) == (1, False)
     assert (by_id["b"].slot, by_id["b"].keep_alive) == (2, True)
     assert (by_id["c"].slot, by_id["c"].keyset_id, by_id["c"].name,
-            by_id["c"].beans) == (0, "2", "Linux", 250)
+            by_id["c"].beans) == (0, "t2", "Linux", 250)
     # ...and the routing layer reads the same thing by slot.
     assert rig.session._get_enabled_toons() == [True, False, True, False]
     assert rig.session._get_keymap_assignments() == [2, 0, 0, 0]
@@ -226,7 +227,7 @@ def two(make):
     ("set_enabled", "enabled", False),
     ("set_keep_alive", "keep_alive", True),
     ("set_click_sync", "click_sync", True),
-    ("set_keyset", "keyset_id", "1"),
+    ("set_keyset", "keyset_id", "t1"),
     ("set_counters_locked", "counters_locked", True),
 ])
 def test_setter_changes_one_field_and_emits_once(two, setter, field, value):
@@ -242,7 +243,7 @@ def test_setter_changes_one_field_and_emits_once(two, setter, field, value):
 
 @pytest.mark.parametrize("setter, value", [
     ("set_enabled", True), ("set_keep_alive", False), ("set_click_sync", False),
-    ("set_keyset", "0"), ("set_counters_locked", False),
+    ("set_keyset", "t0"), ("set_counters_locked", False),
 ])
 def test_setter_with_the_current_value_emits_nothing(two, setter, value):
     getattr(two.session, setter)("a", value)
@@ -251,7 +252,7 @@ def test_setter_with_the_current_value_emits_nothing(two, setter, value):
 
 @pytest.mark.parametrize("setter, value", [
     ("set_enabled", False), ("set_keep_alive", True), ("set_click_sync", True),
-    ("set_keyset", "1"), ("set_counters_locked", True),
+    ("set_keyset", "t1"), ("set_counters_locked", True),
 ])
 def test_setter_on_an_unknown_window_is_ignored(two, setter, value):
     getattr(two.session, setter)("gone", value)
@@ -361,7 +362,7 @@ def test_effective_chat_by_mode(make, mode, expected):
     rig = make(settings={"chat_handling_mode": mode})
     rig.wm.set_windows(["a", "b", "c"])
     rig.session.set_enabled("b", False)
-    rig.session.set_keyset("c", "1")
+    rig.session.set_keyset("c", "t1")
     assert rig.session._get_chat_enabled() == expected
 
 
@@ -376,77 +377,87 @@ def test_no_toon_chats_while_stopped(make):
 
 def test_set_keyset_rejects_an_id_the_keymaps_do_not_have(two):
     two.session.set_keyset("a", "7")
-    assert two.session.toon("a").keyset_id == "0"
+    assert two.session.toon("a").keyset_id == "t0"
     assert two.spy.events == []
 
 
 def test_keyset_ids_are_per_game(make):
     rig = make()
     rig.wm.set_windows(["t", "c"], games={"c": "cc"})
-    rig.session.set_keyset("t", "2")          # ttr has three sets
-    rig.session.set_keyset("c", "2")          # cc has two
-    assert rig.session.toon("t").keyset_id == "2"
-    assert rig.session.toon("c").keyset_id == "0"
+    rig.session.set_keyset("t", "t2")
+    rig.session.set_keyset("c", "t2")          # a Toontown set, on a Clash toon
+    assert rig.session.toon("t").keyset_id == "t2"
+    assert rig.session.toon("c").keyset_id == "c0"
+    rig.session.set_keyset("c", "c1")
+    assert rig.session.toon("c").keyset_id == "c1"
 
 
-def test_a_sets_own_id_wins_over_its_position(make):
-    keymaps = FakeKeymaps(ttr=[{"name": "Default", "id": "base"},
-                               {"name": "Arrows", "id": "k-arrows"}])
-    rig = make(keymaps=keymaps)
-    rig.wm.set_windows(["a"])
-    assert rig.session.toon("a").keyset_id == "base"
-    rig.session.set_keyset("a", "1")                     # a position is not an id
-    assert rig.session.toon("a").keyset_id == "base"
-    rig.session.set_keyset("a", "k-arrows")
-    assert rig.session.toon("a").keyset_id == "k-arrows"
+def test_routing_follows_the_id_when_sets_move(make):
+    """InputService routes by position; the session resolves it from the id
+    every time, so a reorder or a delete needs no bookkeeping."""
+    rig = make()
+    rig.wm.set_windows(["a", "b"])
+    rig.session.set_keyset("a", "t2")
+    rig.session.set_keyset("b", "1")                 # a position is not an id
+    assert rig.session.toon("b").keyset_id == "t0"
+    assert rig.session._get_keymap_assignments() == [2, 0, 0, 0]
+    rig.spy.events.clear()
+    assert rig.keymaps.move_set("ttr", "t2", 1)
+    assert rig.session.toon("a").keyset_id == "t2"
     assert rig.session._get_keymap_assignments() == [1, 0, 0, 0]
-    keymaps.sets["ttr"].reverse()                        # reordered: ids hold
-    keymaps.changed()
-    assert rig.session.toon("a").keyset_id == "k-arrows"
-    assert rig.session._get_keymap_assignments() == [0, 0, 0, 0]
+    assert rig.spy.events == []                      # same set: nothing to announce
+    rig.keymaps.delete_set("ttr", 2)                 # "t1", now last
+    assert rig.session._get_keymap_assignments() == [1, 0, 0, 0]
 
 
 def test_deleting_a_toons_keyset_moves_it_to_the_lowest_visible(two):
-    two.session.set_keyset("a", "2")
+    two.session.set_keyset("a", "t2")
     two.spy.events.clear()
-    two.keymaps.sets["ttr"].pop()             # set "2" is gone
-    two.keymaps.changed()
-    assert two.session.toon("a").keyset_id == "0"
+    two.keymaps.delete_set("ttr", 2)
+    assert two.session.toon("a").keyset_id == "t0"
     assert two.spy.events == [("toon", "a")]
     assert two.session._get_keymap_assignments() == [0, 0, 0, 0]
 
 
 def test_hiding_a_toons_keyset_moves_it_to_the_lowest_visible(two):
-    two.session.set_keyset("a", "1")
-    two.session.set_keyset("b", "2")
+    two.session.set_keyset("a", "t1")
+    two.session.set_keyset("b", "t2")
     two.spy.events.clear()
-    two.keymaps.sets["ttr"][0]["hidden"] = True
-    two.keymaps.sets["ttr"][1]["hidden"] = True
-    two.keymaps.changed()
-    assert two.session.toon("a").keyset_id == "2"     # lowest that is visible
-    assert two.session.toon("b").keyset_id == "2"
+    assert two.keymaps.set_hidden("ttr", "t0", True)
+    assert two.keymaps.set_hidden("ttr", "t1", True)
+    assert two.session.toon("a").keyset_id == "t2"     # lowest that is visible
+    assert two.session.toon("b").keyset_id == "t2"
     assert two.spy.events == [("toon", "a")]
 
 
-def test_a_new_toon_starts_on_the_lowest_visible_keyset(make):
-    keymaps = FakeKeymaps(ttr=[{"name": "Default", "hidden": True}, {"name": "Arrows"}])
-    rig = make(keymaps=keymaps)
+def test_a_hidden_keyset_cannot_be_chosen_back_by_a_stale_memory(make):
+    rig = make()
+    rig.prefs.update("ttr::Flossbud", keyset_id="t1")
+    rig.keymaps.set_hidden("ttr", "t1", True)
     rig.wm.set_windows(["a"])
-    assert rig.session.toon("a").keyset_id == "1"
+    rig.ttr("a", "Flossbud")
+    assert rig.session.toon("a").keyset_id == "t0"
+
+
+def test_a_new_toon_starts_on_the_lowest_visible_keyset(make):
+    rig = make()
+    rig.keymaps.set_hidden("ttr", "t0", True)
+    rig.wm.set_windows(["a"])
+    assert rig.session.toon("a").keyset_id == "t1"
+    assert rig.session._get_keymap_assignments() == [1, 0, 0, 0]
 
 
 def test_an_unrelated_keymap_edit_announces_nothing(two):
-    two.keymaps.changed()
+    two.keymaps.update_set_name("ttr", 1, "Renamed")
     assert two.spy.events == []
 
 
 def test_keymap_callbacks_from_another_thread_are_marshalled(two, qapp):
-    two.session.set_keyset("a", "2")
+    two.session.set_keyset("a", "t2")
     two.spy.events.clear()
     seen = []
     two.session.toon_changed.connect(lambda wid: seen.append(threading.get_ident()))
-    two.keymaps.sets["ttr"].pop()
-    worker = threading.Thread(target=two.keymaps.changed)
+    worker = threading.Thread(target=lambda: two.keymaps.delete_set("ttr", 2))
     worker.start()
     worker.join()
     assert seen == []
@@ -472,43 +483,43 @@ def test_choices_are_remembered_per_toon_identity(make, tmp_path):
     rig = make()
     rig.wm.set_windows(["a"])
     rig.ttr("a", "Flossbud")
-    rig.session.set_keyset("a", "2")
+    rig.session.set_keyset("a", "t2")
     rig.session.set_counters_locked("a", True)
     from services.toon_prefs import ToonPrefs
     assert ToonPrefs(rig.prefs_path).get("ttr::Flossbud") == {
-        "keyset_id": "2", "counters_locked": True}
+        "keyset_id": "t2", "counters_locked": True}
 
 
 def test_remembered_choices_come_back_when_the_toon_is_named(make):
     rig = make()
-    rig.prefs.update("ttr::Flossbud", keyset_id="1", counters_locked=True)
+    rig.prefs.update("ttr::Flossbud", keyset_id="t1", counters_locked=True)
     rig.wm.set_windows(["w9"])
-    assert rig.session.toon("w9").keyset_id == "0"
+    assert rig.session.toon("w9").keyset_id == "t0"
     rig.spy.events.clear()
     rig.ttr("w9", "Flossbud")
     toon = rig.session.toon("w9")
-    assert (toon.keyset_id, toon.counters_locked) == ("1", True)
+    assert (toon.keyset_id, toon.counters_locked) == ("t1", True)
     assert rig.spy.events == [("toon", "w9")]
     assert rig.session._get_keymap_assignments() == [1, 0, 0, 0]
 
 
 def test_identity_is_per_game(make):
     rig = make()
-    rig.prefs.update("cc::Moe", keyset_id="1")
+    rig.prefs.update("cc::Moe", keyset_id="c1")
     rig.wm.set_windows(["t"])
     rig.ttr("t", "Moe")
-    assert rig.session.toon("t").keyset_id == "0"
+    assert rig.session.toon("t").keyset_id == "t0"
 
 
 def test_a_choice_made_before_the_name_arrives_wins_and_is_remembered(make):
     rig = make()
-    rig.prefs.update("ttr::Flossbud", keyset_id="1", counters_locked=True)
+    rig.prefs.update("ttr::Flossbud", keyset_id="t1", counters_locked=True)
     rig.wm.set_windows(["a"])
-    rig.session.set_keyset("a", "2")
+    rig.session.set_keyset("a", "t2")
     rig.ttr("a", "Flossbud")
     toon = rig.session.toon("a")
-    assert (toon.keyset_id, toon.counters_locked) == ("2", True)
-    assert rig.prefs.get("ttr::Flossbud")["keyset_id"] == "2"
+    assert (toon.keyset_id, toon.counters_locked) == ("t2", True)
+    assert rig.prefs.get("ttr::Flossbud")["keyset_id"] == "t2"
 
 
 def test_a_remembered_keyset_that_no_longer_exists_is_not_applied(make):
@@ -516,37 +527,37 @@ def test_a_remembered_keyset_that_no_longer_exists_is_not_applied(make):
     rig.prefs.update("ttr::Flossbud", keyset_id="9")
     rig.wm.set_windows(["a"])
     rig.ttr("a", "Flossbud")
-    assert rig.session.toon("a").keyset_id == "0"
+    assert rig.session.toon("a").keyset_id == "t0"
 
 
 def test_a_name_dropping_out_and_returning_changes_nothing(make):
     rig = make()
     rig.wm.set_windows(["a"])
     rig.ttr("a", "Flossbud")
-    rig.session.set_keyset("a", "1")
+    rig.session.set_keyset("a", "t1")
     rig.session.set_counters_locked("a", True)
     rig.ttr("a", None)
     toon = rig.session.toon("a")
-    assert (toon.name, toon.keyset_id, toon.counters_locked) == (None, "1", True)
+    assert (toon.name, toon.keyset_id, toon.counters_locked) == (None, "t1", True)
     rig.ttr("a", "Flossbud")
     toon = rig.session.toon("a")
-    assert (toon.name, toon.keyset_id, toon.counters_locked) == ("Flossbud", "1", True)
+    assert (toon.name, toon.keyset_id, toon.counters_locked) == ("Flossbud", "t1", True)
 
 
 def test_a_different_toon_in_the_same_window_gets_its_own_choices(make):
     rig = make()
-    rig.prefs.update("ttr::Hector", keyset_id="2")
+    rig.prefs.update("ttr::Hector", keyset_id="t2")
     rig.wm.set_windows(["a"])
     rig.ttr("a", "Flossbud")
-    rig.session.set_keyset("a", "1")
+    rig.session.set_keyset("a", "t1")
     rig.session.set_counters_locked("a", True)
     rig.ttr("a", "Hector")
     toon = rig.session.toon("a")
-    assert (toon.name, toon.keyset_id, toon.counters_locked) == ("Hector", "2", False)
-    assert rig.prefs.get("ttr::Flossbud") == {"keyset_id": "1", "counters_locked": True}
+    assert (toon.name, toon.keyset_id, toon.counters_locked) == ("Hector", "t2", False)
+    assert rig.prefs.get("ttr::Flossbud") == {"keyset_id": "t1", "counters_locked": True}
     rig.ttr("a", "Linux")                   # nothing remembered: defaults
     toon = rig.session.toon("a")
-    assert (toon.keyset_id, toon.counters_locked) == ("0", False)
+    assert (toon.keyset_id, toon.counters_locked) == ("t0", False)
 
 
 # ── Game data ──────────────────────────────────────────────────────────────
@@ -754,13 +765,13 @@ def test_refresh_works_the_same_while_stopped(make):
 
 def test_a_keyset_chosen_this_session_survives_a_refresh(make):
     rig = make(windows=["a", "b"])
-    rig.session.set_keyset("a", "2")
+    rig.session.set_keyset("a", "t2")
     rig.session.set_counters_locked("a", True)
     rig.session.refresh()
     rig.wm.set_windows(["a", "b"])              # re-detected
     a, b = rig.session.toon("a"), rig.session.toon("b")
-    assert (a.keyset_id, a.counters_locked) == ("2", True)
-    assert (b.keyset_id, b.counters_locked) == ("0", False)
+    assert (a.keyset_id, a.counters_locked) == ("t2", True)
+    assert (b.keyset_id, b.counters_locked) == ("t0", False)
 
 
 # ── Profiles ───────────────────────────────────────────────────────────────
@@ -776,8 +787,8 @@ def test_load_profile_applies_to_live_toons_by_slot(make):
     rig.session.load_profile(1)
 
     a, b = rig.session.toon("a"), rig.session.toon("b")
-    assert (a.enabled, a.keyset_id, a.keep_alive) == (True, "1", True)
-    assert (b.enabled, b.keyset_id, b.keep_alive) == (False, "0", False)
+    assert (a.enabled, a.keyset_id, a.keep_alive) == (True, "t1", True)
+    assert (b.enabled, b.keyset_id, b.keep_alive) == (False, "t0", False)
     assert rig.spy.events == [("toon", "a"), ("toon", "b")]
     assert rig.session.active_profile == 1
     assert any("Loaded 'Profile 2'" in m for m in rig.logs)
@@ -795,9 +806,9 @@ def test_a_profile_set_name_the_game_does_not_have_leaves_the_keyset(make):
     profiles = FakeProfiles({0: profile([True] * 4, modes=["Nope"] * 4)})
     rig = make(profiles=profiles)
     rig.wm.set_windows(["a"])
-    rig.session.set_keyset("a", "1")
+    rig.session.set_keyset("a", "t1")
     rig.session.load_profile(0)
-    assert rig.session.toon("a").keyset_id == "1"
+    assert rig.session.toon("a").keyset_id == "t1"
 
 
 def test_the_active_profile_is_saved_when_a_toon_or_keyset_changes(make):
@@ -813,7 +824,7 @@ def test_the_active_profile_is_saved_when_a_toon_or_keyset_changes(make):
     assert profiles.saved[-1] == (
         0, [False, True, False, False], ["Default"] * 4,
         [False, True, False, False], [False] * 4)
-    rig.session.set_keyset("b", "1")
+    rig.session.set_keyset("b", "t1")
     assert profiles.saved[-1][2] == ["Default", "Arrows", "Default", "Default"]
 
 
@@ -846,7 +857,7 @@ def test_nothing_is_announced_after_shutdown(make):
     rig.session.shutdown()
     rig.spy.events.clear()
     rig.wm.set_windows(["a", "b"])
-    rig.keymaps.changed()
+    rig.keymaps.delete_set("ttr", 2)
     rig.settings.set("keep_alive_enabled", True)
     rig.session.start()
     assert rig.spy.events == []

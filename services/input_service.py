@@ -123,6 +123,10 @@ class InputService(QObject):
         # legacy hard-coded behavior for callers that don't wire the helper.
         self.get_chat_block_list = get_chat_block_list or (lambda: {"Return", "Escape"})
         self.get_chat_handling_mode = get_chat_handling_mode
+        # Routing suspended (set_routing_suspended): the service keeps running
+        # but installs no key grabs, so the focused game window receives its
+        # keys natively. Callers pair it with reporting no toon as enabled.
+        self._routing_suspended = False
         self.running = False
         self.thread = None
         self._stop_event = threading.Event()
@@ -469,6 +473,15 @@ class InputService(QObject):
                 _itrace("focus", f"win=<empty> uninstall intent {_prev_intent}->False")
             self._key_grabber.uninstall_grabs()
             return
+        if self._routing_suspended:
+            # No grabs while suspended: a grabbed key is only ever re-delivered
+            # to an ENABLED toon, so grabbing now would swallow the focused
+            # window's keys outright.
+            if _ITRACE:
+                _itrace("focus", f"win={window_id} suspended uninstall "
+                                 f"intent {_prev_intent}->False")
+            self._key_grabber.uninstall_grabs()
+            return
         try:
             from utils.game_registry import GameRegistry
             game = GameRegistry.instance().get_game_for_window(str(window_id))
@@ -609,6 +622,41 @@ class InputService(QObject):
             # This runs inside settings_manager's change-callback loop; never let
             # a reseed failure propagate and break other listeners.
             print(f"[InputService] grabber reseed on toggle failed: {e}")
+
+    def set_routing_suspended(self, suspended: bool) -> None:
+        """Suspend or resume key routing without stopping the service.
+
+        Suspending releases every held key and removes the key grabs, and no
+        grab is installed again until routing resumes: the focused game window
+        gets its keys natively, exactly as if this app were not there.
+        Resuming re-seeds the grabs for whichever window has focus. Same
+        release-then-reseed sequence as the strict-separation toggle.
+        """
+        suspended = bool(suspended)
+        if suspended == self._routing_suspended:
+            return
+        # Flag first: releasing the keys ends any chat capture, which re-seeds
+        # the grabs, and that re-seed must already see the new state.
+        self._routing_suspended = suspended
+        if suspended:
+            # Every key routing pressed gets its keyup now. Call this BEFORE
+            # the toons stop reading as enabled: a hold without a delivery
+            # record is released by re-translating for the enabled toons.
+            try:
+                self._strict_drain_active = True
+                self.release_all_keys()
+            except Exception as e:  # noqa: BLE001
+                print(f"[InputService] release_all_keys on suspend failed: {e}")
+            finally:
+                self._strict_drain_active = False
+        try:
+            seed = self.window_manager.get_active_window()
+        except Exception:
+            seed = None
+        try:
+            self._on_active_window_changed_for_grabber(seed or "")
+        except Exception as e:  # noqa: BLE001
+            print(f"[InputService] grabber reseed on suspend change failed: {e}")
 
     def _on_grabbed_key(self, action: str, keysym: str) -> None:
         """Forward a consumed grab event into the same queue pynput uses."""
