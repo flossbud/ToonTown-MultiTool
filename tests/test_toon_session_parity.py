@@ -141,3 +141,86 @@ def test_switching_rapid_fire_wakes_the_loop(make, games, qapp):
         qapp.processEvents()
         time.sleep(0.01)
     assert rig.input.sent, "rapid fire did not start within 3 s"
+
+
+# ── Profiles: a window that appears after the load ──────────────────────────
+
+LATE = dict(enabled=[True, True, False, True],
+            modes=["Default", "Arrows", "Third", "Third"],
+            keep_alive=[False, False, True, False],
+            rapid_fire=[False, False, False, False])
+
+
+def test_a_window_that_appears_under_a_profile_takes_its_slot(make):
+    """The tab set all four selectors on load, so a toon started later came
+    up on the profile's keyset. Here it takes keyset, keep-alive and enabled
+    from its slot."""
+    profiles = FakeProfiles({0: profile(**LATE)})
+    rig = make(windows=["a", "b"], profiles=profiles, settings=KEEP_ALIVE_ON)
+    rig.session.load_profile(0)
+    rig.wm.set_windows(["a", "b", "c"])
+    third = rig.session.toon("c")
+    assert third.keyset_id == "t2"                 # "Third"
+    assert third.keep_alive is True
+    assert third.enabled is False                  # the profile has slot 3 off
+    rig.wm.set_windows(["a", "b", "c", "d"])
+    fourth = rig.session.toon("d")
+    assert (fourth.keyset_id, fourth.keep_alive, fourth.enabled) == ("t2", False, True)
+
+
+def test_the_next_autosave_leaves_that_slot_as_the_profile_had_it(make):
+    profiles = FakeProfiles({0: profile(**LATE)})
+    rig = make(windows=["a", "b"], profiles=profiles, settings=KEEP_ALIVE_ON)
+    rig.session.load_profile(0)
+    rig.wm.set_windows(["a", "b", "c"])
+    rig.session.set_enabled("a", False)            # any save point
+    _index, enabled, modes, keep_alive, _rapid = profiles.saved[-1]
+    assert modes == ["Default", "Arrows", "Third", "Third"]
+    assert keep_alive == [False, False, True, False]
+    assert enabled == [False, True, False, True]   # only slot 1 changed
+
+
+def test_under_a_profile_the_remembered_keyset_does_not_apply(make):
+    """Per-toon memory is for when no profile is in force."""
+    profiles = FakeProfiles({0: profile(**LATE)})
+    rig = make(windows=["a", "b"], profiles=profiles)
+    rig.prefs.update("ttr::Daisy", keyset_id="t1")
+    rig.session.load_profile(0)
+    rig.wm.set_windows(["a", "b", "c"])
+    rig.ttr("c", "Daisy")
+    assert rig.session.toon("c").keyset_id == "t2"
+    # A toon that was already running sits on its profile keyset too, even
+    # when that is the default and its name arrives afterwards.
+    rig.prefs.update("ttr::Flossbud", keyset_id="t1")
+    rig.ttr("a", "Flossbud")
+    assert rig.session.toon("a").keyset_id == "t0"
+
+
+def test_without_a_profile_a_new_window_starts_enabled_on_its_own_keyset(make):
+    rig = make(windows=["a"])
+    rig.prefs.update("ttr::Daisy", keyset_id="t1")
+    rig.wm.set_windows(["a", "b"])
+    new = rig.session.toon("b")
+    assert (new.enabled, new.keep_alive, new.keyset_id) == (True, False, "t0")
+    rig.ttr("b", "Daisy")
+    assert rig.session.toon("b").keyset_id == "t1"      # remembered, no profile
+
+
+def test_a_profile_set_the_new_toons_game_lacks_leaves_it_on_its_default(make):
+    """Slot 3 names a Toontown set; a Corporate Clash window lands there."""
+    profiles = FakeProfiles({0: profile(**LATE)})
+    rig = make(windows=["a", "b"], profiles=profiles)
+    rig.session.load_profile(0)
+    rig.wm.set_windows(["a", "b", "c"], games={"c": "cc"})
+    assert rig.session.toon("c").keyset_id == "c0"
+    assert rig.session.toon("c").enabled is False       # the rest of the slot applies
+
+
+def test_a_different_toon_in_the_same_window_goes_back_to_the_profile_keyset(make):
+    profiles = FakeProfiles({0: profile(**LATE)})
+    rig = make(windows=["a", "b"], profiles=profiles)
+    rig.session.load_profile(0)
+    rig.ttr("b", "Hector")
+    assert rig.session.toon("b").keyset_id == "t1"      # "Arrows"
+    rig.ttr("b", "Linux")                               # logged out, other toon
+    assert rig.session.toon("b").keyset_id == "t1"
