@@ -96,15 +96,67 @@ PLAY_WINDOWS = (
 TRACE = True
 
 
+class Tee:
+    """stdout that also writes a file, or only the file when there is no
+    console (pythonw on Windows). Everything printed lands in the log: the
+    [Strips] stamp included, which the strips print themselves."""
+
+    def __init__(self, console, path: str) -> None:
+        self._console = console
+        self._file = open(path, "w", encoding="utf-8")
+
+    def write(self, text: str) -> int:
+        if self._console is not None:
+            try:
+                self._console.write(text)
+            except Exception:
+                pass
+        self._file.write(text)
+        self._file.flush()
+        return len(text)
+
+    def flush(self) -> None:
+        if self._console is not None:
+            try:
+                self._console.flush()
+            except Exception:
+                pass
+        self._file.flush()
+
+
+def out(*parts) -> None:
+    try:
+        print(*parts, flush=True)
+    except Exception:
+        pass
+
+
 def say(*parts) -> None:
     """Machine-readable line for the check scripts."""
     if TRACE:
-        print(*parts, flush=True)
+        out(*parts)
 
 
 def act(*parts) -> None:
     """One plain line per action the strips ask for."""
-    print("ACTION", *parts, flush=True)
+    out("ACTION", *parts)
+
+
+def child_python() -> str:
+    """The interpreter for child processes whose output is read through a
+    pipe. Under pythonw (no console) prefer the python.exe beside it: its
+    standard streams are always real."""
+    exe = sys.executable
+    if os.path.basename(exe).lower() == "pythonw.exe":
+        console = os.path.join(os.path.dirname(exe), "python.exe")
+        if os.path.exists(console):
+            return console
+    return exe
+
+
+# Windows: a console program started from a windowless parent must not pop a
+# console window of its own.
+NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 
 class Lines(QObject):
@@ -211,7 +263,12 @@ def main() -> int:
                     help="settings folder to use and keep (default: a temporary one)")
     ap.add_argument("--trace", action="store_true",
                     help="in the playground, also print the STRIP ... lines")
+    ap.add_argument("--log", default=None,
+                    help="also write every line to this file (needed under "
+                         "pythonw on Windows, which has no console)")
     args = ap.parse_args()
+    if args.log:
+        sys.stdout = Tee(sys.stdout, args.log)
     if not args.play and not args.wid:
         ap.error("give --play, or one or more --wid")
     TRACE = bool(args.wid) or args.trace
@@ -358,6 +415,8 @@ def main() -> int:
         for wid, surface in follower.surfaces().items():
             surface.strip.clicked.connect(
                 lambda kind, n, wid=wid: say("STRIP click", wid, kind, n))
+            surface.presentation_changed.connect(
+                lambda shown, wid=wid: say("STRIP shown", wid, int(shown)))
             say("STRIP surface", wid, int(surface.winId()))
 
         # Stand in for the window manager service: a window that stays gone is
@@ -427,20 +486,22 @@ def main() -> int:
                 order = [f"game{i + 1}" for i in range(len(children))]
                 start([state["ids"][name] for name in order])
         elif words[:1] == ["STANDIN-CLICK"]:
-            print("GAME", source, "got a click at", *words[2:], flush=True)
+            out("GAME", source, "got a click at", *words[2:])
         elif words[:1] == ["STANDIN-KEY"]:
-            print("GAME", source, "got key", *words[3:], flush=True)
+            out("GAME", source, "got key", *words[3:])
 
     lines.line.connect(on_line)
-    lines.follow("stdin", sys.stdin)
+    if sys.stdin is not None:
+        lines.follow("stdin", sys.stdin)
 
     if args.play:
-        print("Float strip playground. Quit from the app icon's menu (Quit MultiTool), "
-              "or close the four windows.", flush=True)
+        out("Float strip playground. Quit from the app icon's menu (Quit MultiTool), "
+            "or close the four windows.")
         for spec in PLAY_WINDOWS:
             child = subprocess.Popen(
-                [sys.executable, os.path.join(HERE, "strip_standin.py"), spec],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
+                [child_python(), os.path.join(HERE, "strip_standin.py"), spec],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1,
+                creationflags=NO_WINDOW)
             children.append(child)
             lines.follow(spec.split(":", 1)[0], child.stdout)
     else:
@@ -462,7 +523,7 @@ def main() -> int:
     if own_config:
         shutil.rmtree(own_config, ignore_errors=True)
     if args.play:
-        print("Playground ended; nothing left running.", flush=True)
+        out("Playground ended; nothing left running.")
     return code
 
 

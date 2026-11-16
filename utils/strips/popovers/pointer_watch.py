@@ -92,7 +92,12 @@ class _PollProbe:
         return bool(QGuiApplication.mouseButtons())
 
     def grab_escape(self, on: bool) -> None:
-        self._escape_was_down = False
+        # Start from the key's state NOW: an Escape already held when a
+        # popover opens is not a press meant for it.
+        try:
+            self._escape_was_down = self._escape_down() if on else False
+        except Exception:
+            self._escape_was_down = False
 
     def _escape_down(self) -> bool:
         if sys.platform == "win32":
