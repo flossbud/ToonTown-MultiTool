@@ -341,3 +341,19 @@ def test_a_transient_window_closing_while_hidden_does_not_quit(tmp_path):
     out = subprocess.run([sys.executable, "-c", _SURVIVAL_SCRIPT], cwd=repo, env=env,
                          capture_output=True, text=True, timeout=120)
     assert "SURVIVED" in out.stdout, out.stdout[-2000:] + out.stderr[-2000:]
+
+
+def test_window_hotkeys_toggle_the_strips_and_never_grab_scaling(window, monkeypatch):
+    from utils.hotkey_actions import effective_bindings
+    from utils.settings_keys import HOTKEY_BINDINGS
+    calls = []
+    monkeypatch.setattr(window.strips, "toggle_user_hidden", lambda: calls.append(1),
+                        raising=False)
+    window._on_hotkey_action("overlay.toggle_cards")
+    window._on_hotkey_action("overlay.scale_up")          # no target in this shell
+    assert calls == [1]
+    window.settings_manager.set(HOTKEY_BINDINGS, {"overlay.scale_up": "ctrl+alt+u",
+                                                  "overlay.toggle_cards": "ctrl+alt+h"})
+    if window.hotkeys is not None:
+        eff = effective_bindings(window.hotkeys._settings)
+        assert "overlay.scale_up" not in eff and eff["overlay.toggle_cards"] == "ctrl+alt+h"

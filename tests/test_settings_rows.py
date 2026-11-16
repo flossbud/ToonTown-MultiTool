@@ -137,3 +137,35 @@ def test_dialogs_use_the_given_parent(qapp, monkeypatch):
     assert seen == [parent] and fired == [1]
     rows.set_dialog_parent(None)
     assert rows._dialog_window() is None
+
+
+def test_hotkey_conflict_prompt_works_without_a_settings_tab(qapp, quiet, monkeypatch):
+    """SettingsRows is a QObject: its dialogs must take the dialog parent,
+    not self (a QMessageBox with a QObject parent raises TypeError)."""
+    from utils.settings_keys import HOTKEY_BINDINGS
+    import utils.widgets.settings_rows as sr
+    parent = QWidget()
+    sm = _Settings({HOTKEY_BINDINGS: {"service.toggle": "ctrl+alt+h"}})
+    rows = SettingsRows(sm, dialog_parent=parent)
+    page = _page()
+    rows._build_hotkeys_card(page)
+    seen = []
+    monkeypatch.setattr(sr.QMessageBox, "question",
+                        staticmethod(lambda p, *a, **k: seen.append(p) or QMessageBox.Yes))
+    rows._on_hotkey_chord("clicksync.toggle", "ctrl+alt+h")
+    assert seen == [parent]
+    assert sm.data[HOTKEY_BINDINGS]["clicksync.toggle"] == "ctrl+alt+h"
+    assert sm.data[HOTKEY_BINDINGS]["service.toggle"] is None
+
+
+def test_ext_log_detect_result_box_takes_the_dialog_parent(qapp, quiet, monkeypatch):
+    import utils.widgets.settings_rows as sr
+    parent = QWidget()
+    rows = SettingsRows(_Settings(), dialog_parent=parent)
+    page = _page()
+    rows._build_games_page(page)
+    seen = []
+    monkeypatch.setattr(sr.QMessageBox, "information",
+                        staticmethod(lambda p, *a, **k: seen.append(p)))
+    rows._on_ext_log_detect()
+    assert seen == [parent]            # it always reports, even "none found"

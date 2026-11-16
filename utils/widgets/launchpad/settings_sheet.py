@@ -173,6 +173,12 @@ class SheetSettingsRows(SettingsRows):
         self._v2_segments.append((seg, accent_key))
         return seg
 
+    def _hotkey_actions(self):
+        # This shell's list: no cluster scaling, the cards toggle is the
+        # strips' hide / show (utils/widgets/launchpad/hotkeys.py).
+        from utils.widgets.launchpad import hotkeys
+        return hotkeys.actions()
+
     def _apply_rows_theme(self, is_dark):
         self._is_dark = is_dark
         super()._apply_rows_theme(is_dark)
