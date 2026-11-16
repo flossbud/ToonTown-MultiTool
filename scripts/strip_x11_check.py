@@ -195,11 +195,14 @@ class Check:
         self._n += 1
         path = os.path.join(self.shots, f"{self._n:02d}-{name}.png")
         try:
-            if shutil.which("import"):
+            if os.environ.get("WAYLAND_DISPLAY") and shutil.which("spectacle"):
+                # An X client cannot see a Wayland compositor's output.
+                env = dict(os.environ, QT_QPA_PLATFORM="wayland")
+                subprocess.run(["spectacle", "-b", "-n", "-f", "-o", path], env=env,
+                               timeout=20, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+            elif shutil.which("import"):
                 subprocess.run(["import", "-window", "root", path], timeout=15,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            elif shutil.which("spectacle"):
-                subprocess.run(["spectacle", "-b", "-n", "-f", "-o", path], timeout=15,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             pass
@@ -246,6 +249,8 @@ def main() -> int:
                                             stderr=subprocess.DEVNULL))
             time.sleep(1.0)
         os.environ["DISPLAY"] = env.get("DISPLAY", "")
+        if args.xvfb:
+            os.environ.pop("WAYLAND_DISPLAY", None)
         if env.get("XAUTHORITY"):
             os.environ["XAUTHORITY"] = env["XAUTHORITY"]
         return run(args, env, procs)
