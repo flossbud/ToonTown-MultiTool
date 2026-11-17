@@ -14,6 +14,20 @@ def clamp_window_height(available_height: int, target: int = 862, margin: int = 
     return min(target, available_height - margin)
 
 
+def position_inside(rect: tuple[int, int, int, int],
+                    area: tuple[int, int, int, int]) -> tuple[int, int]:
+    """Top-left for `rect` (x, y, w, h) that puts it wholly inside `area`
+    (x, y, w, h), moving it as little as possible: a rect that already fits
+    keeps its position. A rect wider or taller than the area is aligned with
+    the area's left or top edge, so the title bar stays reachable. An empty
+    area (no usable screen known) leaves the position alone."""
+    x, y, w, h = rect
+    ax, ay, aw, ah = area
+    if aw <= 0 or ah <= 0:
+        return x, y
+    return max(ax, min(x, ax + aw - w)), max(ay, min(y, ay + ah - h))
+
+
 def compute_logo_size(
     header_width: int,
     asset_w: int,
