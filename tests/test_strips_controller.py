@@ -95,7 +95,10 @@ def settle():
 
 
 @pytest.fixture
-def rig(qapp):
+def rig(qapp, monkeypatch):
+    # State/interaction checks complete animations immediately; the counter
+    # transition suite controls and inspects real animation progress.
+    monkeypatch.setattr("utils.motion._TEST_DURATION_SCALE", 0.0)
     made = []
 
     def _rig(session=None, keymaps=None, settings=None, today=None, widths=None,

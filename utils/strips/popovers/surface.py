@@ -7,11 +7,16 @@ manager keeps it over the strip, which it keeps over the game window.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
+from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QPoint, QRect, Qt,
+                            QTimer, Signal, QVariantAnimation)
 from PySide6.QtGui import QRegion
 from PySide6.QtWidgets import QWidget
 
 from utils.overlay.region import controls_region
+from utils import motion
+
+COUNTERS_FADE_IN_MS = 140
+COUNTERS_FADE_OUT_MS = 100
 
 
 class PopoverSurface(QWidget):
@@ -19,7 +24,7 @@ class PopoverSurface(QWidget):
     # Same role as on the strip surface: the macOS backend's level lookup.
     WM_WINDOW_TYPE = "strip"
 
-    def __init__(self, strategy, backend, content: QWidget) -> None:
+    def __init__(self, strategy, backend, content: QWidget, *, fade: bool = False) -> None:
         super().__init__(None)
         self._strategy = strategy
         self._backend = backend
@@ -42,6 +47,12 @@ class PopoverSurface(QWidget):
         self._visible: QRegion | None = None
         self._shown = False
         self._gone = False
+        self._fade_enabled = bool(fade)
+        self._fade_target = 0.0
+        self._fade = QVariantAnimation(self)
+        self._fade.setEasingCurve(QEasingCurve.OutCubic)
+        self._fade.valueChanged.connect(self._fade_value)
+        self._fade.finished.connect(self._fade_finished)
         self.resize(content.sizeHint())
 
     # -- showing ------------------------------------------------------------
@@ -85,17 +96,22 @@ class PopoverSurface(QWidget):
         if self.isVisible():
             self._present()
 
-    def conceal(self) -> None:
-        """Invisible and inert, still mapped (cheap to show again)."""
+    def conceal(self, *, immediate: bool = False) -> None:
+        """Drop input now; an opted-in counter may finish fading while mapped.
+
+        Movement and user suppression pass immediate=True: nothing may be
+        left at the old position while the game moves away.
+        """
         self._concealed = True
-        self._present()
+        self._present(immediate=immediate)
 
     def dismiss(self) -> None:
         """Gone for good."""
         if self._gone:
             return
         self._gone = True
-        self._shown = False
+        self._present(immediate=True)
+        self._fade.stop()
         self.hide()
         self.dismissed.emit()
         self.deleteLater()
@@ -120,6 +136,7 @@ class PopoverSurface(QWidget):
 
     def hideEvent(self, event) -> None:
         super().hideEvent(event)
+        self._fade.stop()
         self._shown = False
         if not event.spontaneous():
             self._attached = False
@@ -205,21 +222,86 @@ class PopoverSurface(QWidget):
         """The content's clickable area changed."""
         self._present()
 
-    def _present(self) -> None:
-        shown = (self._attached and not self._concealed and not self._covered
-                 and not self._gone and self.isVisible())
-        was_shown, self._shown = self._shown, shown
-        if was_shown and not shown:
+    def _set_shown(self, shown: bool) -> None:
+        was_shown, self._shown = self._shown, bool(shown)
+        if was_shown and not self._shown:
             cancel = getattr(self.content, "cancel_capture", None)
             if callable(cancel):
                 cancel()
-        if not self.isVisible():
-            return
+
+    def _apply_input(self) -> None:
         try:
             self._backend.apply_input_region(
-                self, self.input_region() if shown else QRegion())
+                self, self.input_region() if self._shown else QRegion())
         except Exception:
             pass
         if self._strategy.shaped():
-            self._apply_shape(shown)
-        self.setWindowOpacity(1.0 if shown else 0.0)
+            self._apply_shape(self._shown)
+
+    def _may_fade(self) -> bool:
+        return (self._fade_enabled and not self._strategy.shaped()
+                and not motion.is_reduced())
+
+    def _fade_value(self, value) -> None:
+        if self._gone:
+            return
+        if not self._may_fade():
+            self._present(immediate=True)
+            return
+        self.setWindowOpacity(float(value))
+
+    def _fade_finished(self) -> None:
+        self._present(immediate=True)
+
+    def _present(self, *, immediate: bool = False) -> None:
+        wanted = (self._attached and not self._concealed and not self._covered
+                  and not self._gone and self.isVisible())
+        if not self.isVisible():
+            self._fade.stop()
+            self._set_shown(False)
+            return
+        target = 1.0 if wanted else 0.0
+        # First paint/attach and the occlusion gate always win over animation.
+        instant = (immediate or not self._attached or self._covered or self._gone
+                   or not self._may_fade())
+        if instant:
+            self._fade.stop()
+            self._fade_target = target
+            if not wanted:
+                self._set_shown(False)
+                self._apply_input()
+            self.setWindowOpacity(target)
+            self._set_shown(wanted)
+            self._apply_input()
+            return
+        if self._fade.state() == QAbstractAnimation.Running and self._fade_target == target:
+            self._set_shown(False)
+            self._apply_input()
+            return
+        current = self.windowOpacity()
+        self._fade.stop()
+        self._fade_target = target
+        if abs(current - target) < 1e-6:
+            self._set_shown(wanted)
+            self._apply_input()
+            return
+        # No interactive region during either transition. In particular the
+        # region is dropped before the first fade-out frame, and only the
+        # finished callback restores it after a fade-in reaches full opacity.
+        self._set_shown(False)
+        self._apply_input()
+        duration = COUNTERS_FADE_IN_MS if wanted else COUNTERS_FADE_OUT_MS
+        duration = round(duration * abs(target - current) * motion._TEST_DURATION_SCALE)
+        if duration <= 0:
+            self._present(immediate=True)
+            return
+        # Reconfiguring a stopped animation can emit its old current-time
+        # value. Only the new run may write opacity, including on reversal.
+        blocked = self._fade.blockSignals(True)
+        try:
+            self._fade.setStartValue(current)
+            self._fade.setEndValue(target)
+            self._fade.setDuration(duration)
+        finally:
+            self._fade.blockSignals(blocked)
+        self._fade.start()
