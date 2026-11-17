@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import json
 import os
 import re
 import subprocess
@@ -333,7 +334,7 @@ def run(args, chk: Check, procs) -> int:
     chk.ok("attach is the Windows topmost-and-gate strategy",
            "attach=win32-topmost-gate" in stamp[0])
     size = re.search(r"size=(\w+)", stamp[0])
-    size_scale = settings_keys.float_strip_size_factor(size.group(1)) if size else 1.0
+    configured_scale = settings_keys.float_strip_size_factor(size.group(1)) if size else 1.0
     surf = wait_for(lambda: demo.find("STRIP surface"), 5)
     strip = int(surf[0].split()[3])
 
@@ -342,10 +343,15 @@ def run(args, chk: Check, procs) -> int:
         return got[-1].endswith(" 1") if got else None
 
     def blocks():
+        """The last full block report. A block that repeats starts a new
+        report (the two separators share a name, so they do not count)."""
         last = {}
         for ln in demo.find(f"STRIP block {wid} "):
             parts = ln.split()
-            last[(parts[3], int(parts[4]))] = [float(v) for v in parts[5:10]]
+            key = (parts[3], int(parts[4]))
+            if key[0] != "sep" and key in last:
+                last = {}
+            last[key] = [float(v) for v in parts[5:10]]
         return last
 
     def blocks_after(mark):
@@ -354,11 +360,22 @@ def run(args, chk: Check, procs) -> int:
         for ln in demo.find(f"STRIP block {wid} ", mark):
             parts = ln.split()
             key = (parts[3], int(parts[4]))
-            if key in keys or (key[0] in ("home", "portrait") and keys
-                               and keys[-1][0] == "enable"):
+            if key[0] != "sep" and key in keys:
                 keys = []
             keys.append(key)
         return keys
+
+    def effective_scale() -> float:
+        """The scale the strip last reported: a window too narrow for the
+        configured size steps the strip down a size."""
+        for ln in reversed(demo.find(f"STRIP model ")):
+            try:
+                data = json.loads(ln.split(" ", 2)[2])
+            except (IndexError, ValueError):
+                continue
+            if data.get("wid") == wid:
+                return float(data.get("scale", configured_scale))
+        return configured_scale
 
     def placed_ok(label: str) -> None:
         b, s, c = blocks(), w.rect(strip), w.client(game)
@@ -372,6 +389,7 @@ def run(args, chk: Check, procs) -> int:
         row_top = s[1] + b[("portrait", 0)][1] * dpr
         chk.ok(f"{label}: row centred on the client area",
                abs(row_centre - (c[0] + c[2] / 2.0)) <= 2.0, f"client {c} strip {s} dpr {dpr}")
+        size_scale = effective_scale()
         inset = ANCHOR_INSET * size_scale * dpr
         chk.ok(f"{label}: row top 10 px (scaled) inside the client area",
                abs(row_top - (c[1] + inset)) <= 2.0,
@@ -484,7 +502,9 @@ def run(args, chk: Check, procs) -> int:
     w.move(game, gr[0], gr[1], gr[2], gr[3])
     wait_for(lambda: demo.find("STRIP place", mark) and shown_state(mark), 4)
     time.sleep(0.3)
-    chk.ok("wide again: the name plate is back", ("name", 0) in blocks_after(mark))
+    back = wait_for(lambda: ("name", 0) in blocks_after(mark), 4)
+    chk.ok("wide again: the name plate is back", bool(back),
+           "" if back else "\n".join(demo.lines[mark:]))
 
     # 6. minimize and restore
     mark = len(demo.lines)
