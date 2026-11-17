@@ -22,6 +22,14 @@ from utils.widgets.grandstand.view import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _fresh_stamp(monkeypatch):
+    """Each test sees the startup line as if its view were the process's
+    first (the view emits it only when it changes)."""
+    import utils.widgets.grandstand.view as view
+    monkeypatch.setattr(view, "_last_stamp", None)
+
+
 def test_flag_defaults_off(monkeypatch):
     """Inside the suite: conftest pins the default off, so every test written
     before Grandstand became the default still means what it said."""
@@ -80,6 +88,29 @@ def test_init_emits_the_startup_stamp_to_stdout_too(qapp, capsys, monkeypatch):
     GrandstandView(LaunchParty(None))   # default log: a no-op lambda
     out = capsys.readouterr().out
     assert "[Grandstand] view active — TTMT_GRANDSTAND=1 (milestone 1)" in out
+
+
+def test_a_rebuilt_view_does_not_repeat_the_stamp(qapp, capsys, monkeypatch):
+    """The launcher rebuilds its view when the keyring probe finishes: one
+    line per process, not one per view, so a live check reads it once."""
+    monkeypatch.setenv("TTMT_GRANDSTAND", "1")
+    lines = []
+    GrandstandView(LaunchParty(None), log=lines.append)
+    GrandstandView(LaunchParty(None), log=lines.append)
+    stamps = [l for l in lines if l.startswith(STAMP_PREFIX)]
+    assert len(stamps) == 1
+    assert capsys.readouterr().out.count(STAMP_PREFIX) == 1
+
+
+def test_a_changed_stamp_is_emitted_again(qapp, capsys, monkeypatch):
+    """A different line means a different shell or launcher: say so."""
+    import utils.widgets.grandstand.view as view
+    lines = []
+    GrandstandView(LaunchParty(None), log=lines.append)
+    monkeypatch.setattr(view, "startup_stamp", lambda: f"{STAMP_PREFIX} — elsewhere")
+    GrandstandView(LaunchParty(None), log=lines.append)
+    stamps = [l for l in lines if l.startswith(STAMP_PREFIX)]
+    assert len(stamps) == 2 and stamps[1].endswith("elsewhere")
 
 
 def test_stack_fits_the_content_band(qapp):

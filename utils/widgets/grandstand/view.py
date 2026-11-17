@@ -97,6 +97,13 @@ def grandstand_enabled() -> bool:
     return GRANDSTAND_DEFAULT
 
 
+# The startup line this process last emitted. The launcher rebuilds its view
+# when the keyring probe finishes; the same line again only makes a live
+# check noisier, so a view emits it only when it says something new (a
+# different shell or launcher). Tests that look for it reset this to None.
+_last_stamp: str | None = None
+
+
 def startup_stamp() -> str:
     """The running-code line. It says how the view came to be mounted, so a
     reader of the log can tell an explicit switch from the shipped default.
@@ -175,9 +182,12 @@ class GrandstandView(QWidget):
         # LaunchTab.log routes to the Debug tab, which drops everything that
         # is not [Credentials] unless logging is switched on, so print it
         # plainly too — the way the sheet stamps and utils/toon_renders.py do.
+        global _last_stamp
         stamp = startup_stamp()
-        self._log(stamp)
-        print(stamp)
+        if stamp != _last_stamp:
+            _last_stamp = stamp
+            self._log(stamp)
+            print(stamp)
 
         self._party = party
         self._accounts_elsewhere = False
