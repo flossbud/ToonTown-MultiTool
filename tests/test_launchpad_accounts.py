@@ -739,7 +739,8 @@ def test_the_failed_card_is_drawn_with_a_red_border(stage, qapp):
     _reject(stage, "ttr", account_id)
     qapp.processEvents()
     failed = border_colour()
-    red = QColor("#d95757")
+    from utils.widgets.grandstand import palette
+    red = QColor(palette.fix_login(stage._is_dark())["card_border"])
     distance = (abs(failed.red() - red.red()) + abs(failed.green() - red.green())
                 + abs(failed.blue() - red.blue()))
     assert distance < 90, failed.name()
