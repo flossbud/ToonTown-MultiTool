@@ -131,6 +131,9 @@ class LaunchpadWindow(QMainWindow):
         avail_h = screen.availableGeometry().height() if screen else 0
         self.setGeometry(QRect(100, 100, 880, clamp_window_height(avail_h, target=860)))
         self.setMinimumWidth(820)
+        # Where _keep_on_screen last put the window (its client top-left);
+        # anywhere else means the user moved it.
+        self._placed_at: tuple[int, int] | None = None
 
         GameRegistry.instance()          # warm up before any launcher
         self.settings_manager = SettingsManager()
@@ -1051,8 +1054,42 @@ class LaunchpadWindow(QMainWindow):
         self._update_window_mask()
 
     def showEvent(self, event) -> None:
+        if not event.spontaneous():
+            self._keep_on_screen()
         super().showEvent(event)
         self._observe_window()
+
+    def _keep_on_screen(self) -> None:
+        """A show from hidden (the first one, or the lifecycle bringing the
+        window back) keeps the whole window inside the usable area of the
+        screen it opens on, so its bottom edge never sits under the taskbar.
+        A window that already fits stays exactly where it is, and only a
+        position this method chose is ever changed: once the user has moved
+        the window, it stays where they put it. Wayland gives a client no say
+        in where its window goes, and a maximized or full-screen window
+        belongs to the system."""
+        if QGuiApplication.platformName().startswith("wayland"):
+            return
+        if self.windowState() & (Qt.WindowMaximized | Qt.WindowFullScreen
+                                 | Qt.WindowMinimized):
+            return
+        here = self.geometry().topLeft()
+        if self._placed_at is not None and (here.x(), here.y()) != self._placed_at:
+            return
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is not None:
+            from utils.window_layout import position_inside
+            frame, area = self.frameGeometry(), screen.availableGeometry()
+            x, y = position_inside(
+                (frame.x(), frame.y(), frame.width(), frame.height()),
+                (area.x(), area.y(), area.width(), area.height()))
+            if (x, y) != (frame.x(), frame.y()):
+                self.move(self.x() + x - frame.x(), self.y() + y - frame.y())
+                print(f"[NextUI] window kept on screen: {frame.x()},{frame.y()} "
+                      f"{frame.width()}x{frame.height()} -> {x},{y} (usable "
+                      f"{area.x()},{area.y()} {area.width()}x{area.height()})")
+        here = self.geometry().topLeft()
+        self._placed_at = (here.x(), here.y())
 
     def hideEvent(self, event) -> None:
         super().hideEvent(event)
