@@ -1,6 +1,7 @@
 """The launchpad window: the launcher, a header, and sheets that slide over it.
 
-This is the app's main window when ``TTMT_NEXT_UI=1``. It builds the same
+This is the app's main window by default (``TTMT_NEXT_UI=0`` selects the
+classic window for one release, as an escape hatch). It builds the same
 services the classic window builds, with a headless ``ToonSession`` where
 that one has the Multitoon tab, hosts ``LaunchTab`` as its only page, and
 opens Accounts, Keysets and Settings as sheets from the header. The toons'
@@ -48,7 +49,9 @@ from utils.settings_keys import (
 from utils.widgets.launchpad import lifecycle
 
 NEXT_UI_ENV = "TTMT_NEXT_UI"
-STAMP = "[NextUI] launchpad window + float strips (TTMT_NEXT_UI=1)"
+STAMP = ("[NextUI] launchpad window + float strips "
+         "(default; TTMT_NEXT_UI=0 selects the classic window)")
+CLASSIC_STAMP = "[NextUI] classic window (TTMT_NEXT_UI=0)"
 
 _OPAQUE_MASK_CHROME = (
     sys.platform == "darwin" and os.environ.get("TTMT_OPAQUE_MASK_CHROME") == "1"
@@ -64,9 +67,10 @@ SHEET_IDENTITY = {name: identity for name, _label, identity, _glyph in SHEET_BUT
 
 
 def next_ui_enabled(environ=None) -> bool:
-    """Whether this run uses the launchpad window. Only an explicit "1"."""
+    """Whether this run uses the launchpad window: always, unless
+    TTMT_NEXT_UI is exactly "0" (the classic window, as an escape hatch)."""
     environ = os.environ if environ is None else environ
-    return environ.get(NEXT_UI_ENV, "").strip() == "1"
+    return environ.get(NEXT_UI_ENV, "").strip() != "0"
 
 
 def _quit_app() -> None:

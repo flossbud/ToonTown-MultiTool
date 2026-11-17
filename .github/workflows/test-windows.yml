@@ -46,6 +46,8 @@ jobs:
           $env:TTMT_NO_VENV_REEXEC = '1'
           # Keep this process the app: no relaunch as administrator.
           $env:TTMT_NO_ELEVATE = '1'
+          # Float UI lives in the classic window, now behind the escape hatch.
+          $env:TTMT_NEXT_UI = '0'
           $proc = Start-Process -FilePath python -ArgumentList 'main.py' -PassThru `
             -RedirectStandardOutput float-out.txt -RedirectStandardError float-err.txt
           Start-Sleep 25
@@ -60,6 +62,38 @@ jobs:
             throw 'Float smoke: startup float enter did not complete'
           }
           Write-Host 'FLOAT SMOKE OK'
+
+      # Launchpad smoke: the default window on a real Windows session. The
+      # running-code stamps are the oracle: the launchpad window, the
+      # headless session and the strips' attach mechanism each print once,
+      # and the strips' Win32 overlay backend selects.
+      - name: Launchpad smoke (source)
+        shell: pwsh
+        run: |
+          $cfg = "$env:RUNNER_TEMP\ttmt-launchpad-cfg"
+          New-Item -ItemType Directory -Force -Path $cfg | Out-Null
+          $env:TTMT_CONFIG_DIR = $cfg
+          $env:PYTHON_KEYRING_BACKEND = 'keyring.backends.null.Keyring'
+          $env:TTMT_OVERLAY_TRACE = '1'
+          $env:TTMT_NO_VENV_REEXEC = '1'
+          $env:TTMT_NO_ELEVATE = '1'
+          $proc = Start-Process -FilePath python -ArgumentList 'main.py' -PassThru `
+            -RedirectStandardOutput launchpad-out.txt -RedirectStandardError launchpad-err.txt
+          Start-Sleep 25
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          $o = if (Test-Path launchpad-out.txt) { Get-Content launchpad-out.txt -Raw } else { '' }
+          $e = if (Test-Path launchpad-err.txt) { Get-Content launchpad-err.txt -Raw } else { '' }
+          $out = "$o`n$e"
+          Write-Host "--- launchpad smoke output ---"
+          Write-Host $out
+          foreach ($stamp in @('[NextUI] launchpad window + float strips', '[ToonSession] core active', '[Strips] attach=')) {
+            if (-not $out.Contains($stamp)) { throw "Launchpad smoke: missing stamp: $stamp" }
+          }
+          if ($out -notmatch 'Win32OverlayBackend AVAILABLE') {
+            throw 'Launchpad smoke: Win32 overlay backend did not select'
+          }
+          if ($out -match 'Traceback') { throw 'Launchpad smoke: a traceback was printed' }
+          Write-Host 'LAUNCHPAD SMOKE OK'
 
       - name: Launch-test the packaged EXE
         shell: pwsh

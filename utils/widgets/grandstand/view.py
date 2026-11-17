@@ -107,10 +107,11 @@ _last_stamp: str | None = None
 def startup_stamp() -> str:
     """The running-code line. It says how the view came to be mounted, so a
     reader of the log can tell an explicit switch from the shipped default.
-    In the launchpad window (TTMT_NEXT_UI=1) the view is the only launcher
-    and TTMT_GRANDSTAND has no say, so the line says that instead."""
-    if os.environ.get(_NEXT_UI_FLAG, "").strip() == "1":
-        how = f"launchpad window ({_NEXT_UI_FLAG}=1), the only launcher there"
+    In the launchpad window (the default; TTMT_NEXT_UI=0 selects the classic
+    window) the view is the only launcher and TTMT_GRANDSTAND has no say,
+    so the line says that instead."""
+    if os.environ.get(_NEXT_UI_FLAG, "").strip() != "0":
+        how = "launchpad window, the only launcher there"
     elif os.environ.get(_FLAG, "").strip() == "1":
         how = f"{_FLAG}=1"
     else:

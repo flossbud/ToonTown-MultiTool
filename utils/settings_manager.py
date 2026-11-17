@@ -13,7 +13,6 @@ class SettingsManager:
         self.settings_path = os.path.join(config_dir, "settings.json")
         self.settings = {
             "show_debug_tab":        False,
-            "show_diagnostics_tab":  False,
             "keep_alive_enabled":    False,
             "keep_alive_action":     "jump",
             "keep_alive_delay":      "30 sec",
@@ -24,7 +23,6 @@ class SettingsManager:
             "active_profile":        -1,
             "reduce_motion":                 False,
             "reduce_motion_set_explicitly":  False,
-            "advanced_collapsed":            True,
             "launch_section_ttr_collapsed":  False,
             "launch_section_cc_collapsed":   False,
             "macos_permissions_onboarding_shown": False,

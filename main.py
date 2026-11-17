@@ -140,11 +140,8 @@ from PySide6.QtCore import QRect, Qt, QSize, QEvent, Signal, Slot, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QIcon
 
 # === Internal Imports ===
-from tabs.multitoon_tab import MultitoonTab
-from tabs.launch_tab import LaunchTab
-from tabs.settings_tab import SettingsTab
-from tabs.credits_tab import CreditsTab
-from tabs.debug_tab import DebugTab
+# The classic window's tabs are imported in MultiToonTool.__init__, so a
+# launchpad start (the default) does not load them.
 from utils.version import APP_VERSION
 from utils.settings_manager import SettingsManager
 import utils.ttr_api as ttr_api
@@ -317,6 +314,11 @@ class MultiToonTool(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        from tabs.credits_tab import CreditsTab
+        from tabs.debug_tab import DebugTab
+        from tabs.launch_tab import LaunchTab
+        from tabs.multitoon_tab import MultitoonTab
+        from tabs.settings_tab import SettingsTab
 
         # One-time-per-launch gate for the Keep-Alive sleep warning dialog.
         self._sleep_warning_shown = False
@@ -2080,12 +2082,13 @@ def _wire_app_lifecycle(app: QApplication, window: MultiToonTool) -> None:
 
 
 def _main_window_class():
-    """The app's main window class for this run: the launchpad window when
-    TTMT_NEXT_UI=1, otherwise the window the app has always had."""
-    from utils.launchpad_window import next_ui_enabled
+    """The app's main window class for this run: the launchpad window, or
+    the classic window when TTMT_NEXT_UI=0 (the escape hatch)."""
+    from utils.launchpad_window import CLASSIC_STAMP, next_ui_enabled
     if next_ui_enabled():
         from utils.launchpad_window import LaunchpadWindow
         return LaunchpadWindow
+    print(CLASSIC_STAMP)
     return MultiToonTool
 
 
