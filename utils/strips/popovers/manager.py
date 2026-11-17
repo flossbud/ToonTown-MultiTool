@@ -93,6 +93,7 @@ class StripPopovers(QObject):
         for wid in list(self._entries):
             self.detach_strip(wid)
         self._watch.shutdown()
+        self._follower.remove_companion(self._own_ids, self._sweep, self._refresh_presentation)
 
     def set_style(self, name: str) -> None:
         for wid, entry in self._entries.items():

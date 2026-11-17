@@ -256,7 +256,7 @@ class StripSurface(QWidget):
         # Paints nothing itself; the first paint after a map is the proof
         # the window is really mapped, so the tie can land.
         if not self._attached:
-            QTimer.singleShot(0, self._after_map)
+            QTimer.singleShot(0, self, self._after_map)
 
     def _after_map(self) -> None:
         if self._attached or not self.isVisible():
@@ -293,7 +293,7 @@ class StripSurface(QWidget):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         if event.spontaneous() and self._attached:
-            QTimer.singleShot(0, self._reassert)
+            QTimer.singleShot(0, self, self._reassert)
 
     def _reassert(self) -> None:
         """Mapped again by the window manager: restack over the game window

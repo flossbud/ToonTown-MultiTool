@@ -6,6 +6,7 @@ window through the follower, and turns clicks back into session calls.
 """
 from __future__ import annotations
 
+import weakref
 from typing import Callable
 
 from PySide6.QtCore import QObject, Signal
@@ -213,6 +214,8 @@ class StripController(QObject):
         utils/strips/launcher_port.py); without one "Launch accounts" asks
         the shell for the full launcher instead."""
         super().__init__(parent)
+        self._connections = []
+        self._closed = False
         self._session = session
         self._keymap_manager = keymap_manager
         self._settings = settings_manager
@@ -226,7 +229,7 @@ class StripController(QObject):
             self._portraits = PortraitProvider(
                 customizations=session.customizations, parent=self)
             self._portrait_fn = self._portraits.pixmap
-            self._portraits.changed.connect(self._portrait_changed)
+            self._connect(self._portraits.changed, self._portrait_changed)
         if style is None:
             style = self._style_from_settings()
         if size is None:
@@ -245,14 +248,14 @@ class StripController(QObject):
         self._launcher = launcher
         if launcher is not None:
             try:
-                launcher.changed.connect(self._refresh_home_panel)
+                self._connect(launcher.changed, self._refresh_home_panel)
             except Exception:
                 pass
-        self._popovers.opened.connect(self._popover_opened)
-        self._popovers.closed.connect(self._popover_closed)
-        self._popovers.lock_toggled.connect(self._toggle_lock)
-        self._popovers.menu_chosen.connect(self._on_menu)
-        self._keymaps_changed.connect(self._refresh_editors)
+        self._connect(self._popovers.opened, self._popover_opened)
+        self._connect(self._popovers.closed, self._popover_closed)
+        self._connect(self._popovers.lock_toggled, self._toggle_lock)
+        self._connect(self._popovers.menu_chosen, self._on_menu)
+        self._connect(self._keymaps_changed, self._refresh_editors)
         self._wired: set[str] = set()
         self._editor_targets: dict[str, str] = {}
         self._home_wid: str | None = None
@@ -260,26 +263,48 @@ class StripController(QObject):
         self._started = False
         self._user_hidden = False
 
-        session.toons_changed.connect(self._sync)
-        session.toon_changed.connect(self._refresh_one)
-        session.running_changed.connect(lambda _on: self._refresh_all())
-        session.running_changed.connect(lambda _on: self._refresh_home_panel())
-        session.features_changed.connect(self._refresh_all)
+        self._connect(session.toons_changed, self._sync)
+        self._connect(session.toon_changed, self._refresh_one)
+        self._connect(session.running_changed, self._on_running_changed)
+        self._connect(session.features_changed, self._refresh_all)
         # Membership of the click-sync group, or its error, changed: any
         # strip's Click Sync block may read differently.
         changed = getattr(session, "click_sync_state_changed", None)
         if changed is not None:
-            changed.connect(self._refresh_all)
+            self._connect(changed, self._refresh_all)
         # The keymap manager calls back on whatever thread edited it.
-        self._keymaps_changed.connect(self._refresh_all)
+        self._connect(self._keymaps_changed, self._refresh_all)
         if keymap_manager is not None:
-            keymap_manager.on_change(self._keymaps_changed.emit)
-        self._style_changed.connect(self.set_style)
-        self._size_changed.connect(self.set_size)
+            keymap_manager.on_change(self._weak_callback("_notify_keymaps_changed"))
+        self._connect(self._style_changed, self.set_style)
+        self._connect(self._size_changed, self.set_size)
         if settings_manager is not None:
-            settings_manager.on_change(self._on_setting)
+            settings_manager.on_change(self._weak_callback("_on_setting"))
 
     # -- lifecycle ----------------------------------------------------------
+
+    def _connect(self, signal, slot) -> None:
+        self._connections.append(signal.connect(slot))
+
+    def _weak_callback(self, method: str):
+        # Plain callback registries have no per-listener unsubscribe. Keep
+        # their entries inert after shutdown without retaining this object.
+        reference = weakref.ref(self)
+        def notify(*args):
+            controller = reference()
+            if controller is not None and not controller._closed:
+                try:
+                    getattr(controller, method)(*args)
+                except RuntimeError:
+                    pass       # the native QObject has already been deleted
+        return notify
+
+    def _notify_keymaps_changed(self) -> None:
+        self._keymaps_changed.emit()
+
+    def _on_running_changed(self, _on: bool) -> None:
+        self._refresh_all()
+        self._refresh_home_panel()
 
     @property
     def follower(self) -> StripFollower:
@@ -290,7 +315,7 @@ class StripController(QObject):
         return self._keysets
 
     def start(self) -> None:
-        if self._started:
+        if self._started or self._closed:
             return
         self._started = True
         self._sync()
@@ -305,10 +330,24 @@ class StripController(QObject):
         return self._ghost_clicks
 
     def shutdown(self) -> None:
+        """Release surfaces and subscriptions; a new controller starts a new lifetime."""
+        if self._closed:
+            return
+        self._closed = True
         self._started = False
         self._popovers.shutdown()
         self._follower.shutdown()
+        self._ghost_clicks.shutdown()
+        if self._portraits is not None:
+            self._portraits.shutdown()
+        for connection in self._connections:
+            try:
+                QObject.disconnect(connection)
+            except (RuntimeError, TypeError):
+                pass
+        self._connections.clear()
         self._wired.clear()
+        self._editor_targets.clear()
         self._home_wid = None
 
     def user_hidden(self) -> bool:
@@ -318,6 +357,8 @@ class StripController(QObject):
         self.set_user_hidden(not self._user_hidden)
 
     def set_user_hidden(self, hidden: bool) -> None:
+        if self._closed:
+            return
         hidden = bool(hidden)
         if hidden == self._user_hidden:
             return
@@ -358,12 +399,16 @@ class StripController(QObject):
             self._size_changed.emit(settings_keys.normalize_float_strip_size(value))
 
     def set_style(self, name: str) -> None:
+        if self._closed:
+            return
         self._follower.set_style(name)
         self._popovers.set_style(tokens.style_for(name).name)
 
     def set_size(self, name: str) -> None:
         """Every strip, and whatever hangs off it, at a new size. Open menus
         and cards were laid out for the old one: they close first."""
+        if self._closed:
+            return
         self._popovers.close_all()
         self._follower.set_size(name)
         self._popovers.rescale()
@@ -416,15 +461,15 @@ class StripController(QObject):
     def _wire(self, wid: str, surface) -> None:
         strip = surface.strip
         self._popovers.attach_strip(wid)
-        strip.clicked.connect(lambda kind, n, wid=wid: self._on_click(wid, kind, n))
-        strip.context_requested.connect(
+        self._connect(strip.clicked, lambda kind, n, wid=wid: self._on_click(wid, kind, n))
+        self._connect(strip.context_requested,
             lambda kind, n, wid=wid: self._on_context(wid, kind, n))
-        strip.hover_changed.connect(
+        self._connect(strip.hover_changed,
             lambda kind, _n, wid=wid: self._popovers.set_identity_hover(
                 wid, kind in (L.PORTRAIT, L.NAME)))
         # The narrow collapse is decided when the strip is placed, and the
         # counters carry the name once the plate is gone.
-        surface.geometry_applied.connect(lambda wid=wid: self._refresh_counters(wid))
+        self._connect(surface.geometry_applied, lambda wid=wid: self._refresh_counters(wid))
 
     def model_for(self, window_id: str) -> StripModel | None:
         toon = self._session.toon(window_id)
@@ -458,6 +503,8 @@ class StripController(QObject):
         )
 
     def _refresh_one(self, window_id: str) -> None:
+        if self._closed:
+            return
         surface = self._follower.surface(window_id)
         model = self.model_for(window_id)
         if surface is not None and model is not None:
@@ -544,11 +591,11 @@ class StripController(QObject):
                           running=self._session.is_running(),
                           accounts=read_accounts(self._launcher),
                           can_launch=self._launcher is not None)
-        panel.row_chosen.connect(lambda key, wid=wid: self._home_row(wid, key))
-        panel.launch_requested.connect(self._launch_account)
-        panel.full_launcher_requested.connect(
+        self._connect(panel.row_chosen, lambda key, wid=wid: self._home_row(wid, key))
+        self._connect(panel.launch_requested, self._launch_account)
+        self._connect(panel.full_launcher_requested,
             lambda wid=wid: self._leave_for(wid, WINDOW_LAUNCHER))
-        panel.view_changed.connect(lambda _view, wid=wid: self._popovers.refit(wid))
+        self._connect(panel.view_changed, lambda _view, wid=wid: self._popovers.refit(wid))
         if self._popovers.open_card(wid, "home", L.HOME, 0, panel, align=LEFT) is None:
             return None
         return panel
@@ -705,11 +752,11 @@ class StripController(QObject):
             if entry is not None and entry[0] == set_id and not entry[2]:
                 km.update_set_key_by_id(game, set_id, action, key)
 
-        card.bind_requested.connect(bind)
-        card.layout_changed.connect(lambda kind, wid=wid: self._editor_kind_changed(wid, kind))
-        card.close_requested.connect(lambda wid=wid: self._popovers.close(wid))
+        self._connect(card.bind_requested, bind)
+        self._connect(card.layout_changed, lambda kind, wid=wid: self._editor_kind_changed(wid, kind))
+        self._connect(card.close_requested, lambda wid=wid: self._popovers.close(wid))
         # While the card waits for a key, Escape belongs to the capture.
-        card.capture_changed.connect(self._popovers.watch.pause_escape)
+        self._connect(card.capture_changed, self._popovers.watch.pause_escape)
         if self._popovers.open_card(wid, f"edit:{number}", L.KEYSET, number, card) is None:
             return None
         self._editor_targets[wid] = set_id
