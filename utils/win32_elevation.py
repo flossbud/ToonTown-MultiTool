@@ -23,6 +23,11 @@ _ENV_FORWARD_PREFIX = "TTMT_"
 _ENV_NOT_FORWARDED = {"TTMT_UI_SCALE_ACTIVE"}
 _ENV_PARAM_MAX_CHARS = 8000
 
+# The process that started the elevated copy, so the copy can tell its
+# predecessor (still exiting, still holding the single-copy lock) from any
+# other running copy. See utils/instance_guard.py.
+HANDOVER_FLAG = "--handover-from"
+
 # One-shot/internal modes that must NOT be forwarded into the relaunched GUI.
 _ONE_SHOT_FLAGS = {"--self-check", "--self-check-keyring", "--apply-installer-config"}
 # Flags that consume a following value (so we drop the value too).
@@ -41,7 +46,7 @@ def build_relaunch_params(argv) -> list:
     while i < n:
         tok = argv[i]
         base = tok.split("=", 1)[0]
-        if base == ENV_FORWARD_FLAG:
+        if base in (ENV_FORWARD_FLAG, HANDOVER_FLAG):
             i += 1              # a stale copy; the caller adds a fresh one
             continue
         if base in _ONE_SHOT_FLAGS:
@@ -102,6 +107,7 @@ def _relaunch_params(user_argv, environ) -> list:
     forwarded = env_forward_param(environ)
     if forwarded:
         params.append(forwarded)
+    params.append(f"{HANDOVER_FLAG}={os.getpid()}")
     return params
 
 
@@ -118,6 +124,8 @@ def _relaunch_params(user_argv, environ) -> list:
 NO_ELEVATE_ENV = "TTMT_NO_ELEVATE"
 # Helper and one-shot modes: never the interactive app, never prompt.
 _NO_PROMPT_FLAGS = _ONE_SHOT_FLAGS | {"--ghost-renderer"}
+# The same modes never open a window (the single-copy guard skips them too).
+NO_WINDOW_FLAGS = frozenset(_NO_PROMPT_FLAGS)
 
 ELEVATED = "elevated"        # already running as administrator
 PROMPT = "prompt"            # decision only: go and ask

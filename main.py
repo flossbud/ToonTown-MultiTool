@@ -2365,15 +2365,37 @@ def _show_or_float_at_startup(window, *, settings, env, _show=None) -> None:
     window._maybe_enter_float_mode_at_startup()
 
 
+def _show_for_another_start(window) -> None:
+    """Another start of the app asked this copy for its window. The
+    launchpad window comes back as it was left, from hidden or minimized.
+    The classic window is raised if it is up; in Float UI the overlay owns
+    the screen and the window stays as it is."""
+    show_for = getattr(window, "show_for", None)
+    if show_for is not None:
+        from utils.widgets.launchpad import lifecycle
+        show_for(lifecycle.CURRENT)
+        return
+    if window.isVisible():
+        if window.isMinimized():
+            window.showNormal()
+        window.raise_()
+        window.activateWindow()
+
+
 if __name__ == "__main__":
-    # Windows: ask for administrator access on every launch, before anything
-    # else starts. If it is granted the elevated copy takes over and this
-    # process is done; if it is declined we carry on and show the warning
-    # banner. Helper and one-shot modes never ask.
+    # One copy per user and config directory: a start that finds one running
+    # asks it to show its window and exits (utils/instance_guard.py). Then,
+    # on Windows, ask for administrator access before anything else starts.
+    # If it is granted the elevated copy takes over (and the lock) and this
+    # process is done; if it is declined we carry on, holding the lock, and
+    # show the warning banner. Helper and one-shot modes skip both.
+    from utils import instance_guard as _instance_guard
     from utils import win32_elevation as _win32_elevation
-    _elevation = _win32_elevation.elevate_at_startup()
-    if _elevation.state == _win32_elevation.RELAUNCHED:
-        sys.exit(0)
+    _startup = _instance_guard.run_startup(
+        sys.argv[1:], _win32_elevation.elevate_at_startup)
+    if _startup.exit_code is not None:
+        sys.exit(_startup.exit_code)
+    _elevation, _guard = _startup.elevation, _startup.guard
 
     # Fit the fixed-size design onto small screens (a 1080p laptop at 150%
     # has only 720 logical pixels of height; the window needs ~860). Qt reads
@@ -2427,6 +2449,8 @@ if __name__ == "__main__":
         QGuiApplication.setDesktopFileName(desktop_file_name)
     app = QApplication(sys.argv)
     release_qt_env()
+    if _guard is not None:
+        _guard.listen()             # later starts ask this copy for its window
     print(_ui_scale.stamp())
     if sys.platform == "win32":
         print(_elevation.stamp())
@@ -2493,6 +2517,8 @@ if __name__ == "__main__":
     settings = SettingsManager()
     apply_theme(app, resolve_theme(settings))
     window = _main_window_class()()
+    if _guard is not None:
+        _guard.on_show(lambda: _show_for_another_start(window))
     window.log(_ui_scale.stamp())
     if sys.platform == "win32":
         window.log(_elevation.stamp())
@@ -2558,4 +2584,7 @@ if __name__ == "__main__":
     # Fire the multi-install picker on a 0-delay timer so Qt has finished
     # processing the show event before any modal dialog steals focus.
     QTimer.singleShot(0, lambda: _maybe_prompt_for_cc_install(window, window.settings_manager))
-    sys.exit(app.exec())
+    _exit_code = app.exec()
+    if _guard is not None:
+        _guard.release()
+    sys.exit(_exit_code)
