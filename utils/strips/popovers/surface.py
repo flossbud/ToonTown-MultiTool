@@ -102,7 +102,7 @@ class PopoverSurface(QWidget):
 
     def paintEvent(self, _event) -> None:
         if not self._attached:
-            QTimer.singleShot(0, self._after_map)
+            QTimer.singleShot(0, self, self._after_map)
 
     def _after_map(self) -> None:
         if self._attached or self._gone or not self.isVisible():
@@ -127,7 +127,7 @@ class PopoverSurface(QWidget):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         if event.spontaneous() and self._attached:
-            QTimer.singleShot(0, self._restack)
+            QTimer.singleShot(0, self, self._restack)
 
     def _restack(self) -> None:
         if self._gone or not self.isVisible():

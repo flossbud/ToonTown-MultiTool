@@ -208,6 +208,16 @@ class StripFollower(QObject):
         if refresh_fn is not None:
             self._extra_refresh.append(refresh_fn)
 
+    def remove_companion(self, own_ids_fn, sweep_fn, refresh_fn=None) -> None:
+        """Release callbacks owned by a companion that has shut down."""
+        for callbacks, fn in ((self._extra_own, own_ids_fn),
+                              (self._extra_sweeps, sweep_fn),
+                              (self._extra_refresh, refresh_fn)):
+            try:
+                callbacks.remove(fn)
+            except ValueError:
+                pass
+
     # -- tracker ------------------------------------------------------------
 
     def _on_place(self, wid: str, rect) -> None:

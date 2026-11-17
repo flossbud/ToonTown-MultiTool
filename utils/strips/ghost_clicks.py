@@ -21,11 +21,23 @@ class GhostClicks(QObject):
         super().__init__(parent)
         self._controller = controller
         self._settings = settings
+        self._connection = None
         if service is not None:
             # Emitted on a capture thread: Qt queues it to this object's thread.
-            service.ghost_pointer_event.connect(self.on_ghost_event)
+            self._connection = service.ghost_pointer_event.connect(self.on_ghost_event)
+
+    def shutdown(self) -> None:
+        if self._connection is not None:
+            try:
+                QObject.disconnect(self._connection)
+            except (RuntimeError, TypeError):
+                pass
+            self._connection = None
+        self._controller = None
 
     def enabled(self) -> bool:
+        if self._controller is None:
+            return False
         s = self._settings
         if s is None:
             return False
@@ -64,6 +76,8 @@ class GhostClicks(QObject):
     def press(self, slot: int, point: QPoint) -> bool:
         """Press whatever block of the strip in `slot` lies under a global
         point. True when something took the click."""
+        if self._controller is None:
+            return False
         wid = self._controller.window_for_slot(slot)
         if wid is None:
             return False

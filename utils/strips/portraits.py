@@ -31,6 +31,8 @@ class PortraitProvider(QObject):
         self._customizations = customizations
         self._cache: dict[tuple[str, str], object] = {}
         self._wired = False
+        self._connections = []
+        self._closed = False
 
     def _store(self):
         if self._renders is None:
@@ -38,12 +40,26 @@ class PortraitProvider(QObject):
             self._renders = ToonRenders.instance()
         if not self._wired:
             self._wired = True
-            self._renders.render_landed.connect(
-                lambda game, name, _pose: self._invalidate(game, name))
-            self._renders.set_promoted.connect(self._invalidate)
+            self._connections.append(self._renders.render_landed.connect(self._render_landed))
+            self._connections.append(self._renders.set_promoted.connect(self._invalidate))
         return self._renders
 
+    def _render_landed(self, game: str, name: str, _pose: str) -> None:
+        self._invalidate(game, name)
+
+    def shutdown(self) -> None:
+        self._closed = True
+        for connection in self._connections:
+            try:
+                QObject.disconnect(connection)
+            except (RuntimeError, TypeError):
+                pass
+        self._connections.clear()
+        self._cache.clear()
+
     def _invalidate(self, game: str, name: str) -> None:
+        if self._closed:
+            return
         self._cache.pop((game, name), None)
         self.changed.emit(game, name)
 
@@ -74,7 +90,7 @@ class PortraitProvider(QObject):
 
     def pixmap(self, toon) -> QPixmap | None:
         """The portrait for a ToonState, or None for the silhouette."""
-        if not toon.name or toon.game != "ttr" or not toon.dna:
+        if self._closed or not toon.name or toon.game != "ttr" or not toon.dna:
             return None
         key = (toon.game, toon.name)
         hit = self._cache.get(key, _MISSING)
