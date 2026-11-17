@@ -218,7 +218,9 @@ class StripPopovers(QObject):
         if not self._wants_counters(wid, entry):
             if entry.counters_surface is not None:
                 was = not entry.counters_surface._concealed
-                entry.counters_surface.conceal()
+                strip = self._follower.surface(wid)
+                entry.counters_surface.conceal(
+                    immediate=strip is None or not strip.is_presented())
                 if was:
                     self.counters_changed.emit(wid, False)
             return
@@ -232,7 +234,7 @@ class StripPopovers(QObject):
                 lambda on, wid=wid: self._counters_hover(wid, on))
             entry.counters_view = view
             entry.counters_surface = PopoverSurface(
-                surface.strategy, surface.backend, view)
+                surface.strategy, surface.backend, view, fade=True)
         entry.counters_view.set_style(surface.strip.style_name())
         entry.counters_view.set_model(entry.counters_model)
         was = not entry.counters_surface._concealed
