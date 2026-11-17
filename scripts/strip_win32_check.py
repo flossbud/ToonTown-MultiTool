@@ -28,12 +28,17 @@ from __future__ import annotations
 import argparse
 import ctypes
 import os
+import re
 import subprocess
 import sys
 import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(HERE))
+from utils import settings_keys
+
+ANCHOR_INSET = 10.0  # utils.strips.strip_surface.ANCHOR_INSET, logical px
 
 WS_EX_TOPMOST = 0x00000008
 WS_EX_TRANSPARENT = 0x00000020
@@ -172,10 +177,13 @@ class WinSide:
         region's bounding box (x, y, w, h), window-local; (0, 0, 0, 0) for an
         empty region."""
         import win32gui
-        rgn = win32gui.CreateRectRgn(0, 0, 0, 0)
+        rgn = win32gui.CreateRectRgnIndirect((0, 0, 0, 0))
         try:
-            kind = win32gui.GetWindowRgn(hwnd, rgn)
-            if kind == 0:                  # ERROR: no region set
+            try:
+                kind = win32gui.GetWindowRgn(hwnd, rgn)
+            except win32gui.error:         # ERROR: no region set (pywin32 raises)
+                return None
+            if kind == 0:
                 return None
             if kind == 1:                  # NULLREGION
                 return (0, 0, 0, 0)
@@ -324,6 +332,8 @@ def run(args, chk: Check, procs) -> int:
     chk.say("STAMP: " + stamp[0])
     chk.ok("attach is the Windows topmost-and-gate strategy",
            "attach=win32-topmost-gate" in stamp[0])
+    size = re.search(r"size=(\w+)", stamp[0])
+    size_scale = settings_keys.float_strip_size_factor(size.group(1)) if size else 1.0
     surf = wait_for(lambda: demo.find("STRIP surface"), 5)
     strip = int(surf[0].split()[3])
 
@@ -362,9 +372,11 @@ def run(args, chk: Check, procs) -> int:
         row_top = s[1] + b[("portrait", 0)][1] * dpr
         chk.ok(f"{label}: row centred on the client area",
                abs(row_centre - (c[0] + c[2] / 2.0)) <= 2.0, f"client {c} strip {s} dpr {dpr}")
+        inset = ANCHOR_INSET * size_scale * dpr
         chk.ok(f"{label}: row top 10 px (scaled) inside the client area",
-               abs(row_top - (c[1] + 10 * dpr)) <= 2.0,
-               f"row top {row_top:.1f} client top {c[1]} dpr {dpr}")
+               abs(row_top - (c[1] + inset)) <= 2.0,
+               f"row top {row_top:.1f} client top {c[1]} inset {inset:g} "
+               f"(size scale {size_scale:g}, dpr {dpr})")
 
     # 1. placement and window styles
     chk.ok("strip placed and shown",
