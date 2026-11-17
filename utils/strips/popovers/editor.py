@@ -40,6 +40,7 @@ KEY = 18.0
 KEY_GAP = 2.0
 CONFLICT = "#e05252"
 CONFLICT_INK = "#ff9a9a"
+LOCKED_NOTE = "These are the game's own keys. Change them in the game's options."
 
 # Printed names short enough for an 18 px keycap.
 SHORT_NAMES = {
@@ -99,6 +100,7 @@ class EditorModel:
     binds: tuple              # ((action, key), ...)
     conflicts: frozenset = frozenset()   # actions sharing a key inside this set
     note: str = ""            # one line about a conflict, or nothing
+    read_only: bool = False   # the game's imported keys, not a user's input set
 
     def key_of(self, action: str) -> str:
         return dict(self.binds).get(action, "")
@@ -149,6 +151,10 @@ class KeysetEditor(QWidget):
             return
         self._model = model
         self._colour = tokens.set_color(model.number)
+        if model.read_only:
+            self.cancel_capture()
+            self._hover = None
+            self.setCursor(Qt.ArrowCursor)
         known = [a for a, _label in model.actions]
         if self._selected not in known:
             self._selected = known[0] if known else ""
@@ -185,7 +191,7 @@ class KeysetEditor(QWidget):
     # -- capture: the one time the card takes the keyboard --------------------
 
     def begin_capture(self, action: str) -> None:
-        if self._listening == action:
+        if self._model.read_only or self._listening == action:
             return
         self.cancel_capture()
         previous = QWidget.keyboardGrabber()
@@ -214,6 +220,10 @@ class KeysetEditor(QWidget):
         self._relayout()
 
     def keyPressEvent(self, event) -> None:
+        if self._model.read_only:
+            self.cancel_capture()
+            event.ignore()
+            return
         if not self._listening:
             event.ignore()
             return
@@ -320,8 +330,15 @@ class KeysetEditor(QWidget):
             self._hint_rect = QRectF(inner_l, y, inner_w, hint_h)
             y += hint_h
         self._note_rect = QRectF()
-        if m.note:
-            note_h = QFontMetricsF(fonts["hint"]).height()
+        self._note_text = LOCKED_NOTE if m.read_only else m.note
+        self._note_flags = Qt.AlignLeft | Qt.AlignVCenter
+        if self._note_text:
+            fm = QFontMetricsF(fonts["hint"])
+            note_h = fm.height()
+            if m.read_only:
+                self._note_flags |= Qt.TextWordWrap
+                note_h = fm.boundingRect(QRectF(0, 0, inner_w, 1000),
+                                        self._note_flags, self._note_text).height()
             y += 6.0
             self._note_rect = QRectF(inner_l, y, inner_w, note_h)
             y += note_h
@@ -439,12 +456,17 @@ class KeysetEditor(QWidget):
             self._paint_list(p, fonts, white)
         else:
             self._paint_keys(p, fonts, white)
-        if m.note:
-            paint._text(p, self._note_rect, m.note, fonts["hint"], QColor(CONFLICT_INK),
-                        Qt.AlignLeft | Qt.AlignVCenter)
+        if self._note_text:
+            ink = QColor("#999999" if m.read_only else CONFLICT_INK)
+            p.setFont(fonts["hint"])
+            p.setPen(ink)
+            p.drawText(self._note_rect, int(self._note_flags), self._note_text)
         p.restore()
 
     def _cap(self, p, rect, text, font, hot: bool, conflict: bool, hover: bool):
+        p.save()
+        if self._model.read_only:
+            p.setOpacity(0.45)
         c = self._colour
         if hot:
             fill, edge, ink = QColor(c), QColor(lt(c, 70)), QColor("#ffffff")
@@ -459,6 +481,7 @@ class KeysetEditor(QWidget):
             p.fillPath(path, paint.HOVER_VEIL)
         paint._border(p, paint.rounded, rect, 4.0, 1.0, edge)
         paint._text(p, rect, text, font, ink)
+        p.restore()
 
     def _paint_list(self, p, fonts, white) -> None:
         m = self._model
@@ -495,6 +518,9 @@ class KeysetEditor(QWidget):
             paint._text(p, rect, labels.get(action, action), fonts["chip"], ink)
         selected_key = m.key_of(self._selected)
         bound = {key for _a, key in m.binds if key}
+        p.save()
+        if m.read_only:
+            p.setOpacity(0.45)
         for code, label, rect in self._keys:
             hot = bool(selected_key) and code == selected_key
             path = paint.rounded(rect, 4.0)
@@ -510,6 +536,7 @@ class KeysetEditor(QWidget):
             paint._border(p, paint.rounded, rect, 4.0, 1.0, edge)
             if label:
                 paint._text(p, rect, label, fonts["key"], white)
+        p.restore()
         # "<Action> is <key> . click a key to rebind"
         fm = QFontMetricsF(fonts["hint"])
         mono_fm = QFontMetricsF(fonts["cap"])
@@ -522,6 +549,8 @@ class KeysetEditor(QWidget):
         key_text = key_name(selected_key)
         paint._text(p, QRectF(x, r.top(), r.width(), r.height()), key_text,
                     fonts["cap"], white, flags)
+        if m.read_only:
+            return
         x += mono_fm.horizontalAdvance(key_text)
         paint._text(p, QRectF(x, r.top(), r.width(), r.height()),
                     " · click a key to rebind", fonts["hint"],
@@ -534,6 +563,8 @@ class KeysetEditor(QWidget):
         x, y = pos.x() / k, pos.y() / k
         for zone, rect in self._zones:
             if rect.contains(x, y):
+                if self._model.read_only and zone[0] in ("cap", "key"):
+                    return None
                 return zone
         return None
 

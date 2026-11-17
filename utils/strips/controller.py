@@ -25,6 +25,7 @@ from utils.strips.popovers.home import HomePanel
 from utils.strips.popovers.placement import LEFT
 from utils.strips.popovers.manager import IDENTITY, StripPopovers
 from utils.strips.popovers.menu import MenuItem
+from utils.widgets.keysets import rules as keyset_rules
 
 # Where the shell should take the user when a strip asks for the window.
 WINDOW_MAIN = "main"
@@ -135,7 +136,8 @@ def build_counters(toon, *, collapsed: bool, today=None) -> CountersModel:
     )
 
 
-def build_editor_model(keymap_manager, game: str, number: int) -> EditorModel | None:
+def build_editor_model(keymap_manager, game: str, number: int, *,
+                       settings_manager=None) -> EditorModel | None:
     """What the editor shows for keyset `number` of `game`: its actions in
     the game's own order, their keys, and any key shared by two actions."""
     try:
@@ -187,6 +189,7 @@ def build_editor_model(keymap_manager, game: str, number: int) -> EditorModel | 
         binds=binds,
         conflicts=frozenset(a for _key, acts in clashing for a in acts),
         note=note,
+        read_only=index == 0 and keyset_rules.default_set_locked(game, settings_manager),
     )
 
 
@@ -736,7 +739,7 @@ class StripController(QObject):
         km = self._keymap_manager
         if toon is None or surface is None or km is None:
             return None
-        model = build_editor_model(km, toon.game, number)
+        model = build_editor_model(km, toon.game, number, settings_manager=self._settings)
         set_id = self._keysets.id_for(toon.game, number)
         if model is None or set_id is None:
             return None
@@ -747,6 +750,11 @@ class StripController(QObject):
             # A notification may still be queued after another thread edits
             # the library. Never write through the number the card opened on.
             if self._popovers.open_content(wid) is not card:
+                return
+            # The first library set is the game's imported destination keys,
+            # independent of which set this toon currently uses as input.
+            if card.model().read_only or (number == 1 and
+                    keyset_rules.default_set_locked(game, self._settings)):
                 return
             entry = self._keysets.entry_for_number(game, number)
             if entry is not None and entry[0] == set_id and not entry[2]:
@@ -784,7 +792,8 @@ class StripController(QObject):
             card = self._popovers.open_content(wid)
             toon = self._session.toon(wid)
             number = int(tag.split(":", 1)[1])
-            model = (build_editor_model(self._keymap_manager, toon.game, number)
+            model = (build_editor_model(self._keymap_manager, toon.game, number,
+                                        settings_manager=self._settings)
                      if toon is not None else None)
             visible = toon is not None and number in self._keysets.visible_numbers(toon.game)
             same_target = (toon is not None and self._keysets.id_for(toon.game, number)

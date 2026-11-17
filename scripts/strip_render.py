@@ -11,6 +11,8 @@ from the top, the way the spec sheet shows it.
 Besides one PNG per state it writes <style>-sizes.png: the strip at small,
 medium and large over a bright sky, grass and a dark scene, which is where
 the drop shadow and the pixel grid show.
+<style>-editor-locked.png shows the read-only game keys in both editor
+layouts at all three sizes, mounted in their real popover surface.
 
 --scale     device pixel ratio of the renders (default 1, the screenshots' ratio)
 --size      strip size of the per-state renders: small (default, the size
@@ -48,11 +50,16 @@ from PySide6.QtGui import (QColor, QFontDatabase, QImage,          # noqa: E402
                            QPainter)
 from PySide6.QtWidgets import QApplication, QWidget                # noqa: E402
 
-from utils import settings_keys                                    # noqa: E402
+from utils import logical_actions, settings_keys                   # noqa: E402
+from utils.overlay.backend import NoOpOverlayBackend               # noqa: E402
 from utils.strips import tokens                                    # noqa: E402
+from utils.strips.attach import AttachStrategy                     # noqa: E402
 from utils.strips.model import StripModel                          # noqa: E402
 from utils.strips.strip_surface import ANCHOR_INSET                # noqa: E402
 from utils.strips.strip_widget import StripWidget                  # noqa: E402
+from utils.strips.popovers.editor import (EditorModel, KeysetEditor,  # noqa: E402
+                                          action_label)
+from utils.strips.popovers.surface import PopoverSurface            # noqa: E402
 
 FLOSSBUD = StripModel(name="Flossbud", accent="#4a8fe7", species="rabbit")
 HECTOR = StripModel(name="Hector", accent="#e74a4a", species="dog")
@@ -182,6 +189,51 @@ def render_sizes(style: str) -> QImage:
     return sheet
 
 
+def render_locked_editors(style: str) -> QImage:
+    """Both layouts at each preset, using the real surface/content tree."""
+    binds = dict(forward='w', reverse='s', left='a', right='d', jump='space',
+                 book='F8', gags='g', tasks='t', map='Shift_L', action='BackSpace')
+    model = EditorModel(1, tuple((a, action_label(a, logical_actions.ACTION_LABELS[a]))
+                                for a in logical_actions.actions_for('ttr')),
+                        tuple(binds.items()), read_only=True)
+    cells = []
+    for kind in ('list', 'keys'):
+        row = []
+        for size in settings_keys.FLOAT_STRIP_SIZE_VALUES:
+            k = settings_keys.float_strip_size_factor(size)
+            card = KeysetEditor(model, kind, style, k)
+            surface = PopoverSurface(AttachStrategy(), NoOpOverlayBackend(), card)
+            surface.present(QPoint(0, 0), None)
+            for _ in range(4):
+                QApplication.processEvents()
+            dpr = ARGS.scale
+            image = QImage(round(surface.width() * dpr), round(surface.height() * dpr),
+                           QImage.Format_ARGB32_Premultiplied)
+            image.setDevicePixelRatio(dpr)
+            image.fill(Qt.transparent)
+            surface.render(image)
+            image.setDevicePixelRatio(1.0)
+            image.save(os.path.join(ARGS.outdir, f'{style}-editor-locked-{size}-{kind}.png'))
+            row.append(image)
+            surface.dismiss()
+        cells.append(row)
+    gap = round(12 * ARGS.scale)
+    sheet = QImage(sum(img.width() for img in cells[0]) + 4 * gap,
+                   sum(max(img.height() for img in row) for row in cells) + 3 * gap,
+                   QImage.Format_ARGB32_Premultiplied)
+    sheet.fill(QColor('#101114'))
+    p = QPainter(sheet)
+    y = gap
+    for row in cells:
+        x = gap
+        for image in row:
+            p.drawImage(QPoint(x, y), image)
+            x += image.width() + gap
+        y += max(img.height() for img in row) + gap
+    p.end()
+    return sheet
+
+
 def main() -> int:
     app = QApplication.instance() or QApplication([])
     if ARGS.fonts:
@@ -210,6 +262,7 @@ def main() -> int:
         sp.end()
         sheet.save(os.path.join(ARGS.outdir, f"{style}-sheet.png"))
         render_sizes(style).save(os.path.join(ARGS.outdir, f"{style}-sizes.png"))
+        render_locked_editors(style).save(os.path.join(ARGS.outdir, f"{style}-editor-locked.png"))
 
         if ARGS.compare:
             design = QImage(os.path.join(ARGS.compare, f"{style}-03-states.png"))
