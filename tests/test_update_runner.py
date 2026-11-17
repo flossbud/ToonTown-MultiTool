@@ -231,6 +231,9 @@ def test_restart_app_flatpak_relaunches_via_flatpak_run_not_execv(monkeypatch):
     from PySide6.QtWidgets import QApplication
     monkeypatch.setattr(QApplication, "quit", staticmethod(lambda *a: quit_called.append(True)))
     runner._restart_app()
-    assert popened == [["flatpak", "run", "io.github.flossbud.ToonTownMultiTool"]]
+    # Its successor (--handover-from): it waits for this copy to quit
+    # instead of finding it still running and handing its window back.
+    assert popened == [["flatpak", "run", "io.github.flossbud.ToonTownMultiTool",
+                        f"--handover-from={_os.getpid()}"]]
     assert execv_called == []
     assert quit_called == [True]

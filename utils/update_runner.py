@@ -331,8 +331,11 @@ class UpdateRunner(QObject):
             # re-run the old code. Launch a fresh instance on the host (which
             # picks up the new commit) and quit this one.
             from utils.host_spawn import host_popen
+            from utils.instance_guard import handover_arg
             try:
-                host_popen(["flatpak", "run", _FLATPAK_APP_ID])
+                # Its successor: it waits for this copy to quit rather than
+                # asking it for its window (utils/instance_guard.py).
+                host_popen(["flatpak", "run", _FLATPAK_APP_ID, handover_arg()])
             except Exception as e:  # noqa: BLE001
                 _log.warning("flatpak relaunch failed: %s", e)
             from PySide6.QtWidgets import QApplication
