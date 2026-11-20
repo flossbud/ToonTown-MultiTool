@@ -99,8 +99,10 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
-    # A traceback dialog would block Setup, which waits on this process:
-    # rollcall_main.py logs the error and exits 3 (Setup shows its wizard).
+    # Keeps the traceback text out of the bootloader's error box. The box
+    # itself still appears for any uncaught exception and would block Setup,
+    # which waits on this process: rollcall_main.py catches everything, logs
+    # it and exits 3 or 1, so the box is never reached.
     disable_windowed_traceback=True,
     argv_emulation=False,
     target_arch=None,

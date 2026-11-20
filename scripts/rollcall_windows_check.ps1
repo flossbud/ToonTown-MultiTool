@@ -66,12 +66,63 @@ function Wait-Log([long] $mark, [string[]] $any, [int] $seconds) {
     return (Log-Since $mark)
 }
 
-function Start-And-Wait([string] $file, $arguments, [int] $seconds = 600, [hashtable] $extra = @{}) {
+function Save-Screen([string] $name) {
+    # The whole desktop, for whatever a hung process is showing (a message
+    # box, a window behind another). Never fails the phase.
+    try {
+        Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+        $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+        $path = Join-Path $Out "$name.png"
+        $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+        $graphics.Dispose(); $bitmap.Dispose()
+        Write-Host "  shot  $path"
+    } catch {
+        Write-Host "  (no screenshot: $($_.Exception.Message))"
+    }
+}
+
+function Show-Captured([string] $capture) {
+    foreach ($stream in 'out', 'err') {
+        $file = Join-Path $Out "$capture.$stream"
+        Write-Host "--- $capture std$stream ---"
+        if (Test-Path $file) { Get-Content $file | ForEach-Object { Write-Host $_ } }
+    }
+    Write-Host '--- end ---'
+}
+
+function Start-And-Wait([string] $file, $arguments, [int] $seconds = 300,
+                        [string] $capture = '', [string] $workdir = '') {
     # Waits for the process itself. Start-Process -Wait would also wait for
     # everything it started (the reopened app never exits).
+    #
+    # -capture NAME sends stdout/stderr to $Out\NAME.out/.err. A windowed
+    # Python build started without them has sys.stdout = None, so anything
+    # that writes to it raises, and PyInstaller shows a message box that
+    # never goes away: the app's --self-check hung exactly so (CI 44838083868).
+    #
+    # On a timeout: a screenshot, the process tree is killed (so it cannot
+    # hold files for the next phase), then the phase fails.
+    $extra = @{}
+    if ($capture) {
+        $extra.RedirectStandardOutput = Join-Path $Out "$capture.out"
+        $extra.RedirectStandardError = Join-Path $Out "$capture.err"
+    }
+    if ($workdir) { $extra.WorkingDirectory = $workdir }
     $p = Start-Process -FilePath $file -ArgumentList $arguments -PassThru @extra
     $null = $p.Handle          # keeps ExitCode readable after the exit
-    if (-not $p.WaitForExit($seconds * 1000)) { Fail "$file did not exit within $seconds s" }
+    if (-not $p.WaitForExit($seconds * 1000)) {
+        $p.Refresh()
+        Write-Host "  hung  pid $($p.Id), window title: '$($p.MainWindowTitle)'"
+        Save-Screen "$(if ($capture) { $capture } else { 'process' })-timeout"
+        try { $p.Kill($true) } catch { Write-Host "  (kill: $($_.Exception.Message))" }
+        $null = $p.WaitForExit(15000)
+        if ($capture) { Show-Captured $capture }
+        Fail "$file did not exit within $seconds s (killed)"
+    }
+    if ($capture) { Show-Captured $capture }
     return $p.ExitCode
 }
 
@@ -80,6 +131,32 @@ function Run-Setup([string[]] $arguments) {
     $code = Start-And-Wait $Setup $arguments
     Write-Host "  exit  $code"
     return $code
+}
+
+function Self-Check([string] $capture) {
+    # Captured like the other jobs' --self-check, so its output is in the
+    # artifact and sys.stdout exists.
+    $code = Start-And-Wait $appExe '--self-check' 120 $capture
+    $out = Join-Path $Out "$capture.out"
+    $said = (Test-Path $out) -and ((Get-Content $out -Raw) -match 'self-check OK')
+    Check ($code -eq 0 -and $said) "installed app --self-check (exit $code, said OK: $said)"
+}
+
+function Require-Install {
+    # Later phases build on the install phase; say so plainly when it is not there.
+    Check ((Test-Path $uninstallKey) -and (Test-Path $appExe)) 'installed by the install phase'
+}
+
+function Stop-Leftovers {
+    # A failed phase must not leave Setup or a window running into the next
+    # one. Setup and its temp copy, and every Roll Call window; never the app.
+    Get-Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and ($_.Path -eq $Setup -or $_.Path -like '*\is-*.tmp\*' -or
+                                     $_.Path -like '*\rollcall.exe') } |
+        ForEach-Object {
+            Write-Host "  stop  $($_.Id) $($_.Path)"
+            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+        }
 }
 
 function Show-Log([long] $mark) {
@@ -140,11 +217,11 @@ try {
             $json = Get-Content $settings -Raw | ConvertFrom-Json
             Check ($json.check_for_updates_at_startup -eq $true) 'check_for_updates_at_startup saved'
             Check (-not (Test-Path "$appDir.previous-version")) 'no backup folder'
-            $code = Start-And-Wait $appExe '--self-check' 120
-            Check ($code -eq 0) "installed app --self-check ($code)"
+            Self-Check 'selfcheck-install'
         }
 
         'fail' {
+            Require-Install
             $marker = Join-Path $appDir '_internal\rollcall-ci-marker.txt'
             Set-Content -Path $marker -Value 'the previous version'
             $before = (Get-ChildItem $appDir -Recurse -File).Count
@@ -162,12 +239,12 @@ try {
             Check (-not (Test-Path "$appDir.previous-version")) 'no backup folder left'
             Check (-not (Test-Path "$appDir.removing")) 'no trash folder left'
             Check (Test-Path $uninstallKey) 'still installed'
-            $code = Start-And-Wait $appExe '--self-check' 120
-            Check ($code -eq 0) "restored app --self-check ($code)"
+            Self-Check 'selfcheck-fail'
             Remove-Item $marker
         }
 
         'update' {
+            Require-Install
             # A stand-in for the running app: the real handoff code, in a
             # Python process that exits as soon as it returns True (what the
             # app does: it quits), exactly like "Restart & update". It runs
@@ -183,11 +260,7 @@ print('HANDOFF', ok, os.getpid(), flush=True)
 sys.exit(0 if ok else 1)
 "@
             Set-Content -Path (Join-Path $Out 'standin.py') -Value $stand
-            $code = Start-And-Wait python "`"$(Join-Path $Out 'standin.py')`"" 120 @{
-                WorkingDirectory = $appDir
-                RedirectStandardOutput = (Join-Path $Out 'standin.out')
-                RedirectStandardError = (Join-Path $Out 'standin.err') }
-            Get-Content (Join-Path $Out 'standin.out'), (Join-Path $Out 'standin.err') -ErrorAction SilentlyContinue
+            $code = Start-And-Wait python "`"$(Join-Path $Out 'standin.py')`"" 120 'standin' $appDir
             Check ($code -eq 0) 'the handoff returned True once the update window was up'
             $log = Wait-Log $mark @('update finished', 'failed at step') 240
             Show-Log $mark
@@ -203,6 +276,7 @@ sys.exit(0 if ok else 1)
         }
 
         'uninstall' {
+            Require-Install
             $unins = Join-Path $appDir 'unins000.exe'
             Check (Test-Path $unins) 'uninstaller present'
             $running = Get-Process -Name ToonTownMultiTool -ErrorAction SilentlyContinue
@@ -233,6 +307,11 @@ sys.exit(0 if ok else 1)
         }
     }
     Write-Host "ROLLCALL $($Phase.ToUpper()) OK"
+}
+catch {
+    Save-Screen "$Phase-failed"
+    Stop-Leftovers
+    throw
 }
 finally {
     Copy-Logs
