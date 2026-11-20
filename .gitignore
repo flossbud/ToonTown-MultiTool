@@ -7,6 +7,7 @@ build/
 dist/
 *.spec
 !ToonTownMultiTool.spec
+!rollcall.spec
 
 # === AppImages or binary blobs ===
 *.AppImage

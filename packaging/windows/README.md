@@ -20,6 +20,33 @@ pip install -r requirements.txt pyinstaller
 pyinstaller --noconfirm ToonTownMultiTool.spec
 ```
 
+## Build the Roll Call windows
+
+Setup carries its own install / update / uninstall windows ("Roll Call",
+`utils/rollcall/`), a small separate PyInstaller build. Build it before
+ISCC; without `dist\rollcall\rollcall.exe` the installer compiles with the
+stock wizard only (ISCC prints "rollcall build not found", and CI refuses
+such a Setup).
+
+```
+pyinstaller --noconfirm rollcall.spec
+dist\rollcall\rollcall.exe --self-check
+```
+
+How a run goes, and the flags between Setup and the windows, are at the top
+of `installer.iss` and in `utils/rollcall/protocol.py`. Useful by hand:
+
+- `Setup.exe /RCWIZARD`: the stock wizard instead of the window.
+- `Setup.exe "/RCARGS=--auto --shots C:\shots"`: the window clicks through
+  by itself and saves a screenshot per state (Setup exits with the window's
+  code: 0 done, 1 failed, 2 cancelled).
+- `--test-fail-at 500` / `--test-cancel-at 300` in `/RCARGS`: a forced copy
+  failure (the previous version must come back) or a stop mid-copy (nothing
+  may be left).
+
+`scripts/rollcall_windows_check.ps1` runs every path on a clean Windows
+machine (CI: test-windows.yml, test-windows-rollcall).
+
 ## Build the stable installer locally
 
 Source the GUIDs from `guids.env`, then run ISCC:

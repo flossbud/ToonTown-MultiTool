@@ -44,3 +44,11 @@ def test_platform_only_modules_excludes_win32_backend_off_windows():
     assert "utils.win32_backend" in _platform_only_modules("linux")
     assert "utils.win32_backend" in _platform_only_modules("darwin")
     assert "utils.win32_backend" not in _platform_only_modules("win32")
+
+
+def test_platform_only_modules_excludes_the_rollcall_windows_calls_off_windows():
+    from main import _platform_only_modules
+
+    assert "utils.rollcall.winplat" in _platform_only_modules("linux")
+    assert "utils.rollcall.winplat" in _platform_only_modules("darwin")
+    assert "utils.rollcall.winplat" not in _platform_only_modules("win32")

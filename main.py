@@ -2103,6 +2103,8 @@ def _platform_only_modules(platform: str) -> set[str]:
     if platform != "win32":
         # utils.win32_backend imports pywin32.
         excluded.add("utils.win32_backend")
+        # utils.rollcall.winplat loads kernel32 and user32 through ctypes.
+        excluded.add("utils.rollcall.winplat")
     if platform != "linux":
         # utils.kwallet_jeepney raises ImportError on non-Linux at import time.
         excluded.add("utils.kwallet_jeepney")

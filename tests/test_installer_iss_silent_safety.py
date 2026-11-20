@@ -61,3 +61,61 @@ def test_restart_applications_disabled():
     text = _read_iss()
     assert re.search(r"^\s*RestartApplications\s*=\s*no\s*$", text, re.MULTILINE), \
         "RestartApplications must be no to avoid double-launch with /RELAUNCH"
+
+
+# ── Roll Call (the install / update / uninstall windows) ──────────────────
+
+def _section(text: str, name: str) -> str:
+    m = re.search(r"^\[" + re.escape(name) + r"\]\s*$(.*?)(?=^\[\w+\]\s*$)", text,
+                  re.MULTILINE | re.DOTALL)
+    assert m, f"[{name}] section not found"
+    return m.group(1)
+
+
+def test_no_install_mode_dialog_on_a_double_click():
+    text = _read_iss()
+    assert re.search(r"^\s*PrivilegesRequiredOverridesAllowed\s*=\s*commandline\s*$", text,
+                     re.MULTILINE), "the window decides the mode; the dialog must be gone"
+    # Without the dialog Inno ignores UsePreviousPrivileges: Setup re-runs a
+    # run that chose no mode with /ALLUSERS over an all-users install.
+    body = _block(text, r"function RcNeedsAllUsersRespawn\b")
+    assert "HKLM" in body and "ALLUSERS" in body and "CURRENTUSER" in body
+    init = _block(text, r"function InitializeSetup\(")
+    assert init.count("RcNeedsAllUsersRespawn") == 2, "silent runs and the wizard both re-run"
+
+
+def test_the_windows_are_unpacked_first_and_also_installed_for_the_uninstaller():
+    files = _section(_read_iss(), "Files")
+    entries = [line for line in files.splitlines() if line.startswith("Source:")]
+    assert "dontcopy" in entries[0] and "{tmp}\\rollcall" in entries[0]
+    assert "{code:RcFileDestDir}\\rollcall" in entries[1]
+
+
+def test_every_installed_file_goes_through_the_stop_hook():
+    # A Check cannot stop an install (Inno skips the file and carries on); an
+    # exception while expanding DestDir aborts it and rolls it back.
+    files = _section(_read_iss(), "Files")
+    for line in files.splitlines():
+        if line.startswith("Source:") and "dontcopy" not in line:
+            assert "DestDir: \"{code:RcFileDestDir}" in line, line
+            assert "Check:" not in line, line
+
+
+def test_only_the_dest_dir_hook_raises():
+    text = _read_iss()
+    for routine in ("function RcBeforeFiles", "function RcShortcutsCheckpoint",
+                    "procedure RcFileStarting", "procedure CurInstallProgressChanged"):
+        assert "RaiseException" not in _block(text, re.escape(routine) + r"\b"), routine
+    assert "RcCheckpoint(" in _block(text, r"function RcFileDestDir\(")
+
+
+def test_the_window_run_skips_the_wizards_config_step():
+    run = _section(_read_iss(), "Run")
+    apply_entry = run.split("Filename:")[1]
+    assert "--apply-installer-config" in apply_entry and "Check: RcNotWindowRun" in apply_entry
+
+
+def test_a_failed_window_run_puts_the_previous_version_back():
+    text = _read_iss()
+    assert "RcRestoreBackup" in _block(text, r"procedure DeinitializeSetup\(")
+    assert "RcDropBackup" in _block(text, r"procedure CurStepChanged\(")
