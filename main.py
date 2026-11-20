@@ -2396,6 +2396,26 @@ def _quit_for_the_installer(window) -> None:
         window.close()
 
 
+def _leave_install_folder(platform: str = sys.platform,
+                          frozen: bool = bool(getattr(sys, "frozen", False)),
+                          chdir=os.chdir) -> bool:
+    """Installed Windows builds start in their install folder (the shortcut's
+    "Start in"), and every process the app starts inherits that: a browser
+    opened for a link, for one. A folder that is some process's working
+    folder cannot be renamed, and an update moves the installed version aside
+    by renaming it, so such a leftover process would make updates fail until
+    it closed. Nothing here reads files relative to the working folder; move
+    to the player's home folder, which is also a better place for a file
+    dialog to open. True if the working folder was changed."""
+    if platform != "win32" or not frozen:
+        return False
+    try:
+        chdir(os.path.expanduser("~"))
+        return True
+    except OSError:
+        return False
+
+
 def _install_pending_update() -> bool:
     """True if a waiting update was handed to the update window (exit now)."""
     try:
@@ -2421,6 +2441,7 @@ if __name__ == "__main__":
     # If it is granted the elevated copy takes over (and the lock) and this
     # process is done; if it is declined we carry on, holding the lock, and
     # show the warning banner. Helper and one-shot modes skip both.
+    _leave_install_folder()
     from utils import instance_guard as _instance_guard
     from utils import win32_elevation as _win32_elevation
     _startup = _instance_guard.run_startup(
