@@ -13,7 +13,9 @@ Two pieces:
   (a handle without delete sharing on Windows, flock on Unix), so a lock whose
   holder has died can be taken over and a live holder's cannot.
 - A local server, named from a hash of the user and the config directory, is
-  only the messenger: a later start connects and writes "show". It is created
+  only the messenger: a later start connects and writes "show"; the installer
+  and the update window write "quit" (the copy answers "bye" and quits as the
+  tray's Quit does). It is created
   for the user's own account only (UserAccessOption): on Windows that is a
   pipe DACL for the token's user SID, which the elevated and the unelevated
   tokens of an administrator share, so an unelevated start can reach a copy
@@ -53,6 +55,9 @@ ANSWER_WAIT_MS = 3000
 
 SHOW_REQUEST = b"show\n"
 SHOW_ANSWER = b"ok\n"
+QUIT_REQUEST = b"quit\n"       # utils/rollcall/winplat.py ask_quit sends it
+QUIT_ANSWER = b"bye\n"
+QUIT_DELAY_MS = 100            # the answer leaves before the shutdown starts
 
 _ASFW_ANY = 0xFFFFFFFF
 
@@ -235,6 +240,24 @@ def allow_foreground(pid: int | None, *, platform: str | None = None) -> bool:
         return False
 
 
+def ask_to_quit(name: str, *, wait_ms: int = ANSWER_WAIT_MS) -> bool:
+    """Ask the running copy to quit. True once it said it will. (Roll Call
+    sends the same request through its own pipe client on Windows.)"""
+    from PySide6.QtNetwork import QLocalSocket
+    sock = QLocalSocket()
+    sock.connectToServer(name)
+    if not sock.waitForConnected(1000):
+        sock.abort()
+        return False
+    sock.write(QUIT_REQUEST)
+    sock.waitForBytesWritten(1000)
+    answer = b""
+    if sock.waitForReadyRead(wait_ms):
+        answer = bytes(sock.readAll())
+    sock.abort()
+    return answer.startswith(QUIT_ANSWER.strip())
+
+
 def ask_to_show(name: str, holder: int | None = None, *,
                 connect_wait_s: float = CONNECT_WAIT_S,
                 clock: Callable[[], float] = time.monotonic,
@@ -276,6 +299,8 @@ class InstanceGuard:
         self._server = None
         self._on_show = None
         self._asked_early = 0
+        self._on_quit = None
+        self._quit_asked_early = False
 
     @property
     def owned(self) -> bool:
@@ -317,6 +342,14 @@ class InstanceGuard:
             self._asked_early = 0
             self._show()
 
+    def on_quit(self, handler: Callable[[], None]) -> None:
+        """What to do when the installer asks this copy to quit. A request
+        that came before there was a window is carried out now."""
+        self._on_quit = handler
+        if self._quit_asked_early:
+            self._quit_asked_early = False
+            self._quit()
+
     def release(self) -> None:
         if self._server is not None:
             self._server.close()
@@ -335,7 +368,19 @@ class InstanceGuard:
                 self._read(sock)
 
     def _read(self, sock) -> None:
-        if SHOW_REQUEST.strip() not in bytes(sock.readAll()):
+        data = bytes(sock.readAll())
+        if QUIT_REQUEST.strip() in data:
+            sock.write(QUIT_ANSWER)
+            sock.flush()
+            sock.disconnectFromServer()
+            print("[NextUI] the installer asked this copy to quit")
+            if self._on_quit is None:
+                self._quit_asked_early = True
+            else:
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(QUIT_DELAY_MS, self._quit)
+            return
+        if SHOW_REQUEST.strip() not in data:
             return
         sock.write(SHOW_ANSWER)
         sock.flush()
@@ -351,6 +396,14 @@ class InstanceGuard:
             self._on_show()
         except Exception as exc:  # noqa: BLE001
             print(f"[NextUI] could not show the window for another start: {exc}")
+
+    def _quit(self) -> None:
+        if self._on_quit is None:
+            return
+        try:
+            self._on_quit()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[NextUI] could not quit for the installer: {exc}")
 
 
 # ── Startup ────────────────────────────────────────────────────────────────

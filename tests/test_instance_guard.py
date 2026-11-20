@@ -480,3 +480,63 @@ def test_release_lets_the_next_start_be_the_copy(tmp_path):
         assert second.claim().state == ig.OWNER
     finally:
         second.release()
+
+
+_QUITTING_COPY = textwrap.dedent("""
+    import sys
+    sys.path.insert(0, {repo!r})
+    from PySide6.QtCore import QCoreApplication, QTimer
+    from utils.instance_guard import InstanceGuard
+    app = QCoreApplication([])
+    guard = InstanceGuard({cfg!r})
+    assert guard.claim().state == "owner"
+    guard.listen()
+    guard.on_quit(lambda: (print("QUIT", flush=True), app.quit()))
+    print("ready", flush=True)
+    QTimer.singleShot(20000, app.quit)
+    app.exec()
+    guard.release()
+""")
+
+
+def test_the_installer_can_ask_the_running_copy_to_quit(tmp_path):
+    proc = subprocess.Popen(
+        [sys.executable, "-c", _QUITTING_COPY.format(repo=REPO, cfg=str(tmp_path))],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if proc.stdout.readline().strip() == "ready":
+                break
+        name = ig.InstanceGuard(str(tmp_path)).name
+        assert ig.ask_to_quit(name) is True
+        out, _ = proc.communicate(timeout=30)
+        assert "QUIT" in out
+        assert "the installer asked this copy to quit" in out
+        assert proc.returncode == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+def test_a_quit_asked_before_the_window_exists_is_carried_out_once_it_does(qapp, tmp_path):
+    guard = ig.InstanceGuard(str(tmp_path))
+    assert guard.claim().state == ig.OWNER
+    try:
+        assert guard.listen() is True
+        asker = subprocess.Popen(
+            [sys.executable, "-c",
+             f"import sys; sys.path.insert(0, {REPO!r}); "
+             "from utils.instance_guard import ask_to_quit; "
+             f"print(ask_to_quit({guard.name!r}))"],
+            stdout=subprocess.PIPE, text=True)
+        deadline = time.monotonic() + 30
+        while asker.poll() is None and time.monotonic() < deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
+        assert asker.stdout.read().strip() == "True"
+        quits = []
+        guard.on_quit(lambda: quits.append(1))
+        assert quits == [1]
+    finally:
+        guard.release()

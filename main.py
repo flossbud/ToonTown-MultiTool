@@ -2384,6 +2384,18 @@ def _show_for_another_start(window) -> None:
         window.activateWindow()
 
 
+def _quit_for_the_installer(window) -> None:
+    """The installer or the update window asked this copy to quit
+    (utils/instance_guard.py QUIT_REQUEST): the tray's Quit. Game windows
+    stay open; they were started detached from this process."""
+    print("[Update] quitting for the installer")
+    quit_app = getattr(window, "quit_app", None)
+    if quit_app is not None:
+        quit_app()
+    else:
+        window.close()
+
+
 def _install_pending_update() -> bool:
     """True if a waiting update was handed to the update window (exit now)."""
     try:
@@ -2549,6 +2561,7 @@ if __name__ == "__main__":
     window = _main_window_class()()
     if _guard is not None:
         _guard.on_show(lambda: _show_for_another_start(window))
+        _guard.on_quit(lambda: _quit_for_the_installer(window))
     window.log(_ui_scale.stamp())
     if sys.platform == "win32":
         window.log(_elevation.stamp())
