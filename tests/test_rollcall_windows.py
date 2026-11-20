@@ -19,12 +19,23 @@ FAILURE = Failure(step=1, headline="Couldn\u2019t copy the files.",
                   detail="Access is denied \u00b7 0x80070005", log_path="C:\\log.txt")
 
 
+_OPEN = []        # every window a test built: closed again when the test ends
+
+
 @pytest.fixture(autouse=True)
 def frozen_clock():
     motion.set_now(0)
     motion.set_reduced(False)
     yield
     motion.set_now(None)
+    # A window left open keeps its 16 ms tickers running into later tests.
+    while _OPEN:
+        window = _OPEN.pop()
+        for ticker in (window._ticker, window.stage._ticker, window.stage.copy._ticker):
+            ticker.stop()
+        window.engine._timer.stop()
+        window.close_now()
+        window.deleteLater()
 
 
 def _engine(**kwargs):
@@ -104,6 +115,7 @@ def _installer(qapp, **kwargs):
     from utils.rollcall.installer import InstallerWindow
     engine = _engine(**kwargs)
     window = InstallerWindow(engine)
+    _OPEN.append(window)
     window.show()
     return window, engine
 
@@ -329,6 +341,7 @@ def _updater(qapp, **kwargs):
     from utils.rollcall.updater import UpdateWindow
     engine = _engine(previous_version="v0.8.0-alpha.1", **kwargs)
     window = UpdateWindow(engine)
+    _OPEN.append(window)
     window.show()
     window.start()
     return window, engine
@@ -401,6 +414,7 @@ def _uninstaller(qapp, **kwargs):
     kwargs.setdefault("installed", Installed("v0.8.0-alpha.2", 412, DIRECTORY, False))
     engine = _engine(**kwargs)
     window = UninstallerWindow(engine)
+    _OPEN.append(window)
     window.show()
     return window, engine
 
@@ -487,6 +501,7 @@ def test_auto_drives_the_installer_to_an_exit_code(qapp, scenario, expected):
     engine = rollcall_app._demo_engine("install", scenario)
     engine._timer.setInterval(10_000_000)
     window = rollcall_app.build_window("install", engine)
+    _OPEN.append(window)
     driver = rollcall_app.AutoDriver(App(), window, "install", wipe=False)
     _button(window, "Install").click()           # what the driver's timer would do
     if scenario == "fail":

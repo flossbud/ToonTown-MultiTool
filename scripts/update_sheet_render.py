@@ -29,9 +29,9 @@ def main() -> int:
     if "--theme" in sys.argv:
         theme = sys.argv[sys.argv.index("--theme") + 1]
     if "--scale" in sys.argv:
-        scale = int(sys.argv[sys.argv.index("--scale") + 1])
-        args = [a for a in args if a != str(scale)]
-    os.environ["QT_SCALE_FACTOR"] = str(scale)
+        scale = float(sys.argv[sys.argv.index("--scale") + 1])
+        args = [a for a in args if a != sys.argv[sys.argv.index("--scale") + 1]]
+    os.environ["QT_SCALE_FACTOR"] = f"{scale:g}"
     os.makedirs(out, exist_ok=True)
 
     from PySide6.QtCore import QObject, QRect, Signal

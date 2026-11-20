@@ -25,6 +25,8 @@ from PySide6.QtWidgets import (
 from utils.asset_paths import asset_path
 from utils.icon_factory import make_dpad_icon, make_nav_gear, make_person_icon
 from utils.theme_manager import make_hint_icon
+from utils.widgets.launchpad.update_chip import FOCUS_PAD as CHIP_FOCUS_PAD
+from utils.widgets.launchpad.update_chip import UpdateChip
 
 HEADER_H = 112
 
@@ -356,7 +358,6 @@ class LaunchpadHeader(QFrame):
         self.buttons = SheetButtonRow(self)
         self.buttons.pressed.connect(self.sheet_pressed.emit)
         self.status = SessionStatus(self)
-        from utils.widgets.launchpad.update_chip import UpdateChip
         self.update_chip = UpdateChip(self)
         self.update_chip.clicked.connect(self.update_chip_clicked.emit)
 
@@ -445,9 +446,8 @@ class LaunchpadHeader(QFrame):
                        (height - self.logo.height()) // 2)
         self.buttons.move(ROW_LEFT, height - ROW_BOTTOM - self.buttons.height())
         self.status.move(width - STATUS_RIGHT - self.status.width(), STATUS_TOP)
-        from utils.widgets.launchpad.update_chip import FOCUS_PAD
-        self.update_chip.move(width - CHIP_RIGHT - self.update_chip.width() + FOCUS_PAD,
-                              CHIP_TOP - FOCUS_PAD)
+        self.update_chip.move(width - CHIP_RIGHT - self.update_chip.width() + CHIP_FOCUS_PAD,
+                              CHIP_TOP - CHIP_FOCUS_PAD)
         self.update_chip.raise_()
         self.hint_btn.raise_()
         self.buttons.raise_()

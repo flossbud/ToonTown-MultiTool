@@ -26,9 +26,9 @@ def main() -> int:
     out = args[0]
     scale = 2
     if "--scale" in sys.argv:
-        scale = int(sys.argv[sys.argv.index("--scale") + 1])
+        scale = float(sys.argv[sys.argv.index("--scale") + 1])
     os.makedirs(out, exist_ok=True)
-    os.environ["QT_SCALE_FACTOR"] = str(scale)
+    os.environ["QT_SCALE_FACTOR"] = f"{scale:g}"
     app = QApplication.instance() or QApplication([])
 
     from utils.rollcall import motion

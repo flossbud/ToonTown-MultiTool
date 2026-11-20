@@ -95,7 +95,11 @@ def standin(qapp):
     window.flow, window.downloader, window.toons = flow, downloader, toons
     window.show()
     yield window
+    for ticker in (window.sheet._ticker, window.sheet.stage._ticker,
+                   window.sheet.stage.copy._ticker, window.header.update_chip._ticker):
+        ticker.stop()
     window.close()
+    window.deleteLater()
 
 
 # ── The chip ───────────────────────────────────────────────────────────────

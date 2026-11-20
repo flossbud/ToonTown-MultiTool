@@ -111,6 +111,9 @@ class RollcallWindow(QWidget):
 
     def closeEvent(self, event) -> None:
         if self._allow_close or self.request_close():
+            # A closed window paints nothing: let its clocks stop.
+            self.stage._ticker.stop()
+            self.stage.copy._ticker.stop()
             event.accept()
         else:
             event.ignore()
