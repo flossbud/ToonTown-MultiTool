@@ -79,10 +79,10 @@ def box_shadow(width: int, height: int, radius: float, blur: float,
 _bg_cache: dict[tuple, QPixmap] = {}
 
 
-def stage_background(size: QSize, dpr: float) -> QPixmap:
-    """Solid blue, the dot pattern, then light and shade. Square-cornered:
-    the caller clips it to the window's radius."""
-    key = (size.width(), size.height(), round(dpr, 3))
+def stage_background(size: QSize, dpr: float, radius: float = 0.0) -> QPixmap:
+    """Solid blue, the dot pattern, then light and shade, with the window's
+    rounded corners cut out of it. Draw it at the stage's top-left."""
+    key = (size.width(), size.height(), round(dpr, 3), radius)
     cached = _bg_cache.get(key)
     if cached is not None:
         return cached
@@ -134,6 +134,20 @@ def stage_background(size: QSize, dpr: float) -> QPixmap:
     p.drawRect(QRectF(-1, -1, 2, 2))
     p.restore()
     p.end()
+    if radius > 0:
+        # Antialiased corners: keep only what a rounded rectangle covers.
+        shaped = QPixmap(pixmap.size())
+        shaped.setDevicePixelRatio(dpr)
+        shaped.fill(Qt.transparent)
+        p = QPainter(shaped)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#000000"))
+        p.drawRoundedRect(QRectF(0, 0, w, h), radius, radius)
+        p.setCompositionMode(QPainter.CompositionMode_SourceIn)
+        p.drawPixmap(0, 0, pixmap)
+        p.end()
+        pixmap = shaped
     if len(_bg_cache) > 8:
         _bg_cache.clear()
     _bg_cache[key] = pixmap

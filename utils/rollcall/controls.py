@@ -236,6 +236,14 @@ class RcLink(_Control):
         self.setAccessibleName(text)
         self.setFixedSize(self.sizeHint())
 
+    def set_label(self, text: str) -> None:
+        if text != self._label:
+            self._label = text
+            self.setText(text)
+            self.setAccessibleName(text)
+            self.setFixedSize(self.sizeHint())
+            self.update()
+
     def _font(self):
         return fonts.ui(11, 500)
 

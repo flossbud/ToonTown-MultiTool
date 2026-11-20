@@ -74,6 +74,7 @@ class Failure:
     body: str
     detail: str = ""
     log_path: str = ""
+    previous_intact: bool = True    # update / repair: the old version still runs
 
     def details_text(self, step_label: str) -> str:
         """What Copy details puts on the clipboard."""

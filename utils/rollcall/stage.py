@@ -11,9 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import (
-    QBrush, QColor, QFontMetricsF, QPainter, QPainterPath, QPen, QTransform,
-)
+from PySide6.QtGui import QColor, QFontMetricsF, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
 from utils.rollcall import fonts, motion, paint
@@ -318,7 +316,7 @@ class CopyColumn(QWidget):
                                      QRectF(x0, y, lead_w + 2, 14))
                 if item.code:
                     mono = fonts.mono(10, 500)
-                    room = self._v.copy_width + 34 - lead_w
+                    room = self._v.copy_width - lead_w
                     code = QFontMetricsF(mono).elidedText(item.code, Qt.ElideMiddle, int(room))
                     paint.draw_text_line(p, code, mono, T.white(0.70),
                                          QRectF(x0 + lead_w, y, room + 4, 14))
@@ -614,12 +612,7 @@ class Stage(QWidget):
         rect = QRectF(self.rect())
         dpr = self.devicePixelRatioF()
 
-        background = paint.stage_background(self.size(), dpr)
-        brush = QBrush(background)
-        brush.setTransform(QTransform.fromScale(1.0 / dpr, 1.0 / dpr))
-        p.setPen(Qt.NoPen)
-        p.setBrush(brush)
-        p.drawRoundedRect(rect, v.radius, v.radius)
+        p.drawPixmap(QPointF(0, 0), paint.stage_background(self.size(), dpr, v.radius))
 
         if v.mark is not None:
             left, top, height = v.mark
