@@ -34,19 +34,36 @@ def update_args(*, app_pid: int, from_version: str, ready_file: str) -> list:
             f"/RCREADY={ready_file}"]
 
 
+def setup_working_dir() -> str:
+    """Where Setup is started: never the app's own folder.
+
+    The app usually runs in its install folder (Inno starts shortcuts and
+    [Run] entries in the exe's folder, and the update window reopens it
+    there). Setup's loader keeps the folder it was started in for its whole
+    life, and so does the Setup it runs until an install begins, which this
+    one never does: it waits for the update window. A process's working
+    folder cannot be renamed, so started from the app it would keep the
+    second Setup from moving the installed version aside, and every update
+    would fail. Inno moves itself to the system folder for the same reason."""
+    root = os.environ.get("SystemRoot") or os.environ.get("windir") or ""
+    system = os.path.join(root, "System32") if root else ""
+    return system if system and os.path.isdir(system) else tempfile.gettempdir()
+
+
 def _popen(command: str):
     """Setup must outlive this process: break away from a job that would
     take it down when the app exits."""
+    cwd = setup_working_dir()
     if sys.platform != "win32":
-        return subprocess.Popen(command, shell=True, close_fds=True)
+        return subprocess.Popen(command, shell=True, close_fds=True, cwd=cwd)
     flags = _CREATE_NEW_PROCESS_GROUP | _CREATE_BREAKAWAY_FROM_JOB
     try:
-        return subprocess.Popen(command, close_fds=True, creationflags=flags)
+        return subprocess.Popen(command, close_fds=True, creationflags=flags, cwd=cwd)
     except OSError as error:
         if getattr(error, "winerror", None) != 5:
             raise
         return subprocess.Popen(command, close_fds=True,
-                                creationflags=_CREATE_NEW_PROCESS_GROUP)
+                                creationflags=_CREATE_NEW_PROCESS_GROUP, cwd=cwd)
 
 
 def start_update_window(setup_path: str, *, app_pid: int, from_version: str,

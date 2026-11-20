@@ -76,6 +76,32 @@ def test_false_without_an_installer(tmp_path):
                                        from_version="v1", log=lambda s: None) is False
 
 
+def test_setup_is_started_outside_the_app_folder(tmp_path, monkeypatch):
+    # The app runs in its install folder; Setup inheriting that folder would
+    # keep the update from moving the install aside.
+    app_dir = tmp_path / "Programs" / "ToonTown MultiTool"
+    app_dir.mkdir(parents=True)
+    windows = tmp_path / "Windows"
+    (windows / "System32").mkdir(parents=True)
+    monkeypatch.chdir(app_dir)
+    monkeypatch.setenv("SystemRoot", str(windows))
+    seen = {}
+
+    def fake_popen(command, **kwargs):
+        seen.update(kwargs)
+        return Proc(0)
+
+    monkeypatch.setattr(handoff.subprocess, "Popen", fake_popen)
+    handoff._popen("Setup.exe /RCMODE=update")
+    assert seen["cwd"] == str(windows / "System32")
+
+    monkeypatch.delenv("SystemRoot")
+    monkeypatch.delenv("windir", raising=False)
+    handoff._popen("Setup.exe /RCMODE=update")
+    assert seen["cwd"] == handoff.tempfile.gettempdir()
+    assert not seen["cwd"].startswith(str(app_dir))
+
+
 def test_importing_it_pulls_in_nothing_heavy():
     code = ("import sys; import utils.rollcall.handoff; "
             "heavy = [m for m in sys.modules if m.split('.')[0] in "

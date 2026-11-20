@@ -170,7 +170,10 @@ try {
         'update' {
             # A stand-in for the running app: the real handoff code, in a
             # Python process that exits as soon as it returns True (what the
-            # app does: it quits), exactly like "Restart & update".
+            # app does: it quits), exactly like "Restart & update". It runs
+            # in the install folder, as the app does when started from its
+            # shortcuts: Setup must not inherit that folder, or the update
+            # cannot move the installed version aside.
             $stand = @"
 import os, sys
 sys.path.insert(0, r'$repo')
@@ -181,6 +184,7 @@ sys.exit(0 if ok else 1)
 "@
             Set-Content -Path (Join-Path $Out 'standin.py') -Value $stand
             $code = Start-And-Wait python "`"$(Join-Path $Out 'standin.py')`"" 120 @{
+                WorkingDirectory = $appDir
                 RedirectStandardOutput = (Join-Path $Out 'standin.out')
                 RedirectStandardError = (Join-Path $Out 'standin.err') }
             Get-Content (Join-Path $Out 'standin.out'), (Join-Path $Out 'standin.err') -ErrorAction SilentlyContinue
@@ -189,6 +193,8 @@ sys.exit(0 if ok else 1)
             Show-Log $mark
             Check ($log.Contains('update window, engine=inno')) 'window stamp'
             Check ($log.Contains('ready file')) 'the window told the app to quit'
+            Check (-not $log.Contains('backup in-use')) 'nothing held the install folder (Setup was not started in it)'
+            Check ($log.Contains('backup=ok')) 'Setup moved the installed version aside before copying'
             Check ($log.Contains('update finished')) 'the update finished with the app window on screen'
             $running = Get-Process -Name ToonTownMultiTool -ErrorAction SilentlyContinue |
                 Where-Object { $_.Path -eq $appExe }
