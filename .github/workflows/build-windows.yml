@@ -60,6 +60,38 @@ jobs:
           name: windows-zip
           path: ToonTownMultiTool-Portable-*.zip
 
+      # Roll Call: the install / update / uninstall windows Setup carries
+      # (packaging/windows/installer.iss). Its own lean onedir build.
+      - name: Build the Roll Call windows
+        run: pyinstaller --noconfirm rollcall.spec
+
+      - name: Roll Call self-check (frozen, real desktop)
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path "dist\rollcall\rollcall.exe").Path
+          $log = Join-Path $env:TEMP 'ttmt-rollcall.log'
+          Remove-Item $log -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath $exe -ArgumentList '--self-check', '--shots', "$env:RUNNER_TEMP\rollcall-self-check" -PassThru
+          $null = $p.Handle
+          if (-not $p.WaitForExit(120000)) { throw 'rollcall --self-check hung' }
+          if (Test-Path $log) { Get-Content $log }
+          $size = (Get-ChildItem dist\rollcall -Recurse -File | Measure-Object Length -Sum).Sum
+          $files = (Get-ChildItem dist\rollcall -Recurse -File).Count
+          Write-Host ("rollcall build: {0:N1} MB in {1} files" -f ($size / 1MB), $files)
+          Get-ChildItem dist\rollcall -Recurse -File | Sort-Object Length -Descending |
+            Select-Object -First 12 | ForEach-Object { "{0,8:N1} MB  {1}" -f ($_.Length / 1MB), $_.FullName }
+          if ($p.ExitCode -ne 0) { throw "rollcall --self-check failed ($($p.ExitCode))" }
+          if (-not (Select-String -Path $log -Pattern 'self-check OK' -Quiet)) { throw 'no self-check stamp' }
+
+      - name: Package Roll Call
+        shell: pwsh
+        run: Compress-Archive -Path "dist\rollcall\*" -DestinationPath "rollcall-windows.zip"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-rollcall
+          path: rollcall-windows.zip
+
   build-windows-installer:
     needs: build-windows
     runs-on: windows-latest
@@ -96,6 +128,24 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist\ToonTownMultiTool | Out-Null
           Expand-Archive $zip -DestinationPath dist\ToonTownMultiTool -Force
 
+      - name: Download Roll Call
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-rollcall
+          path: rollcall-in
+
+      - name: Extract Roll Call into dist\rollcall
+        id: payload
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\rollcall | Out-Null
+          Expand-Archive rollcall-in\rollcall-windows.zip -DestinationPath dist\rollcall -Force
+          if (-not (Test-Path dist\rollcall\rollcall.exe)) { throw 'rollcall.exe missing' }
+          # The installed size the install window shows (app + its uninstall window).
+          $bytes = (Get-ChildItem dist\ToonTownMultiTool, dist\rollcall -Recurse -File | Measure-Object Length -Sum).Sum
+          "PAYLOAD_BYTES=$bytes" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "payload: $bytes bytes"
+
       - name: Load AppId GUIDs
         shell: bash
         run: cat packaging/windows/guids.env >> "$GITHUB_ENV"
@@ -131,6 +181,8 @@ jobs:
 
       - name: Compile installer
         shell: pwsh
+        env:
+          PAYLOAD_BYTES: ${{ steps.payload.outputs.PAYLOAD_BYTES }}
         run: |
           $tag = "${{ inputs.version_label }}"
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
@@ -142,8 +194,11 @@ jobs:
             "/DMyAppFlavor=${{ steps.flavor.outputs.flavor }}" `
             "/DConfigDirName=${{ steps.flavor.outputs.configdir }}" `
             "/DOutputBaseFilename=ToonTownMultiTool-Setup-$tag" `
-            packaging\windows\installer.iss
+            "/DMyPayloadBytes=$env:PAYLOAD_BYTES" `
+            packaging\windows\installer.iss 2>&1 | Tee-Object -Variable isccOut
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit $LASTEXITCODE" }
+          # Never ship a Setup that silently fell back to wizard-only.
+          if (($isccOut | Out-String) -match 'rollcall build not found') { throw 'Setup was compiled without the Roll Call windows' }
 
       - uses: actions/upload-artifact@v7
         with:

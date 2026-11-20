@@ -148,6 +148,16 @@ jobs:
           if (-not (Test-Path "$target\ToonTownMultiTool.exe")) {
             throw "Expected EXE not present at $target\ToonTownMultiTool.exe"
           }
+          # The legacy path (old apps update with /SILENT, admins deploy with
+          # /VERYSILENT) must not change: no window, the wizard's own config
+          # step, this build's code. Stamps, not the exit code alone.
+          $log = Get-Content $installLog -Raw
+          if ($log -notmatch '\[RollCall\] setup .* rollcall=bundled silent=yes .*window-run=no') {
+            throw 'Setup stamp missing: not the build under test, or not the legacy path'
+          }
+          if ($log -notmatch 'Parameters: --apply-installer-config') { throw 'the wizard config step did not run' }
+          if ($log -match 'starting the install window') { throw 'a silent install must not show the window' }
+          Write-Host 'LEGACY SILENT INSTALL OK'
 
       - name: Launch-test the installed EXE
         shell: pwsh
@@ -175,3 +185,57 @@ jobs:
           } else {
             throw "Expected uninstaller at $unins"
           }
+
+  # Roll Call on the runner's real desktop: every path of the new installer,
+  # in order, on one clean machine (scripts/rollcall_windows_check.ps1). Each
+  # phase proves its outcome with files, registry keys and log stamps.
+  test-windows-rollcall:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Download installer artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-installer
+          path: installer-in
+
+      - name: Locate Setup
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem installer-in\*.exe)[0].FullName
+          "ROLLCALL_SETUP=$setup" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "ROLLCALL_OUT=$env:RUNNER_TEMP\rollcall-check" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Cancel mid-copy leaves nothing (fresh PC)
+        shell: pwsh
+        run: ./scripts/rollcall_windows_check.ps1 -Phase cancel -Setup $env:ROLLCALL_SETUP -Out $env:ROLLCALL_OUT
+
+      - name: Double-click install through the window
+        shell: pwsh
+        run: ./scripts/rollcall_windows_check.ps1 -Phase install -Setup $env:ROLLCALL_SETUP -Out $env:ROLLCALL_OUT
+
+      - name: A failed repair puts the previous version back
+        shell: pwsh
+        run: ./scripts/rollcall_windows_check.ps1 -Phase fail -Setup $env:ROLLCALL_SETUP -Out $env:ROLLCALL_OUT
+
+      - name: Update through the app handoff and the update window
+        shell: pwsh
+        run: ./scripts/rollcall_windows_check.ps1 -Phase update -Setup $env:ROLLCALL_SETUP -Out $env:ROLLCALL_OUT
+
+      - name: Uninstall through the uninstall window
+        shell: pwsh
+        run: ./scripts/rollcall_windows_check.ps1 -Phase uninstall -Setup $env:ROLLCALL_SETUP -Out $env:ROLLCALL_OUT
+
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rollcall-windows-check
+          path: ${{ env.ROLLCALL_OUT }}
+          if-no-files-found: warn
