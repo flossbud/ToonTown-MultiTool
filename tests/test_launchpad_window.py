@@ -192,8 +192,8 @@ def test_the_launcher_is_the_only_page(window):
     from tabs.launch_tab import LaunchTab
     layout = window.container.layout()
     widgets = [layout.itemAt(i).widget() for i in range(layout.count())]
-    assert widgets == [window.header, window.update_banner,
-                       window.admin_notice_banner, window.launch_tab]
+    assert widgets == [window.header, window.admin_notice_banner, window.launch_tab]
+    assert not hasattr(window, "update_banner")      # the header chip took over
     assert isinstance(window.launch_tab, LaunchTab)
     assert window.launch_tab.isVisible()
     assert getattr(window.launch_tab, "grandstand", None) is not None

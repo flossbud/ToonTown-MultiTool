@@ -1,0 +1,22 @@
+{
+  "version": "v0.8.0-alpha.2",
+  "highlights": [
+    {
+      "title": "Light theme",
+      "text": "The whole interface now follows your system when it is set to light. Dark mode looks exactly as before."
+    },
+    {
+      "title": "Logs console",
+      "text": "Every part of the app in one live console, with each line tagged by source and severity."
+    },
+    {
+      "title": "Feature discovery",
+      "text": "Hints point out Keep-Alive and Click Sync, with a one-time confirmation before any background input."
+    }
+  ],
+  "fixes": [
+    "The app follows your system light and dark setting reliably.",
+    "Turning Keep-Alive off and back on no longer leaves a card missing its controls.",
+    "The Launcher's empty-state message no longer gets clipped."
+  ]
+}

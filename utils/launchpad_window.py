@@ -73,6 +73,19 @@ def next_ui_enabled(environ=None) -> bool:
     return environ.get(NEXT_UI_ENV, "").strip() != "0"
 
 
+_RELEASES_URL = "https://github.com/flossbud/ToonTown-MultiTool/releases"
+
+
+def _start_update_window(setup_path: str, *, app_pid: int, from_version: str) -> bool:
+    """Start the downloaded Setup in update mode. True once its window is up
+    (the app may then quit); False if it never came up."""
+    try:
+        from utils.rollcall.handoff import start_update_window
+    except ImportError:
+        return False
+    return bool(start_update_window(setup_path, app_pid=app_pid, from_version=from_version))
+
+
 def _quit_app() -> None:
     """Closing the main window ends the app."""
     app = QApplication.instance()
@@ -206,11 +219,7 @@ class LaunchpadWindow(QMainWindow):
         self.header.sheet_pressed.connect(self._on_sheet_button)
         root.addWidget(self.header)
 
-        from utils.widgets.update_banner import UpdateBanner
-        self.update_banner = UpdateBanner(parent=self)
-        self.update_banner.clicked.connect(self._on_update_banner_clicked)
-        self._pending_update_info = None
-        root.addWidget(self.update_banner)
+        self.header.update_chip_clicked.connect(self._on_update_chip_clicked)
 
         from utils.widgets.admin_notice_banner import AdminNoticeBanner
         self.admin_notice_banner = AdminNoticeBanner(parent=self)
@@ -232,6 +241,12 @@ class LaunchpadWindow(QMainWindow):
         self.sheet_host.closed.connect(self._on_sheet_closed)
         self._sheets: dict[str, QWidget] = {}
         self._sheet_names: dict[int, str] = {}
+
+        # The update sheet and What's new drop in under the header.
+        from utils.widgets.launchpad.update_sheet import UpdateSheetHost
+        self.update_sheet = UpdateSheetHost(self.container, top=HEADER_H)
+        self.update_sheet.closed.connect(self._on_update_sheet_closed)
+        self.update_sheet.open_url.connect(self._open_external_url)
 
         self._apply_full_theme()
         self._apply_window_chrome()
@@ -894,7 +909,6 @@ class LaunchpadWindow(QMainWindow):
         self.header.apply_theme(is_dark, QColor(colors["sidebar_text"]))
         self.header.set_hints_enabled(self._hints_enabled)
         self.debug_tab.apply_theme(is_dark)
-        self.update_banner.apply_theme(colors)
         self.admin_notice_banner.apply_theme(colors)
         self.launch_tab.refresh_theme()
         self.sheet_host.apply_theme(is_dark)
@@ -1128,38 +1142,100 @@ class LaunchpadWindow(QMainWindow):
     # ── Updates ────────────────────────────────────────────────────────────
 
     def _setup_update_checker(self) -> None:
+        from utils import install_method
         from utils.update_checker import UpdateChecker
+        from utils.update_download import UpdateDownloader
+        from utils.update_flow import UpdateFlow
         from utils.update_runner import UpdateRunner
+        from utils.version import APP_VERSION
         self.update_checker = UpdateChecker(self.settings_manager, parent=self)
         self.update_runner = UpdateRunner(self)
-        self.update_checker.update_available.connect(self._on_update_available)
+        self.update_flow = UpdateFlow(
+            self.settings_manager,
+            install_method=install_method.detect(),
+            local_tag=f"v{APP_VERSION}",
+            downloader=UpdateDownloader(self),
+            run_native_update=self.update_runner.run_update,
+            start_update_window=_start_update_window,
+            toons_running=lambda: len(self.session.toons()) > 0,
+            parent=self)
+        flow = self.update_flow
+        self.update_checker.check_started.connect(flow.on_check_started)
+        self.update_checker.update_available.connect(flow.on_update_available)
+        self.update_checker.no_update.connect(flow.on_no_update)
+        self.update_checker.check_failed.connect(flow.on_check_failed)
+        flow.changed.connect(self._refresh_update_chip)
+        flow.sheet_requested.connect(self._on_update_sheet_requested)
+        flow.recheck_requested.connect(
+            lambda: self.update_checker.check_async(manual=True))
+        flow.whats_new_requested.connect(self._show_whats_new)
+        flow.quit_requested.connect(self._quit_for_update)
+        self.update_sheet.set_flow(flow)
+        print(f"[Update] chip + sheet flow active ({install_method.detect().value})")
 
     def _maybe_kick_off_startup_check(self) -> None:
         # --self-check must not start the update thread: it can block
         # mid-flight and abort at interpreter teardown.
         if os.environ.get("TTMT_SELF_CHECK"):
             return
+        QTimer.singleShot(900, self._maybe_show_whats_new)
         if not bool(self.settings_manager.get("check_for_updates_at_startup", False)):
             return
         self.update_checker.check_async(manual=False)
 
-    def _on_update_available(self, info) -> None:
-        self._pending_update_info = info
-        self.update_banner.show_for_release(info)
+    def _refresh_update_chip(self) -> None:
+        self.header.set_update_chip(self.update_flow.chip())
 
-    def _on_update_banner_clicked(self) -> None:
-        info = self._pending_update_info
-        if info is None:
+    def _on_update_chip_clicked(self) -> None:
+        """An update chip toggles the sheet."""
+        from utils.widgets.launchpad.update_sheet import UPDATE
+        if self.update_sheet.mode() == UPDATE:
+            self.update_sheet.hide_sheet()
+        else:
+            self.update_flow.chip_clicked()
+
+    def _on_update_sheet_requested(self, show: bool) -> None:
+        if show:
+            self.update_sheet.show_update()
+        else:
+            self.update_sheet.hide_sheet()
+
+    def _on_update_sheet_closed(self, mode: str) -> None:
+        from utils.widgets.launchpad.update_sheet import WHATS_NEW
+        if mode == WHATS_NEW and self._whats_new_notes is not None:
+            # Seen: the chip keeps it one click away for the session.
+            self.update_flow.mark_whats_new_seen(self._whats_new_notes)
+
+    _whats_new_notes = None
+
+    def _maybe_show_whats_new(self) -> None:
+        """Once, on the first launch of a new version."""
+        from utils import release_highlights
+        from utils.update_flow import is_first_run, whats_new_to_show
+        notes = whats_new_to_show(
+            self.settings_manager, release_highlights.shipped(),
+            self.update_flow.local_tag, is_first_run(self.settings_manager))
+        if notes is None or self.update_sheet.is_open():
             return
-        from utils import build_info
-        from utils.widgets.update_dialog import UpdateDialog
-        dialog = UpdateDialog(info, local_version_string=build_info.version_string(),
-                              parent=self)
-        dialog.update_now.connect(lambda: self.update_runner.run_update(info))
-        dialog.skip_version.connect(
-            lambda: self.settings_manager.set("update_skipped_version", info["tag_name"]))
-        dialog.skip_version.connect(self.update_banner.hide)
-        dialog.exec()
+        self._whats_new_notes = notes
+        self._show_whats_new()
+
+    def _show_whats_new(self) -> None:
+        notes = self._whats_new_notes or self.update_flow.whats_new
+        if notes is None:
+            return
+        self._whats_new_notes = notes
+        self.update_sheet.show_whats_new(
+            notes, f"{_RELEASES_URL}/tag/{self.update_flow.local_tag}")
+
+    def _open_external_url(self, url: str) -> None:
+        from utils.open_url import open_url
+        open_url(url)
+
+    def _quit_for_update(self) -> None:
+        """The update window is on screen and waiting for this process."""
+        print("[Update] handing over to the update window")
+        self.quit_app()
 
     # ── Administrator notice (Windows) ─────────────────────────────────────
 
@@ -1274,6 +1350,7 @@ class LaunchpadWindow(QMainWindow):
             ("session", "session", "shutdown"),
             ("window_manager", "window_manager", "stop"),
             ("update_checker", "update_checker", "shutdown"),
+            ("update_flow", "update_flow", "shutdown"),
         ):
             target = getattr(self, attribute, None)
             if target is None:

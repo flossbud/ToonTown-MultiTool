@@ -126,6 +126,7 @@ class UpdateChecker(QObject):
     update_available = Signal(dict)
     no_update = Signal()
     check_failed = Signal(str)
+    check_started = Signal(bool)     # manual?
 
     def __init__(self, settings_manager, parent=None):
         super().__init__(parent)
@@ -141,6 +142,7 @@ class UpdateChecker(QObject):
         if self._in_flight:
             return False
         self._in_flight = True
+        self.check_started.emit(bool(manual))
         self._thread = QThread(self)
         self._worker = _CheckWorker(self._sm, manual)
         self._worker.moveToThread(self._thread)

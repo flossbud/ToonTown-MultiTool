@@ -205,7 +205,8 @@ class InstallerWindow(RollcallWindow):
         self.stage.set_steps(INSTALL_STEPS)
         self._follower.reset(keep_before=self._retry_from)
         self.stage.follow(self._follower)
-        self.stage.set_crew(4, self._retry_from)
+        # Toon n takes its place as step n starts.
+        self.stage.set_crew(4, self._retry_from + 1)
         self._show_run_copy()
         self._ticker.start()
         self.engine.install(self.panel.options())

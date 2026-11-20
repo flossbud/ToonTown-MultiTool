@@ -748,7 +748,10 @@ class Stage(QWidget):
                 p.fillRect(QRectF(x, top, seg_w * fill, 5), T.RED_B if failed else T.BLUE_B)
             text_x = x + 14 + (1 if i else 0)
             if self._single:
-                color = QColor("#ffffff") if (active or failed) else T.white(0.62)
+                if active or failed:
+                    color = QColor("#ffffff")
+                else:
+                    color = T.white(0.86) if done else T.white(0.62)
                 if self._tail:
                     mono = fonts.mono(11, 500)
                     tail_w = paint.text_width(self._tail, mono) + 2

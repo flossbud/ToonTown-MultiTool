@@ -35,6 +35,9 @@ class SettingsManager:
             _sk.KEYSET_EDITOR_LAYOUT:         _sk.KEYSET_EDITOR_LAYOUT_DEFAULT,
         }
         self._callbacks = []
+        # The keys settings.json held when this run read it (empty when there
+        # was no file): how a first run is told from an update.
+        self.loaded_keys = frozenset()
         self._load()
         # Migration: drop legacy show_advanced key (Settings tab redesign 2026-05-13)
         # If present in settings.json from an older version, remove on next save.
@@ -48,6 +51,7 @@ class SettingsManager:
                 with open(self.settings_path, "r") as f:
                     data = json.load(f)
                     self.settings.update(data)
+                    self.loaded_keys = frozenset(data)
             except Exception as e:
                 print(f"[SettingsManager] Failed to load settings: {e}")
 

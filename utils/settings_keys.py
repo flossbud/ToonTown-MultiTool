@@ -22,6 +22,12 @@ CHECK_FOR_UPDATES_AT_STARTUP = "check_for_updates_at_startup"
 UPDATE_SKIPPED_VERSION = "update_skipped_version"
 UPDATE_LAST_CHECK_AT = "update_last_check_at"
 UPDATE_LAST_CHECK_RESULT = "update_last_check_result"
+# A downloaded installer waiting for "Next launch": JSON {tag, path, size}.
+UPDATE_PENDING_INSTALL = "update_pending_install"
+# The release tag whose offer sheet has already opened by itself once.
+UPDATE_OFFER_SHOWN_VERSION = "update_offer_shown_version"
+# The version whose What's new sheet has been shown (or skipped on a first run).
+WHATS_NEW_SEEN_VERSION = "whats_new_seen_version"
 
 # Launch tab section collapse (added 2026-05-23)
 LAUNCH_SECTION_TTR_COLLAPSED = "launch_section_ttr_collapsed"

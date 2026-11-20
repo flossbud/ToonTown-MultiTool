@@ -2382,6 +2382,24 @@ def _show_for_another_start(window) -> None:
         window.activateWindow()
 
 
+def _install_pending_update() -> bool:
+    """True if a waiting update was handed to the update window (exit now)."""
+    try:
+        from utils.rollcall.handoff import start_update_window
+        from utils.settings_manager import SettingsManager
+        from utils.update_flow import install_pending_at_startup
+        from utils.version import APP_VERSION
+        started = install_pending_at_startup(
+            SettingsManager(), local_tag=f"v{APP_VERSION}",
+            start_update_window=start_update_window)
+        if started:
+            print("[Update] waiting build handed to the update window; exiting")
+        return started
+    except Exception as exc:                              # noqa: BLE001
+        print(f"[Update] pending install check failed: {exc}")
+        return False
+
+
 if __name__ == "__main__":
     # One copy per user and config directory: a start that finds one running
     # asks it to show its window and exits (utils/instance_guard.py). Then,
@@ -2436,6 +2454,16 @@ if __name__ == "__main__":
             keep_alive=_flag("keep-alive", default=False),
         )
         sys.exit(0 if ok else 1)
+
+    # A build that was downloaded earlier and left for "Next launch" installs
+    # now, before any window: the update window takes over and this process
+    # ends. Installer builds only; anything stale is cleared and startup
+    # carries on.
+    if sys.platform == "win32" and getattr(sys, "frozen", False):
+        if _install_pending_update():
+            if _guard is not None:
+                _guard.release()
+            sys.exit(0)
 
     # Identity must be set BEFORE QApplication is constructed; Qt reads these
     # at construction time to populate X11 WM_CLASS and Wayland app_id.

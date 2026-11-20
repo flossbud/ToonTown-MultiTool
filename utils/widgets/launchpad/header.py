@@ -52,6 +52,10 @@ STATUS_TOP = 62
 STATUS_RIGHT = 16
 STATUS_FONT_PX = 12
 STATUS_DOT = 6
+# The update chip takes the session status's place while it shows: right 14,
+# in the lower half of the header.
+CHIP_RIGHT = 14
+CHIP_TOP = 58
 # The classic header drew the wordmark 80 high with nothing beside it. Here
 # the button row sits to its left, and 80 runs into it; the design draws it
 # at about this height. It shrinks further if the window is too narrow to
@@ -251,8 +255,14 @@ class SessionStatus(QWidget):
         self._count = 0
         self._running = True
         self._dark = True
+        self._suppressed = False
         self._resize()
         self.setVisible(False)
+
+    def set_suppressed(self, suppressed: bool) -> None:
+        """Step aside while the update chip has the spot."""
+        self._suppressed = bool(suppressed)
+        self.setVisible(self._count > 0 and not self._suppressed)
 
     def _font(self) -> QFont:
         return _ui_font(STATUS_FONT_PX, QFont.Weight.Normal)
@@ -279,7 +289,7 @@ class SessionStatus(QWidget):
             self._count = count
             self._resize()
             self.update()
-        self.setVisible(count > 0)
+        self.setVisible(count > 0 and not self._suppressed)
 
     def set_dark(self, is_dark: bool) -> None:
         if is_dark != self._dark:
@@ -314,6 +324,7 @@ class LaunchpadHeader(QFrame):
 
     sheet_pressed = Signal(str)       # a sheet button was pressed
     hints_toggled = Signal()
+    update_chip_clicked = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -345,6 +356,9 @@ class LaunchpadHeader(QFrame):
         self.buttons = SheetButtonRow(self)
         self.buttons.pressed.connect(self.sheet_pressed.emit)
         self.status = SessionStatus(self)
+        from utils.widgets.launchpad.update_chip import UpdateChip
+        self.update_chip = UpdateChip(self)
+        self.update_chip.clicked.connect(self.update_chip_clicked.emit)
 
         self.apply_theme(True, QColor("#bbbbbb"))
         self._place()
@@ -366,6 +380,13 @@ class LaunchpadHeader(QFrame):
         self.status.set_running(running)
         self._place()
 
+    def set_update_chip(self, chip) -> None:
+        """Show an ``update_flow.Chip`` in the session status's place, or
+        give the place back with None."""
+        self.update_chip.set_chip(chip)
+        self.status.set_suppressed(chip is not None)
+        self._place()
+
     def set_hints_enabled(self, enabled: bool) -> None:
         self._hints_enabled = bool(enabled)
         self._refresh_hint_icon()
@@ -375,6 +396,7 @@ class LaunchpadHeader(QFrame):
         self._icon_color = QColor(icon_color)
         self.buttons.set_dark(self._dark)
         self.status.set_dark(self._dark)
+        self.update_chip.set_dark(self._dark)
         self._refresh_hint_icon()
         self._refresh_logo()
 
@@ -423,6 +445,10 @@ class LaunchpadHeader(QFrame):
                        (height - self.logo.height()) // 2)
         self.buttons.move(ROW_LEFT, height - ROW_BOTTOM - self.buttons.height())
         self.status.move(width - STATUS_RIGHT - self.status.width(), STATUS_TOP)
+        from utils.widgets.launchpad.update_chip import FOCUS_PAD
+        self.update_chip.move(width - CHIP_RIGHT - self.update_chip.width() + FOCUS_PAD,
+                              CHIP_TOP - FOCUS_PAD)
+        self.update_chip.raise_()
         self.hint_btn.raise_()
         self.buttons.raise_()
 
