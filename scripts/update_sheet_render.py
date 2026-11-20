@@ -154,8 +154,11 @@ def main() -> int:
         window.sheet.show_update()
 
         # B3: the connection dropped.
-        flow.received = int(size * 0.37)
+        from utils import update_download
+        on_disk, update_download.partial_size = (
+            update_download.partial_size, lambda *_a, **_k: int(size * 0.37))
         downloader.failed.emit("network")
+        update_download.partial_size = on_disk
         shot(window, f"b3-paused-{tag}")
         flow.try_again()
         downloader.progress.emit(size, size)
