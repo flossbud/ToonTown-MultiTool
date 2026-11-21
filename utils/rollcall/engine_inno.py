@@ -187,8 +187,10 @@ class Machine:
         """Start the app detached from this process. False if it did not start."""
         raise NotImplementedError
 
-    def delete_self_later(self, directory: str) -> None:
-        """The uninstall window runs from a temp copy: remove it after exit."""
+    def delete_self_later(self, directory: str, log_path: str = "") -> str:
+        """The uninstall window runs from a temp copy: remove it after exit.
+        Returns what was done, for the log ("" for nothing)."""
+        return ""
 
 
 def server_name(config_dir: str, user: str) -> str:
@@ -373,7 +375,7 @@ class InnoEngine(Engine):
         if self_dir:
             app = QCoreApplication.instance()
             if app is not None:
-                app.aboutToQuit.connect(lambda: self._m.delete_self_later(self_dir))
+                app.aboutToQuit.connect(self._delete_temp_copy)
 
     # ── Log ────────────────────────────────────────────────────────────────
 
@@ -383,12 +385,19 @@ class InnoEngine(Engine):
             print(line, flush=True)
         except Exception:  # noqa: BLE001 (no console in the frozen build)
             pass
-        path = self._log_path or os.path.join(tempfile.gettempdir(), "ttmt-rollcall.log")
         try:
-            with open(path, "a", encoding="utf-8") as fh:
+            with open(self._log_file(), "a", encoding="utf-8") as fh:
                 fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {line}\n")
         except OSError:
             pass
+
+    def _log_file(self) -> str:
+        return self._log_path or os.path.join(tempfile.gettempdir(), "ttmt-rollcall.log")
+
+    def _delete_temp_copy(self) -> None:
+        said = self._m.delete_self_later(self._self_dir, self._log_file())
+        if said:
+            self.log(f"temp copy: {said}")
 
     def _write_ready(self, word: str) -> None:
         if self._ready and not self._wrote_ready:

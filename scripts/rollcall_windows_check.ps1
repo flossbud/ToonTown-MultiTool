@@ -291,19 +291,27 @@ sys.exit(0 if ok else 1)
                 Check ($log.Contains(': accepted')) 'the running app took the quit request'
             }
             Check ($log.Contains('uninstall finished')) 'the engine finished'
-            $deadline = (Get-Date).AddSeconds(30)
-            while ((Get-Date) -lt $deadline -and
-                   (Get-ChildItem $env:TEMP -Directory -Filter 'ttmt-rollcall-uninstall-*' -ErrorAction SilentlyContinue)) {
-                Start-Sleep -Seconds 1
-            }
             Check (-not (Test-Path $appDir)) "$appDir removed"
             Check (-not (Test-Path $uninstallKey)) 'uninstall entry removed'
             Check (-not (Test-Path $startMenu)) 'Start Menu entry removed'
             Check (-not (Test-Path $desktop)) 'desktop shortcut removed'
             Check (Test-Path $settings) 'user data kept (the box was not ticked)'
             Check (-not (Get-Process -Name ToonTownMultiTool -ErrorAction SilentlyContinue)) 'the app is closed'
+            # The window ran from a temp copy and leaves a cleaner behind for
+            # it, which retries for up to a minute while the window's files
+            # stay locked and then logs what became of the folder.
+            $log = Wait-Log $mark @('temp copy removed', 'temp copy still there',
+                                    'could not start the cleaner', 'no cleaner:') 90
+            ($log -split "`r?`n") | Where-Object { $_ -like '*temp copy*' } |
+                ForEach-Object { Write-Host "  $_" }
             $copies = Get-ChildItem $env:TEMP -Directory -Filter 'ttmt-rollcall-uninstall-*' -ErrorAction SilentlyContinue
-            Check (-not $copies) "the window's temp copy removed itself ($($copies.Name -join ', '))"
+            foreach ($copy in $copies) {
+                Get-ChildItem $copy.FullName -Recurse -File -ErrorAction SilentlyContinue |
+                    Select-Object -First 10 | ForEach-Object { Write-Host "  left  $($_.FullName)" }
+            }
+            Check ($log.Contains('temp copy: cleaner started')) 'the window started a cleaner for its temp copy'
+            Check ($log.Contains('temp copy removed')) 'the cleaner removed the temp copy'
+            Check (-not $copies) "the window's temp copy is gone ($($copies.Name -join ', '))"
         }
     }
     Write-Host "ROLLCALL $($Phase.ToUpper()) OK"

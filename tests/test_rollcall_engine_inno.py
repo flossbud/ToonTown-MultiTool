@@ -184,6 +184,32 @@ def test_arguments_are_quoted_for_inno():
         '"C:\\x y\\Setup.exe" /SILENT /TASKS=a,b'
 
 
+def test_the_temp_copy_cleaner_retries_then_logs_what_became_of_the_folder():
+    # This exact line ran under Wine's cmd (minus the cmd /c wrapper): it
+    # removed a plain folder, kept trying while a file in it was held open
+    # and removed it once the file was let go, and logged both outcomes.
+    line = P.temp_copy_cleaner("C:\\T\\R\\copy-3\\", "C:\\T\\R\\rc.log")
+    assert line == (
+        'cmd.exe /d /c "ping -n 3 127.0.0.1 >nul & '
+        '(for /l %i in (1,1,60) do @if exist "C:\\T\\R\\copy-3\\" '
+        '(rmdir /s /q "C:\\T\\R\\copy-3" 2>nul & '
+        'if exist "C:\\T\\R\\copy-3\\" ping -n 2 127.0.0.1 >nul)) & '
+        '(if exist "C:\\T\\R\\copy-3\\" '
+        '(echo [RollCall] temp copy still there after 60 tries>>"C:\\T\\R\\rc.log") '
+        'else (echo [RollCall] temp copy removed>>"C:\\T\\R\\rc.log"))"')
+    spaced = P.temp_copy_cleaner("C:\\Users\\A B (x)\\Temp\\ttmt-rollcall-uninstall-9",
+                                 "C:\\Users\\A B (x)\\Temp\\rc.log")
+    assert 'rmdir /s /q "C:\\Users\\A B (x)\\Temp\\ttmt-rollcall-uninstall-9"' in spaced
+    assert f'{P.TEMP_COPY_REMOVED}>>"C:\\Users\\A B (x)\\Temp\\rc.log"' in spaced
+
+
+def test_a_path_cmd_would_mangle_gets_no_cleaner_or_no_log_line():
+    assert P.temp_copy_cleaner("C:\\T\\100%\\copy", "C:\\T\\rc.log") == ""
+    assert P.temp_copy_cleaner("") == ""
+    line = P.temp_copy_cleaner("C:\\T\\copy", "C:\\T\\%x%\\rc.log")
+    assert line and "rmdir" in line and ">>" not in line
+
+
 def test_the_line_reader_returns_only_complete_new_lines(tmp_path):
     path = tmp_path / "p.txt"
     reader = P.LineReader(str(path))
@@ -646,3 +672,24 @@ def test_the_sweep_after_an_uninstall_uses_the_mode_read_before_it(make, qapp):
     assert last(events, "finished")
     assert seen == [True]
     assert machine.deleted_keys == [("ToonTown MultiTool", True)]
+
+
+def test_the_uninstall_window_leaves_a_cleaner_for_its_temp_copy(make, qapp, tmp_path):
+    from PySide6.QtCore import SIGNAL
+
+    class Cleaning(FakeMachine):
+        asked = None
+
+        def delete_self_later(self, directory, log_path=""):
+            self.asked = (directory, log_path)
+            return "cleaner started (pid 7)"
+
+    machine = Cleaning(tmp_path, record=RECORD)
+    before = qapp.receivers(SIGNAL("aboutToQuit()"))
+    engine, _, _ = make(mode="uninstall", record=RECORD, machine=machine,
+                        uninstaller=RECORD.uninstaller, app_dir=RECORD.directory,
+                        self_dir="C:\\T\\ttmt-rollcall-uninstall-7")
+    assert qapp.receivers(SIGNAL("aboutToQuit()")) == before + 1
+    engine._delete_temp_copy()             # what aboutToQuit runs
+    assert machine.asked == ("C:\\T\\ttmt-rollcall-uninstall-7", str(tmp_path / "rollcall.log"))
+    assert "temp copy: cleaner started (pid 7)" in (tmp_path / "rollcall.log").read_text()

@@ -318,12 +318,23 @@ class WindowsMachine(Machine):
                 return False
         return True
 
-    def delete_self_later(self, directory: str) -> None:
+    def delete_self_later(self, directory: str, log_path: str = "") -> str:
         if not directory or not os.path.isdir(directory):
-            return
-        command = f'cmd.exe /c ping -n 4 127.0.0.1 >nul & rmdir /s /q "{directory}"'
+            return ""
+        command = P.temp_copy_cleaner(directory, log_path)
+        if not command:
+            return f"no cleaner: cmd cannot take the path {directory}"
+        parent = os.path.dirname(directory.rstrip("\\"))
         try:
-            subprocess.Popen(command, cwd=os.path.dirname(directory), close_fds=True,
-                             creationflags=CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB)
-        except OSError:
-            pass
+            proc = subprocess.Popen(command, cwd=parent, close_fds=True,
+                                    creationflags=CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB)
+            return f"cleaner started (pid {proc.pid})"
+        except OSError as error:
+            if getattr(error, "winerror", None) != 5:
+                return f"could not start the cleaner: {error}"
+        try:   # this process's job does not allow breaking away: stay in it
+            proc = subprocess.Popen(command, cwd=parent, close_fds=True,
+                                    creationflags=CREATE_NO_WINDOW)
+            return f"cleaner started inside this process's job, which refused a breakaway (pid {proc.pid})"
+        except OSError as error:
+            return f"could not start the cleaner: {error}"

@@ -73,6 +73,39 @@ def command_line(exe: str, args) -> str:
     return " ".join([quote_arg(exe)] + [quote_arg(a) for a in args])
 
 
+# The uninstall window runs from a temp copy (installer.iss RcHandOverUninstall)
+# and leaves a cleaner behind to remove it. The cleaner's last word goes to
+# the window log.
+CLEANER_TRIES = 60
+TEMP_COPY_REMOVED = "temp copy removed"
+TEMP_COPY_STILL_THERE = "temp copy still there"
+
+
+def temp_copy_cleaner(directory: str, log_path: str = "", tries: int = CLEANER_TRIES) -> str:
+    """The cmd.exe line that removes the window's temp copy. The window's own
+    files stay locked until its process has fully exited, and that is after
+    the cleaner starts, so the cleaner tries again every second, up to
+    ``tries`` times, then appends what became of the folder to the log.
+    "" when the folder's path cannot pass through cmd (a double quote, or a
+    percent sign cmd would expand); no log line when the log's path cannot."""
+    directory = directory.rstrip("\\")
+    if not directory or any(ch in directory for ch in '"%'):
+        return ""
+    folder = f'"{directory}"'
+    present = f'"{directory}\\"'          # if exist "dir\" : the folder, not a file
+    wait = "ping -n 2 127.0.0.1 >nul"      # one second; timeout.exe needs a console
+    line = (f"ping -n 3 127.0.0.1 >nul & "
+            f"(for /l %i in (1,1,{int(tries)}) do @if exist {present} "
+            f"(rmdir /s /q {folder} 2>nul & if exist {present} {wait}))")
+    if log_path and not any(ch in log_path for ch in '"%'):
+        log = f'"{log_path}"'
+        line += (f" & (if exist {present} "
+                 f"(echo [RollCall] {TEMP_COPY_STILL_THERE} after {int(tries)} tries>>{log}) "
+                 f"else (echo [RollCall] {TEMP_COPY_REMOVED}>>{log}))")
+    # cmd /c drops the first and the last quote of the line and runs the rest.
+    return f'cmd.exe /d /c "{line}"'
+
+
 @dataclass
 class RunState:
     """What the progress lines of one Setup run said so far."""
