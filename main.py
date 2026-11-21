@@ -3,6 +3,16 @@ from __future__ import annotations
 import os
 import sys
 
+# A windowed build started without a console and without redirected handles
+# has no standard streams at all: sys.stdout and sys.stderr are None, and any
+# .write() or .flush() on them raises (print() alone copes). An uncaught
+# error in a windowed build ends behind a modal box nobody is there to
+# close, so give the process real streams to nowhere before anything writes.
+for _ttmt_stream in ("stdout", "stderr"):
+    if getattr(sys, _ttmt_stream, None) is None:
+        setattr(sys, _ttmt_stream, open(os.devnull, "w", encoding="utf-8"))
+del _ttmt_stream
+
 # Windows: when this is the copy relaunched as administrator, restore the
 # TTMT_* variables the unelevated copy forwarded (an elevated process starts
 # with a fresh environment). First, because the lines below already read them.

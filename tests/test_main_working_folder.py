@@ -31,3 +31,25 @@ def test_it_runs_before_anything_else_starts():
     entry = source.index('if __name__ == "__main__":')
     assert source.index("    _leave_install_folder()", entry) < source.index(
         "_instance_guard.run_startup(", entry)
+
+
+def test_a_build_with_no_standard_streams_gets_streams_to_nowhere(tmp_path):
+    """A windowed build started with no console and no redirected handles has
+    sys.stdout and sys.stderr set to None; --self-check then wrote to None,
+    raised, and sat behind an error box. The first lines of main.py give the
+    process real streams before anything writes."""
+    import subprocess
+    import sys
+    source = open(main.__file__, encoding="utf-8").read()
+    head = source[:source.index("# Windows: when this is the copy relaunched")]
+    assert "os.devnull" in head
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "import sys\nsys.stdout = None\nsys.stderr = None\n"
+        + head.replace("from __future__ import annotations", "")
+        + "\nsys.stdout.write('x')\nsys.stdout.flush()\nsys.stderr.flush()\n"
+        + f"open(r'{tmp_path / 'ok.txt'}', 'w').write(type(sys.stdout).__name__)\n",
+        encoding="utf-8")
+    result = subprocess.run([sys.executable, str(probe)], capture_output=True, timeout=60)
+    assert result.returncode == 0
+    assert (tmp_path / "ok.txt").read_text() == "TextIOWrapper"
